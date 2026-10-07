@@ -26,7 +26,7 @@
 ### Phase 1 — Prep (now → 8 Oct)
 
 **Always safe, whatever the rules say** (this is learning and logistics, not building the product):
-- [ ] **Learn the tools.** Shaivi works through the agent starter guide ([agent-starter-guide.md](agent-starter-guide.md)); everyone skims the doc for their role.
+- [ ] **Learn the tools.** The repo owner (role A) works through the agent starter guide ([agent-starter-guide.md](agent-starter-guide.md)); everyone skims the doc for their role.
 - [ ] Create accounts and API keys: LLM, search API (Tavily/Exa), Hunter, HubSpot free, Gmail test inbox.
 - [ ] Check each free-tier limit with one real call, and write the limits down.
 - [ ] Collect Spazor Labs pages / case studies as knowledge-base content.

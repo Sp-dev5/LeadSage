@@ -33,7 +33,7 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 
 | Role | Owner | Builds |
 |---|---|---|
-| **A — Agents & AI** | **Shaivi** | The agent that runs the 7 steps, prompts, qualification, email drafting, scoring |
+| **A — Agents & AI** | **Repo owner** | The agent that runs the 7 steps, prompts, qualification, email drafting, scoring |
 | **B — Backend & integrations** | Udbhav / Siddhanth / Keerthana *(to agree)* | API, database, data providers, follow-up scheduler, email sending, HubSpot |
 | **C — Frontend** | Udbhav / Siddhanth / Keerthana *(to agree)* | Lead queue, lead detail, pipeline board, metrics |
 | **D — RAG, data & pitch** *(also keeps time)* | Udbhav / Siddhanth / Keerthana *(to agree)* | Knowledge base, seed data, demo content, pitch deck, demo script, backup video |
@@ -54,7 +54,7 @@ Read these in order. Each has a short intro at the top before the detail.
 | [docs/01-requirements.md](docs/01-requirements.md) | What the challenge asks, what the sponsor values, what to build first | …anyone — start here |
 | [docs/02-architecture.md](docs/02-architecture.md) | How the parts connect, the tech stack, the data model | …building (roles A, B, C, D) |
 | [docs/03-build-plan.md](docs/03-build-plan.md) | Timeline (prep now → event 9–10 Oct), roles, demo script, risks | …everyone |
-| [docs/agent-starter-guide.md](docs/agent-starter-guide.md) | Three tiny practice programs to learn agents before the event | …Shaivi (role A), and anyone curious |
+| [docs/agent-starter-guide.md](docs/agent-starter-guide.md) | Three tiny practice programs to learn agents before the event | …the repo owner (role A), and anyone curious |
 | [docs/challenge-brief.png](docs/challenge-brief.png) | The original challenge card | …reference |
 
 ## The honest bottom line

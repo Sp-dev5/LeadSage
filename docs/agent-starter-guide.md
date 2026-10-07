@@ -1,4 +1,4 @@
-# Agent Starter Guide (for Shaivi, Role A)
+# Agent Starter Guide (for Role A)
 
 Goal: before the event, build three tiny programs so that on the day you're building the real product, not learning how agents work. Each one takes an evening at most. Do them in order — each builds on the last.
 
