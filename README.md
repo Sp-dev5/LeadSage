@@ -56,9 +56,3 @@ Read these in order. Each has a short intro at the top before the detail.
 | [docs/03-build-plan.md](docs/03-build-plan.md) | Timeline (prep now → event 9–10 Oct), roles, demo script, risks | …everyone |
 | [docs/agent-starter-guide.md](docs/agent-starter-guide.md) | Three tiny practice programs to learn agents before the event | …the repo owner (role A), and anyone curious |
 | [docs/challenge-brief.png](docs/challenge-brief.png) | The original challenge card | …reference |
-
-## The honest bottom line
-
-The brief lists 12 features. **You can't build all 12 well in the event window.** Build steps 1–7 properly, freeze new features with time to spare, and spend the end fixing bugs and rehearsing the demo. A working, explainable loop beats twelve half-finished features.
-
-**Event is 9–10 Oct; prep starts now.** See the build plan for what's safe to do before the event and what to hold back.
