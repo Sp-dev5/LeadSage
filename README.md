@@ -46,6 +46,7 @@ Read these in order. Each has a short intro at the top before the detail.
 
 | Doc | What it's for | Read it if you're… |
 |---|---|---|
+| [docs/differentiators.md](docs/differentiators.md) | The 3 things that make ours stand out from the generic AI plan | …everyone — read this |
 | [docs/01-requirements.md](docs/01-requirements.md) | What the challenge asks, what the sponsor values, what to build first | …anyone — start here |
 | [docs/02-architecture.md](docs/02-architecture.md) | How the parts connect, the tech stack, the data model | …building (roles A, B, C, D) |
 | [docs/03-build-plan.md](docs/03-build-plan.md) | Timeline (prep now → event 9–10 Oct), roles, demo script, risks | …everyone |
