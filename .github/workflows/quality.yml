@@ -1,0 +1,42 @@
+name: Quality
+
+# Runs automatically on every pull request and on pushes to main.
+# Keeps main honest: if the linter or tests fail, the PR shows a red X
+# before anyone reviews it.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dev tools
+        run: pip install ruff pytest
+      - name: Install project deps (if any)
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Tests (pytest)
+        shell: bash
+        run: |
+          set +e
+          pytest
+          code=$?
+          # exit code 5 = "no tests collected yet" — fine while the repo is young
+          if [ $code -eq 5 ]; then echo "No tests yet — passing."; exit 0; fi
+          exit $code
