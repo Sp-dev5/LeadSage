@@ -1,0 +1,6 @@
+line-length = 100
+target-version = "py312"
+
+[lint]
+# E/W = style, F = pyflakes (unused imports/vars, etc.), I = import sorting
+select = ["E", "W", "F", "I"]
