@@ -1,13 +1,13 @@
 # District 02 — Build Plan & Milestones
 
-**Event:** The Industry Games (ACM SIGGRAPH SRMIST). **24-hour build, team of 4.** Repo owned by Boss; teammates added as collaborators. Top teams get internship opportunities, so code quality and the pitch both matter.
+**Event:** The Industry Games (ACM SIGGRAPH SRMIST), **9–10 Oct**. Team of 4. Prep starts now. Repo owned by Boss; teammates added as collaborators. Top teams get internship opportunities, so code quality and the pitch both matter.
 
 ## 1. Guiding rules
 
 1. **Vertical slice first.** By hour 10 one lead must go from ICP to drafted email end to end, ugly UI and all.
 2. **Seeded data from hour one.** Every provider has a fallback so no one is blocked by API keys or rate limits.
 3. **Demo script drives the backlog.** If a feature isn't in the 5-minute demo, cut it.
-4. **Feature freeze at hour 20.** The last 4 hours are bug fixing, demo data, and rehearsal. No exceptions.
+4. **Freeze features with time to spare.** The last stretch of the event is bug fixing, demo data, and rehearsal, never new features. No exceptions.
 5. **Sleep in shifts.** Two people rest at a time for ~2 h overnight; a tired team ships bugs at demo time.
 
 ## 2. Roles (4 people)
@@ -19,52 +19,53 @@
 | **C — Frontend** | Priority queue, lead detail, pipeline board, metrics |
 | **D — RAG, data & pitch** (team coordinator) | Knowledge base ingestion + retrieval, seed dataset, demo content, pitch deck, demo script, backup video. Also runs the hour-10/16/20 checks and keeps the timeline, so A stays heads-down on the critical path. |
 
-## 3. Before the event (only if the rules allow prep; no app code)
+## 3. The timeline (today → the event on 9–10 Oct)
 
-- [ ] Create accounts and API keys: LLM, search API (Tavily/Exa), Hunter, HubSpot free, Gmail test inbox
-- [ ] Check each free-tier limit with one real call
-- [ ] Collect Spazor Labs pages/case studies as KB content
-- [ ] Prepare a seed list of ~50 real companies matching the demo ICP
-- [ ] Agree the stack and who owns what
+> **Read this first — the one rule that decides everything below.** Many hackathons require that *application code* be written during the event, and pre-building can get a team disqualified. **Check The Industry Games' rules (or ask a mentor) before writing any app code ahead of time.** Everything in the "always safe" prep below is fine under any ruleset. The "only if the rules allow" items are the ones to hold back if pre-building isn't permitted.
 
-## 4. Timeline (24 h)
+### Phase 1 — Prep (now → 8 Oct)
 
-### Hours 0–2 — Setup
-- [ ] Repo, docs, README, `.env.example` (no secrets in git)
-- [ ] Database schema + seed data loaded
-- [ ] API contracts agreed between backend and frontend
+**Always safe, whatever the rules say** (this is learning and logistics, not building the product):
+- [ ] **Learn the tools.** Shaivi works through the agent starter guide ([agent-starter-guide.md](agent-starter-guide.md)); everyone skims the doc for their role.
+- [ ] Create accounts and API keys: LLM, search API (Tavily/Exa), Hunter, HubSpot free, Gmail test inbox.
+- [ ] Check each free-tier limit with one real call, and write the limits down.
+- [ ] Collect Spazor Labs pages / case studies as knowledge-base content.
+- [ ] Prepare a seed list of ~50 real companies matching the demo ICP.
+- [ ] Agree the stack, and who takes roles B, C and D.
+- [ ] Sketch the screens and the API shape between backend and frontend on paper.
 
-### Hours 2–10 — Walking skeleton
-- [ ] ICP form → discover (seeded) → find people → research (live search) → qualify → draft
-- [ ] KB ingested; draft cites one retrieved case study
-- [ ] Lead list + lead detail page showing research, reasons, draft
+**Only if the rules allow pre-building:**
+- [ ] Repo scaffolding, database schema, `.env.example` (no secrets in git).
+- [ ] A bare "walking skeleton": one lead goes ICP → research → qualify → draft, ugly and hardcoded, just to prove the pieces connect.
 
-**Check at hour 10:** one lead runs end to end in front of the team.
+If pre-building isn't allowed, that's fine — the prep above still means you walk in knowing the tools cold and with your data and keys ready, which is most of the battle.
 
-### Hours 10–16 — Core loop
-- [ ] Approve/edit draft before sending
-- [ ] Three-step sequence with time compression (1 day = 1 minute)
-- [ ] Send to team inbox; reply detection or a labelled "simulate reply" button
-- [ ] Scoring (fit + intent + engagement) with a breakdown; priority queue home screen
+### Phase 2 — The event (9–10 Oct)
 
-**Check at hour 16:** a full sequence plays out in under 10 minutes and a reply moves the lead up the queue.
+The event is the real build. Work in this order, not all at once:
 
-### Hours 16–20 — Polish what judges see
-- [ ] HubSpot sync of qualified leads and stage changes
-- [ ] Pipeline board + 4 metrics including estimated hours saved
-- [ ] Agent activity log on lead detail
-- [ ] Unsubscribe link + suppression list
+**First third — walking skeleton**
+- [ ] ICP form → discover (seeded) → find people → research (live search) → qualify → draft.
+- [ ] Knowledge base ingested; the draft cites one retrieved case study.
+- [ ] Lead list + lead detail page showing research, reasons, draft.
+- [ ] **Checkpoint:** one lead runs end to end in front of the team.
 
-### Hours 20–24 — Freeze and ship
-- [ ] Feature freeze
-- [ ] Clean demo data + reset script
-- [ ] Record a backup demo video
-- [ ] Pitch deck (problem → loop → live demo → architecture → trust features → what's next)
-- [ ] Rehearse the demo twice with a timer
+**Second third — the core loop**
+- [ ] Approve / edit a draft before sending.
+- [ ] Three-step sequence with time compression (1 day = 1 minute).
+- [ ] Send to a team inbox; reply detection or a labelled "simulate reply" button.
+- [ ] Scoring (fit + intent + engagement) with a breakdown; priority queue home screen.
+- [ ] **Checkpoint:** a full sequence plays out in under 10 minutes and a reply moves the lead up the queue.
 
-### Cut for 24 h (mention as "next steps" in the pitch)
-- Open/click tracking pixels, live Apollo discovery, reply classification, intent signals, ICP auto-derived from KB, multi-client workspaces, public deployment if it eats time (a local demo is fine).
-- Don't learn a new framework on the day. Use LangGraph only if someone already knows it; otherwise a plain Python pipeline.
+**Last third — polish and ship**
+- [ ] HubSpot sync of qualified leads and stage changes.
+- [ ] Pipeline board + 4 metrics including estimated hours saved.
+- [ ] Agent activity log on lead detail; unsubscribe link + suppression list.
+- [ ] **Feature freeze with time to spare.** Then: clean demo data + reset script, backup demo video, pitch deck, and rehearse twice with a timer.
+
+### Leave out (mention as "next steps" in the pitch)
+- Open/click tracking pixels, live paid lead discovery, reply classification, intent signals, ICP auto-derived from the knowledge base, multi-client workspaces, public deployment if it eats time (a local demo is fine).
+- Don't learn a new framework during the event. Use LangGraph only if someone already knows it; otherwise a plain Python pipeline.
 
 ## 5. Demo script (5 minutes, draft)
 

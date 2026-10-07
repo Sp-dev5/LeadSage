@@ -48,9 +48,12 @@ Read these in order. Each has a short intro at the top before the detail.
 |---|---|---|
 | [docs/01-requirements.md](docs/01-requirements.md) | What the challenge asks, what the sponsor values, what to build first | …anyone — start here |
 | [docs/02-architecture.md](docs/02-architecture.md) | How the parts connect, the tech stack, the data model | …building (roles A, B, C, D) |
-| [docs/03-build-plan.md](docs/03-build-plan.md) | Hour-by-hour plan, roles, demo script, risks | …everyone, on the day |
+| [docs/03-build-plan.md](docs/03-build-plan.md) | Timeline (prep now → event 9–10 Oct), roles, demo script, risks | …everyone |
+| [docs/agent-starter-guide.md](docs/agent-starter-guide.md) | Three tiny practice programs to learn agents before the event | …Shaivi (role A), and anyone curious |
 | [docs/challenge-brief.png](docs/challenge-brief.png) | The original challenge card | …reference |
 
 ## The honest bottom line
 
-The brief lists 12 features. **You can't build all 12 well in 24 hours.** Build steps 1–7 properly, freeze new features at hour 20, and spend the last 4 hours fixing bugs and rehearsing the demo. A working, explainable loop beats twelve half-finished features.
+The brief lists 12 features. **You can't build all 12 well in the event window.** Build steps 1–7 properly, freeze new features with time to spare, and spend the end fixing bugs and rehearsing the demo. A working, explainable loop beats twelve half-finished features.
+
+**Event is 9–10 Oct; prep starts now.** See the build plan for what's safe to do before the event and what to hold back.
