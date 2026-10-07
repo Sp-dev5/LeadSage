@@ -40,6 +40,10 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 
 Roles B, C and D are open for Udbhav, Siddhanth and Keerthana to split between them.
 
+## How we work
+
+Nobody pushes straight to `main`. Every change goes on a branch, into a pull request, and is merged only after the owner reviews it. See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the step-by-step.
+
 ## The documents
 
 Read these in order. Each has a short intro at the top before the detail.

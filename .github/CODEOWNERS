@@ -1,0 +1,4 @@
+# Every change to this repo requires review from the repo owner before it can
+# be merged. Combined with the branch rule "Require review from Code Owners",
+# this makes @Sp-dev5 the required approver for all files.
+* @Sp-dev5
