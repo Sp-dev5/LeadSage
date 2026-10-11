@@ -8,7 +8,7 @@ running in Ollama. Pick one with LLM_PROVIDER ("ollama" is the default,
 
 Gemini: needs GEMINI_API_KEY. Free key at https://aistudio.google.com/
 Ollama: needs `ollama serve` running. Optional OLLAMA_MODEL (default
-qwen2.5:7b) and OLLAMA_HOST (default http://127.0.0.1:11434).
+qwen3.5:9b) and OLLAMA_HOST (default http://127.0.0.1:11434).
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ load_dotenv()
 # Gemini's fast, free-tier model. Swap this string for another Gemini model, or
 # replace this whole file with a local-model version later.
 MODEL = "gemini-3.8-flash"
+OLLAMA_DEFAULT_MODEL = "qwen3.5:9b"  # best of 3 on the unseen leads; override with OLLAMA_MODEL
 OLLAMA_TIMEOUT = 300  # seconds; the first call loads the model into the GPU
 RETRYABLE_CODES = {500, 503, 504}  # temporary Gemini errors worth retrying (429 = quota spent, retrying only burns more)
 
@@ -72,12 +73,15 @@ def _ollama_structured(system: str, user_prompt: str, schema: type[T]) -> T:
     """Same job as the Gemini path, but against a local Ollama server."""
     host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
     body = {
-        "model": os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
+        "model": os.environ.get("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user_prompt},
         ],
         "stream": False,
+        # qwen3.5 thinks by default, and with a JSON schema set it then returns nothing.
+        # Other models ignore this.
+        "think": False,
         # Ollama constrains the output to this JSON schema.
         "format": schema.model_json_schema(),
         "options": {"temperature": 0.2},
