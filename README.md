@@ -54,8 +54,6 @@ Read these in order. Each has a short intro at the top before the detail.
 | [docs/01-requirements.md](docs/01-requirements.md) | What the challenge asks, what the sponsor values, what to build first | …anyone — start here |
 | [docs/02-architecture.md](docs/02-architecture.md) | How the parts connect, the tech stack, the data model | …building (roles A, B, C, D) |
 | [docs/03-build-plan.md](docs/03-build-plan.md) | Timeline (prep now → event 9–10 Oct), roles, demo script, risks | …everyone |
-| [docs/agent-starter-guide.md](docs/agent-starter-guide.md) | Three tiny practice programs to learn agents before the event | …Shaivi (role A), and anyone curious |
-| [docs/challenge-brief.png](docs/challenge-brief.png) | The original challenge card | …reference |
 
 ## The honest bottom line
 
