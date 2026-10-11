@@ -46,9 +46,9 @@ def _get_client() -> genai.Client:
         if not os.environ.get("GEMINI_API_KEY"):
             raise RuntimeError(
                 "GEMINI_API_KEY is not set.\n"
-                "Copy .env.example to .env, add your free key from "
-                "https://aistudio.google.com/, then:\n"
-                "  export $(grep -v '^#' .env | xargs)"
+                "Add this line to the .env file in the project folder:\n"
+                "  GEMINI_API_KEY=your-key\n"
+                "Free key: https://aistudio.google.com/"
             )
         _client = genai.Client()
     return _client
