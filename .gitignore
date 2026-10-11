@@ -7,3 +7,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# Generated evaluation output
+data/eval_results*.csv
