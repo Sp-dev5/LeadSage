@@ -36,7 +36,7 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 
 ```bash
 pip install -r requirements.txt
-ollama pull qwen2.5:7b            # local model (default)
+ollama pull qwen3.5:9b            # local model (default)
 # optional: add GEMINI_API_KEY=your-key to .env for the fallback
 python -m agent.score_lead        # score a sample company
 python -m agent.evaluate          # grade against the labelled leads
