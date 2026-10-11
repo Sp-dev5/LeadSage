@@ -249,7 +249,8 @@ empty quote.
 
 - what_they_sell: in a few words, what the company sells.
 - is_services: does it earn money by billing for staff time or projects \
-(IT outsourcing, agencies, consultancies)?
+(IT outsourcing, agencies, consultancies)? A software subscription or licence \
+is not services.
 - is_marketplace: does it earn fees or commission on transactions between other \
 buyers and sellers?
 - is_non_software: does it sell physical goods or run a physical business \
@@ -270,7 +271,10 @@ outbound described).
   - sales_team_unclear: has salespeople, but the text doesn't say how they find customers.
   - unknown: the text doesn't say.
 - sells_sales_tools: does its product help sales teams find, research or contact prospects?
-- primary_business: where does most of its revenue come from?
+- primary_business: where does most of its revenue come from? Go by revenue. If the \
+text gives one side's share, the other side is the rest: software at "a quarter of \
+revenue" means three quarters come from services, so services is primary. A small \
+product line beside client work means services.
   - software: its own software product.
   - services: staff time, projects, implementation or consulting.
   - unclear: the text doesn't make it clear which is bigger."""
