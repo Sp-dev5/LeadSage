@@ -7,6 +7,7 @@ own (no fallback, no second-opinion rule), then shows where each one disagrees w
 Run it:  python -m agent.evaluate               both models
          python -m agent.evaluate --only ollama one model (Gemini is often overloaded)
          python -m agent.evaluate --file unseen_leads.csv --runs 3 --only ollama
+         python -m agent.evaluate --icp icp_geo_soft.json   compare an ICP variant
 Needs `ollama serve` running; Gemini needs a key in .env.
 Results are also saved to data/eval_results_<file>_<model>.csv.
 """
@@ -38,6 +39,7 @@ def main() -> None:
     ap.add_argument("--detail", action="store_true", help="print per-criterion scores for leads that aren't OK")
     ap.add_argument("--names", help="comma-separated company names to score (default: all labelled)")
     ap.add_argument("--file", default="labelled_leads.csv", help="lead CSV in data/ (default: labelled_leads.csv)")
+    ap.add_argument("--icp", default="icp.json", help="ICP JSON in data/ (default: icp.json); use a variant to compare rules")
     ap.add_argument("--runs", type=int, default=1, help="score each lead N times and take the majority verdict")
     args = ap.parse_args()
     only = args.only
@@ -45,13 +47,15 @@ def main() -> None:
     runs = max(1, args.runs)
     lead_file = DATA / args.file
 
-    icp = load_icp()
+    icp_file = DATA / args.icp
+    icp = load_icp(icp_file)
     rows = [r for r in csv.DictReader(lead_file.open(encoding="utf-8", newline=""))
             if r["my_label"].strip()]
     if args.names:
         wanted = [n.strip().lower() for n in args.names.split(",")]
         rows = [r for r in rows if r["name"].lower() in wanted]
-    print(f"Scoring {len(rows)} labelled leads from {lead_file.name} with {' and '.join(providers)}, "
+    print(f"Scoring {len(rows)} labelled leads from {lead_file.name} (ICP: {icp_file.name}) "
+          f"with {' and '.join(providers)}, "
           f"{runs} run(s) each...\n", flush=True)
 
     results = []
@@ -110,7 +114,8 @@ def main() -> None:
         print(f"\nModels gave different verdicts on {len(split)}: {', '.join(split) or 'none'}")
         print(f"Both differ from you on {len(both_wrong)}: {', '.join(both_wrong) or 'none'}")
 
-    out_path = DATA / f"eval_results_{lead_file.stem}_{'_'.join(providers)}.csv"
+    icp_tag = "" if icp_file.name == "icp.json" else f"_{icp_file.stem}"
+    out_path = DATA / f"eval_results_{lead_file.stem}{icp_tag}_{'_'.join(providers)}.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["name", "my_label"] + [f"{p}_{c}" for p in providers for c in ("verdict", "fit", "grade")])

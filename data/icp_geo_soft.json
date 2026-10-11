@@ -1,0 +1,37 @@
+{
+  "industry": "B2B SaaS: sells its own software product to businesses. Description only; the score comes from industry_map.",
+  "company_size": "50-500 employees",
+  "geography": "India, Southeast Asia, Australia/New Zealand (preferred, not required)",
+  "buyer_persona": "Head or VP of Sales, RevOps or Sales Ops lead",
+  "pain_solved": "Sales reps spend hours researching and writing outreach by hand, and miss the right moment to reach out.",
+  "notes": "We sell an AI agent that researches, qualifies and times outreach for B2B sales teams, priced per seat per month. Needs an outbound sales team of 3+ (AEs or SDRs). Strong signals: hiring SDRs, AEs or RevOps; recent seed to Series B funding; outbound described. Weak signals: self-serve only, founder-only sales, 1000+ employees.",
+  "company_size_min": 50,
+  "company_size_max": 500,
+  "geography_countries": [
+    "India",
+    "Singapore",
+    "Indonesia",
+    "Malaysia",
+    "Thailand",
+    "Philippines",
+    "Vietnam",
+    "Australia",
+    "New Zealand"
+  ],
+  "gates": ["industry match"],
+  "industry_map": [
+    {"offering": "own_software", "customers": "businesses", "score": 5},
+    {"offering": "own_software", "customers": "mixed", "score": 3},
+    {"offering": "own_software", "customers": "consumers", "score": 1},
+    {"offering": "services", "score": 0},
+    {"offering": "marketplace", "score": 0},
+    {"offering": "non_software", "score": 0}
+  ],
+  "industry_default": 2,
+  "fact_rules": [
+    {"fact": "sales_motion", "value": "no_sales", "label": "no sales team (self-serve)", "action": "review"},
+    {"fact": "sales_motion", "value": "unknown", "label": "sales motion unknown (needs research)", "action": "review"},
+    {"fact": "customers", "value": "consumers", "label": "consumer (B2C) product", "action": "disqualify"},
+    {"fact": "sells_sales_tools", "value": "yes", "label": "competitor: sells sales-intelligence or prospecting tools", "action": "disqualify"}
+  ]
+}
