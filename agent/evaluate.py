@@ -6,14 +6,16 @@ own (no fallback, no second-opinion rule), then shows where each one disagrees w
 
 Run it:  python -m agent.evaluate               both models
          python -m agent.evaluate --only ollama one model (Gemini is often overloaded)
+         python -m agent.evaluate --file unseen_leads.csv --runs 3 --only ollama
 Needs `ollama serve` running; Gemini needs a key in .env.
-Results are also saved to data/eval_results.csv.
+Results are also saved to data/eval_results_<file>_<model>.csv.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+from collections import Counter
 from pathlib import Path
 
 from agent.score_lead import Company, _score_with, load_icp
@@ -35,17 +37,22 @@ def main() -> None:
     ap.add_argument("--only", choices=["ollama", "gemini"], help="score with just one model")
     ap.add_argument("--detail", action="store_true", help="print per-criterion scores for leads that aren't OK")
     ap.add_argument("--names", help="comma-separated company names to score (default: all labelled)")
+    ap.add_argument("--file", default="labelled_leads.csv", help="lead CSV in data/ (default: labelled_leads.csv)")
+    ap.add_argument("--runs", type=int, default=1, help="score each lead N times and take the majority verdict")
     args = ap.parse_args()
     only = args.only
     providers = (only,) if only else ("ollama", "gemini")
+    runs = max(1, args.runs)
+    lead_file = DATA / args.file
 
     icp = load_icp()
-    rows = [r for r in csv.DictReader((DATA / "labelled_leads.csv").open(encoding="utf-8", newline=""))
+    rows = [r for r in csv.DictReader(lead_file.open(encoding="utf-8", newline=""))
             if r["my_label"].strip()]
     if args.names:
         wanted = [n.strip().lower() for n in args.names.split(",")]
         rows = [r for r in rows if r["name"].lower() in wanted]
-    print(f"Scoring {len(rows)} labelled leads with {' and '.join(providers)}...\n", flush=True)
+    print(f"Scoring {len(rows)} labelled leads from {lead_file.name} with {' and '.join(providers)}, "
+          f"{runs} run(s) each...\n", flush=True)
 
     results = []
     for i, r in enumerate(rows, 1):
@@ -53,19 +60,34 @@ def main() -> None:
                           location=r["location"], description=r["description"])
         out = {"name": r["name"], "label": r["my_label"].strip().lower()}
         for p in providers:
-            try:
-                s = _score_with(p, icp, company)
-                out[p] = (s.verdict, s.fit, _grade(out["label"], s.verdict))
-                if args.detail and out[p][2] != "OK":
-                    print(f"  {p} on {r['name']} (you: {out['label']}, got {s.verdict} {s.fit})", flush=True)
-                    for c in s.criteria:
-                        print(f"    {c.score}/5 {c.criterion}: {c.evidence[:110]}", flush=True)
-                    if s.disqualifier_hit:
-                        print(f"    disqualifier: {s.disqualifier_reason[:110]}", flush=True)
-            except Exception as e:
-                print(f"  {p} failed on {r['name']}: {str(e)[:90]}", flush=True)
+            scores = []
+            for _ in range(runs):
+                try:
+                    scores.append(_score_with(p, icp, company))
+                except Exception as e:
+                    print(f"  {p} failed on {r['name']}: {str(e)[:90]}", flush=True)
+            if not scores:
                 out[p] = ("error", None, "ERR")
-        print(f"[{i}/{len(rows)}] {r['name']}: " + ", ".join(f"{p} {out[p][0]}" for p in providers), flush=True)
+                continue
+            # Majority verdict; its fit is the average over the runs that gave it.
+            verdict, votes = Counter(s.verdict for s in scores).most_common(1)[0]
+            agreeing = [s for s in scores if s.verdict == verdict]
+            fit = round(sum(s.fit for s in agreeing) / len(agreeing))
+            out[p] = (verdict, fit, _grade(out["label"], verdict))
+            if runs > 1:
+                out[p + "_votes"] = f"{votes}/{len(scores)}"
+            if args.detail and out[p][2] != "OK":
+                s = agreeing[0]
+                print(f"  {p} on {r['name']} (you: {out['label']}, got {verdict} {fit})", flush=True)
+                for c in s.criteria:
+                    print(f"    {c.score}/5 {c.criterion}: {c.evidence[:110]}", flush=True)
+                if s.disqualifier_hit:
+                    print(f"    disqualifier: {s.disqualifier_reason[:110]}", flush=True)
+                for flag in s.review_flags:
+                    print(f"    review rule: {flag[:110]}", flush=True)
+        print(f"[{i}/{len(rows)}] {r['name']}: " + ", ".join(
+            f"{p} {out[p][0]}" + (f" ({out[p + '_votes']})" if p + "_votes" in out else "")
+            for p in providers), flush=True)
         results.append(out)
 
     print(f"\n{'Company':26} {'You':11}" + "".join(f" | {p.capitalize():22}" for p in providers))
@@ -88,7 +110,7 @@ def main() -> None:
         print(f"\nModels gave different verdicts on {len(split)}: {', '.join(split) or 'none'}")
         print(f"Both differ from you on {len(both_wrong)}: {', '.join(both_wrong) or 'none'}")
 
-    out_path = DATA / ("eval_results.csv" if len(providers) == 2 else f"eval_results_{providers[0]}.csv")
+    out_path = DATA / f"eval_results_{lead_file.stem}_{'_'.join(providers)}.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["name", "my_label"] + [f"{p}_{c}" for p in providers for c in ("verdict", "fit", "grade")])
