@@ -13,92 +13,66 @@ qwen3.5:9b) and OLLAMA_HOST (default http://127.0.0.1:11434).
 
 from __future__ import annotations
 
-import json
 import os
-import random
-import time
-import urllib.request
+from functools import lru_cache
 from typing import TypeVar
 
+import ollama
 from dotenv import load_dotenv
 from google import genai
-from google.genai import errors, types
+from google.genai import types
 from pydantic import BaseModel
 
 # Reads GEMINI_API_KEY, LLM_PROVIDER etc. from a .env file in the project folder.
 load_dotenv()
 
-# Gemini's fast, free-tier model. Swap this string for another Gemini model, or
-# replace this whole file with a local-model version later.
-MODEL = "gemini-3.8-flash"
+MODEL = "gemini-3.8-flash"           # Gemini's fast, free-tier model
 OLLAMA_DEFAULT_MODEL = "qwen3.5:9b"  # best of 3 on the unseen leads; override with OLLAMA_MODEL
 OLLAMA_TIMEOUT = 300  # seconds; the first call loads the model into the GPU
-RETRYABLE_CODES = {500, 503, 504}  # temporary Gemini errors worth retrying (429 = quota spent, retrying only burns more)
+RETRYABLE_CODES = [500, 503, 504]  # temporary Gemini errors worth retrying (429 = quota spent, retrying only burns more)
 
 T = TypeVar("T", bound=BaseModel)
 
-_client: genai.Client | None = None
 
-
+@lru_cache(maxsize=1)
 def _get_client() -> genai.Client:
-    """One shared client, created on first use. Reads GEMINI_API_KEY from env."""
-    global _client
-    if _client is None:
-        if not os.environ.get("GEMINI_API_KEY"):
-            raise RuntimeError(
-                "GEMINI_API_KEY is not set.\n"
-                "Add this line to the .env file in the project folder:\n"
-                "  GEMINI_API_KEY=your-key\n"
-                "Free key: https://aistudio.google.com/"
-            )
-        _client = genai.Client()
-    return _client
+    """One shared Gemini client, created on first use. The SDK retries temporary
+    errors itself: up to 5 attempts, waits growing from 2s."""
+    if not os.environ.get("GEMINI_API_KEY"):
+        raise RuntimeError(
+            "GEMINI_API_KEY is not set.\n"
+            "Add this line to the .env file in the project folder:\n"
+            "  GEMINI_API_KEY=your-key\n"
+            "Free key: https://aistudio.google.com/"
+        )
+    retry = types.HttpRetryOptions(attempts=5, initial_delay=2.0, http_status_codes=RETRYABLE_CODES)
+    return genai.Client(http_options=types.HttpOptions(retry_options=retry))
 
 
-def _with_retry(call, max_attempts: int = 5, base_delay: float = 2.0):
-    """Run `call`, retrying temporary Gemini errors (overload, rate limit) with
-    growing waits: ~2s, 4s, 8s, 16s. Other errors (bad key, bad model) raise at once."""
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return call()
-        except errors.APIError as e:
-            if e.code not in RETRYABLE_CODES or attempt == max_attempts:
-                raise
-            delay = base_delay * 2 ** (attempt - 1) + random.uniform(0, 1)
-            print(f"Gemini {e.code}, retrying in {delay:.0f}s ({attempt}/{max_attempts})")
-            time.sleep(delay)
+@lru_cache(maxsize=1)
+def _ollama_client(host: str) -> ollama.Client:
+    return ollama.Client(host=host, timeout=OLLAMA_TIMEOUT)
 
 
 def _ollama_structured(system: str, user_prompt: str, schema: type[T]) -> T:
     """Same job as the Gemini path, but against a local Ollama server."""
-    host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-    body = {
-        "model": os.environ.get("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_prompt},
-        ],
-        "stream": False,
-        # qwen3.5 thinks by default, and with a JSON schema set it then returns nothing.
-        # Other models ignore this.
-        "think": False,
-        # Ollama constrains the output to this JSON schema.
-        "format": schema.model_json_schema(),
-        "options": {"temperature": 0.2},
-    }
-    req = urllib.request.Request(
-        f"{host}/api/chat",
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
-    )
+    host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
     try:
-        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
-            data = json.load(resp)
-    except OSError as e:
-        raise RuntimeError(
-            f"Could not reach Ollama at {host}. Is `ollama serve` running? ({e})"
-        ) from e
-    raw = (data.get("message", {}).get("content") or "").strip()
+        response = _ollama_client(host).chat(
+            model=os.environ.get("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_prompt},
+            ],
+            format=schema.model_json_schema(),  # Ollama constrains the output to this schema
+            options={"temperature": 0.2},
+            # qwen3.5 thinks by default, and with a JSON schema set it then returns nothing.
+            # Other models ignore this.
+            think=False,
+        )
+    except ConnectionError as e:
+        raise RuntimeError(f"Could not reach Ollama at {host}. Is `ollama serve` running? ({e})") from e
+    raw = (response.message.content or "").strip()
     if not raw:
         raise RuntimeError("Model returned no usable output.")
     return schema.model_validate_json(raw)
@@ -121,18 +95,15 @@ def generate_structured(
     if provider != "gemini":
         raise RuntimeError(f"Unknown LLM_PROVIDER {provider!r}. Use 'gemini' or 'ollama'.")
 
-    client = _get_client()
-    response = _with_retry(
-        lambda: client.models.generate_content(
-            model=MODEL,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                response_mime_type="application/json",
-                response_schema=schema,
-                temperature=0.2,  # low = consistent, repeatable judgements
-            ),
-        )
+    response = _get_client().models.generate_content(
+        model=MODEL,
+        contents=user_prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            response_mime_type="application/json",
+            response_schema=schema,
+            temperature=0.2,  # low = consistent, repeatable judgements
+        ),
     )
 
     parsed = response.parsed

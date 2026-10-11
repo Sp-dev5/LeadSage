@@ -1,7 +1,4 @@
 {
-  "industry": "B2B SaaS: sells its own software product to businesses. Description only; the score comes from industry_map.",
-  "company_size": "50-500 employees",
-  "geography": "India, Southeast Asia, Australia/New Zealand (preferred, not required)",
   "buyer_persona": "Head or VP of Sales, RevOps or Sales Ops lead",
   "pain_solved": "Sales reps spend hours researching and writing outreach by hand, and miss the right moment to reach out.",
   "notes": "We sell an AI agent that researches, qualifies and times outreach for B2B sales teams, priced per seat per month. Needs an outbound sales team of 3+ (AEs or SDRs). Strong signals: hiring SDRs, AEs or RevOps; recent seed to Series B funding; outbound described. Weak signals: self-serve only, founder-only sales, 1000+ employees.",

@@ -19,7 +19,7 @@ import csv
 from collections import Counter
 from pathlib import Path
 
-from agent.score_lead import Company, _score_with, load_icp
+from agent.score_lead import Company, load_icp, score_once
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 ORDER = {"disqualify": 0, "review": 1, "qualify": 2}
@@ -67,19 +67,17 @@ def main() -> None:
             scores = []
             for _ in range(runs):
                 try:
-                    scores.append(_score_with(p, icp, company))
+                    scores.append(score_once(p, icp, company))
                 except Exception as e:
                     print(f"  {p} failed on {r['name']}: {str(e)[:90]}", flush=True)
             if not scores:
-                out[p] = ("error", None, "ERR")
+                out[p] = ("error", None, "ERR", "")
                 continue
             # Majority verdict; its fit is the average over the runs that gave it.
             verdict, votes = Counter(s.verdict for s in scores).most_common(1)[0]
             agreeing = [s for s in scores if s.verdict == verdict]
             fit = round(sum(s.fit for s in agreeing) / len(agreeing))
-            out[p] = (verdict, fit, _grade(out["label"], verdict))
-            if runs > 1:
-                out[p + "_votes"] = f"{votes}/{len(scores)}"
+            out[p] = (verdict, fit, _grade(out["label"], verdict), f"{votes}/{len(scores)}")
             if args.detail and out[p][2] != "OK":
                 s = agreeing[0]
                 print(f"  {p} on {r['name']} (you: {out['label']}, got {verdict} {fit})", flush=True)
@@ -90,15 +88,14 @@ def main() -> None:
                 for flag in s.review_flags:
                     print(f"    review rule: {flag[:110]}", flush=True)
         print(f"[{i}/{len(rows)}] {r['name']}: " + ", ".join(
-            f"{p} {out[p][0]}" + (f" ({out[p + '_votes']})" if p + "_votes" in out else "")
-            for p in providers), flush=True)
+            f"{p} {out[p][0]}" + (f" ({out[p][3]})" if runs > 1 else "") for p in providers), flush=True)
         results.append(out)
 
     print(f"\n{'Company':26} {'You':11}" + "".join(f" | {p.capitalize():22}" for p in providers))
     for o in results:
         cells = ""
         for p in providers:
-            v, fit, g = o[p]
+            v, fit, g, _ = o[p]
             cells += f" | {v} {fit if fit is not None else '-':>3} {g}".ljust(25)
         print(f"{o['name'][:26]:26} {o['label']:11}{cells}")
 
@@ -118,7 +115,7 @@ def main() -> None:
     out_path = DATA / f"eval_results_{lead_file.stem}{icp_tag}_{'_'.join(providers)}.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["name", "my_label"] + [f"{p}_{c}" for p in providers for c in ("verdict", "fit", "grade")])
+        w.writerow(["name", "my_label"] + [f"{p}_{c}" for p in providers for c in ("verdict", "fit", "grade", "votes")])
         for o in results:
             w.writerow([o["name"], o["label"]] + [x for p in providers for x in o[p]])
     print(f"\nSaved {out_path}")

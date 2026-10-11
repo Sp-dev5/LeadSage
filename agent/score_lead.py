@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Generic, Literal, TypeVar, get_args
 
 import pycountry
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -27,9 +27,6 @@ from agent.llm import generate_structured
 # Every number that depends on the customer lives in the ICP file (`settings`),
 # not here. What stays in code is the mechanism and facts that are true for anyone.
 
-# The model judges the fuzzy criteria; plain code scores the facts.
-MODEL_CRITERIA = ["buyer persona fit", "pain match"]
-CODE_CRITERIA = ["industry match", "company size match", "geography match"]
 ALL_CRITERIA = ["industry match", "company size match", "geography match",
                 "buyer persona fit", "pain match"]
 
@@ -44,60 +41,42 @@ SalesMotion = Literal["no_sales", "founder_led", "outbound_team", "sales_team_un
 Offering = Literal["own_software", "services", "marketplace", "non_software", "other_unclear", "unknown"]
 PrimaryBusiness = Literal["software", "services", "unclear"]
 
-# Every fact a rule may test, with its allowed values. `offering` is derived by code.
-FACT_VALUES: dict[str, tuple[str, ...]] = {
-    "is_services": get_args(YesNo),
-    "is_marketplace": get_args(YesNo),
-    "is_non_software": get_args(YesNo),
-    "builds_own_software": get_args(YesNo),
-    "customers": get_args(Customers),
-    "sales_motion": get_args(SalesMotion),
-    "sells_sales_tools": get_args(YesNo),
-    "primary_business": get_args(PrimaryBusiness),
-    "offering": get_args(Offering),
-}
-# Answers that need no quote: they say "nothing found" or "can't tell".
-NO_QUOTE_NEEDED = ("no", "unknown", "unclear")
-REPORTED_FACTS = [f for f in FACT_VALUES if f != "offering"]
-# Exclusion checks, in order, and the offering each one means.
-EXCLUSIONS = [("is_services", "services"), ("is_marketplace", "marketplace"),
-              ("is_non_software", "non_software")]
+V = TypeVar("V")
 
 
 # `quote` has no default on purpose: a default makes it optional in the JSON schema,
 # and the model then skips it. It comes first so the model finds evidence before answering.
-class YesNoFact(BaseModel):
+class Fact(BaseModel, Generic[V]):
     quote: str
-    value: YesNo
-
-
-class CustomersFact(BaseModel):
-    quote: str
-    value: Customers
-
-
-class SalesMotionFact(BaseModel):
-    quote: str
-    value: SalesMotion
-
-
-class PrimaryBusinessFact(BaseModel):
-    quote: str
-    value: PrimaryBusiness
+    value: V
 
 
 class CompanyFacts(BaseModel):
     """Factual answers about the company. Exclusion checks come before the positive one."""
 
     what_they_sell: str
-    is_services: YesNoFact
-    is_marketplace: YesNoFact
-    is_non_software: YesNoFact
-    builds_own_software: YesNoFact
-    customers: CustomersFact
-    sales_motion: SalesMotionFact
-    sells_sales_tools: YesNoFact
-    primary_business: PrimaryBusinessFact   # only used when software and services both apply
+    is_services: Fact[YesNo]
+    is_marketplace: Fact[YesNo]
+    is_non_software: Fact[YesNo]
+    builds_own_software: Fact[YesNo]
+    customers: Fact[Customers]
+    sales_motion: Fact[SalesMotion]
+    sells_sales_tools: Fact[YesNo]
+    primary_business: Fact[PrimaryBusiness]   # only used when software and services both apply
+
+
+# Every fact a rule may test, with its allowed values, read from the schema above so the
+# two can't drift. `offering` is derived by code, not reported by the model.
+FACT_VALUES: dict[str, tuple[str, ...]] = {
+    name: get_args(field.annotation.model_fields["value"].annotation)
+    for name, field in CompanyFacts.model_fields.items() if name != "what_they_sell"
+} | {"offering": get_args(Offering)}
+# Answers that need no quote: they say "nothing found" or "can't tell".
+NO_QUOTE_NEEDED = ("no", "unknown", "unclear")
+REPORTED_FACTS = [f for f in FACT_VALUES if f != "offering"]
+# Exclusion checks, in order, and the offering each one means.
+EXCLUSIONS = [("is_services", "services"), ("is_marketplace", "marketplace"),
+              ("is_non_software", "non_software")]
 
 
 class IndustryRule(BaseModel):
@@ -172,11 +151,11 @@ class Settings(BaseModel):
 
 
 class ICP(BaseModel):
-    """The ideal customer we're selling to."""
+    """The ideal customer we're selling to. Unknown keys are rejected, so a typo or a
+    leftover field can't sit in the file looking like it does something."""
 
-    industry: str              # description only; scoring uses industry_map
-    company_size: str          # e.g. "50-500 employees"
-    geography: str             # e.g. "India / APAC"
+    model_config = ConfigDict(extra="forbid")
+
     buyer_persona: str         # e.g. "Head of Sales / RevOps"
     pain_solved: str           # the problem our product fixes
     notes: str = ""            # anything else: what we sell, buying signals
@@ -220,22 +199,22 @@ class Company(BaseModel):
     description: str           # a short brief; later this comes from the research step
 
 
-class CriterionScore(BaseModel):
-    """One ICP criterion, rated 0-5 with the evidence behind it."""
+class Rating(BaseModel):
+    """A 0-5 score with the evidence behind it."""
+
+    evidence: str              # before score, so the model reasons before it picks a number
+    score: int = Field(ge=0, le=5)
+
+
+class CriterionScore(Rating):
+    """A rating for one named ICP criterion."""
 
     criterion: str
-    evidence: str              # before score, so the model reasons before it picks a number
-    score: int = Field(ge=0, le=5)
-
-
-class Rating(BaseModel):
-    evidence: str              # before score, so the model reasons before it picks a number
-    score: int = Field(ge=0, le=5)
 
 
 class FitScores(BaseModel):
-    """The scoring call's output. Named required fields, not a list: with a list the
-    model often returned it empty, and fit was then averaged over code criteria only."""
+    """The scoring call's output. Named required fields, not a list, so the model
+    can't leave one out."""
 
     buyer_persona_fit: Rating
     pain_match: Rating
@@ -258,8 +237,8 @@ class LeadScore(BaseModel):
     second_opinion: LeadScore | None = None  # set when a 2nd model also scored it
 
 
-# Two calls per lead. The facts call never sees our ICP, so it can't mistake our
-# product for theirs (a 7B model did, constantly, when both were in one prompt).
+# Two calls per lead. The facts call never sees our ICP, so it can't confuse our
+# product with theirs.
 FACTS_PROMPT = """You extract facts about a company from its details. Judge only from \
 the text given; never invent facts.
 
@@ -503,8 +482,8 @@ def _verdict(fit: int, disqualifier_hit: bool, s: Settings) -> Literal["qualify"
     return "review"
 
 
-def _score_with(provider: str, icp: ICP, company: Company) -> LeadScore:
-    """Score one company using one specific model."""
+def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
+    """Score one company with one specific model: no fallback, no second opinion."""
     # Facts code can read straight off the form: identical whichever model runs.
     headcount = _parse_headcount(company.size)
     too_small = headcount is not None and headcount < icp.settings.min_headcount
@@ -562,16 +541,16 @@ def score_lead(icp: ICP, company: Company) -> LeadScore:
     Gemini also scores it, and a disagreement turns the verdict into "review".
     """
     try:
-        primary = _score_with("ollama", icp, company)
+        primary = score_once("ollama", icp, company)
     except Exception as e:
         print(f"Ollama failed ({e}); falling back to Gemini.")
-        return _score_with("gemini", icp, company)
+        return score_once("gemini", icp, company)
 
     if not _is_borderline(primary, icp.settings):
         return primary
 
     try:
-        second = _score_with("gemini", icp, company)
+        second = score_once("gemini", icp, company)
     except Exception as e:
         print(f"Gemini second opinion unavailable ({e}); keeping the Ollama score.")
         return primary
