@@ -53,6 +53,7 @@ YesNo = Literal["yes", "no", "unknown"]
 Customers = Literal["businesses", "consumers", "mixed", "unknown"]
 SalesMotion = Literal["no_sales", "founder_led", "outbound_team", "sales_team_unclear", "unknown"]
 Offering = Literal["own_software", "services", "marketplace", "non_software", "other_unclear", "unknown"]
+PrimaryBusiness = Literal["software", "services", "unclear"]
 
 # Every fact a rule may test, with its allowed values. `offering` is derived by code.
 FACT_VALUES: dict[str, tuple[str, ...]] = {
@@ -63,8 +64,11 @@ FACT_VALUES: dict[str, tuple[str, ...]] = {
     "customers": get_args(Customers),
     "sales_motion": get_args(SalesMotion),
     "sells_sales_tools": get_args(YesNo),
+    "primary_business": get_args(PrimaryBusiness),
     "offering": get_args(Offering),
 }
+# Answers that need no quote: they say "nothing found" or "can't tell".
+NO_QUOTE_NEEDED = ("no", "unknown", "unclear")
 REPORTED_FACTS = [f for f in FACT_VALUES if f != "offering"]
 # Exclusion checks, in order, and the offering each one means.
 EXCLUSIONS = [("is_services", "services"), ("is_marketplace", "marketplace"),
@@ -88,6 +92,11 @@ class SalesMotionFact(BaseModel):
     value: SalesMotion
 
 
+class PrimaryBusinessFact(BaseModel):
+    quote: str
+    value: PrimaryBusiness
+
+
 class CompanyFacts(BaseModel):
     """Factual answers about the company. Exclusion checks come before the positive one."""
 
@@ -99,6 +108,7 @@ class CompanyFacts(BaseModel):
     customers: CustomersFact
     sales_motion: SalesMotionFact
     sells_sales_tools: YesNoFact
+    primary_business: PrimaryBusinessFact   # only used when software and services both apply
 
 
 class IndustryRule(BaseModel):
@@ -192,10 +202,17 @@ class CriterionScore(BaseModel):
     score: int = Field(ge=0, le=5)
 
 
-class FitScores(BaseModel):
-    """The scoring call's output: buyer and pain scores, plus a summary."""
+class Rating(BaseModel):
+    evidence: str              # before score, so the model reasons before it picks a number
+    score: int = Field(ge=0, le=5)
 
-    criteria: list[CriterionScore]
+
+class FitScores(BaseModel):
+    """The scoring call's output. Named required fields, not a list: with a list the
+    model often returned it empty, and fit was then averaged over code criteria only."""
+
+    buyer_persona_fit: Rating
+    pain_match: Rating
     summary: str
 
 
@@ -247,15 +264,19 @@ product-led, no sales team).
 outbound described).
   - sales_team_unclear: has salespeople, but the text doesn't say how they find customers.
   - unknown: the text doesn't say.
-- sells_sales_tools: does its product help sales teams find, research or contact prospects?"""
+- sells_sales_tools: does its product help sales teams find, research or contact prospects?
+- primary_business: where does most of its revenue come from?
+  - software: its own software product.
+  - services: staff time, projects, implementation or consulting.
+  - unclear: the text doesn't make it clear which is bigger."""
 
 SCORE_PROMPT = """You qualify sales leads for a B2B seller. Judge only from the \
 company details given; never invent facts.
 
-Rate these two criteria on a 0-5 scale (0 = no match, 5 = perfect match), using \
-exactly these names. Write the evidence first, then the score.
-- buyer persona fit
-- pain match
+Rate these two criteria on a 0-5 scale (0 = no match, 5 = perfect match). \
+Write the evidence first, then the score.
+- buyer_persona_fit: does the company have, or need, the buyer we sell to?
+- pain_match: does the company likely have the problem we solve?
 
 These are often unstated. If the description says nothing about them, score 2 and \
 write "not mentioned." Score 0 or 1 only when there is positive evidence the company \
@@ -295,19 +316,19 @@ def _norm(text: str) -> str:
 def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str], list[str]]:
     """Apply the quote rule, then derive `offering`.
 
-    Any answer other than "no"/"unknown" needs a quote that really appears in the
-    company details; otherwise the fact drops to "unknown" and is reported.
+    Any answer other than no/unknown/unclear needs a quote that really appears in the
+    company details; otherwise the fact drops to its "can't tell" value and is reported.
     """
     source = _norm(f"{company.industry}. {company.description}")
     checked, rejected = {}, []
     for name in REPORTED_FACTS:
         fact = getattr(facts, name)
         value = fact.value
-        if value not in ("no", "unknown"):
+        if value not in NO_QUOTE_NEEDED:
             quote = _norm(fact.quote)
             if not quote or quote not in source:
                 rejected.append(f"{name}={value}: quote {fact.quote!r} not in the company details")
-                value = "unknown"
+                value = "unclear" if name == "primary_business" else "unknown"
         checked[name] = value
     checked["offering"] = _derive_offering(checked)
     checked["what_they_sell"] = facts.what_they_sell
@@ -315,8 +336,15 @@ def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str],
 
 
 def _derive_offering(facts: dict[str, str]) -> str:
-    """Exclusions first: one yes picks that bucket, two or more is a conflict."""
+    """Exclusions first: one yes picks that bucket, two or more is a conflict.
+
+    Own software plus a services arm (and nothing else) is settled by the primary
+    business; if that's unclear it stays a conflict, which can't trip the gate.
+    """
     hits = [offering for fact, offering in EXCLUSIONS if facts[fact] == "yes"]
+    if hits == ["services"] and facts["builds_own_software"] == "yes":
+        return {"software": "own_software", "services": "services"}.get(
+            facts["primary_business"], "other_unclear")
     if len(hits) > 1:
         return "other_unclear"
     if hits:
@@ -412,15 +440,14 @@ def _geography_criterion(icp: ICP, location: str) -> CriterionScore:
     return CriterionScore(criterion="geography match", score=score, evidence=why)
 
 
-def _merge_criteria(model: list[CriterionScore], code: list[CriterionScore]) -> list[CriterionScore]:
-    """Keep only the model's criteria (names normalised) plus the code ones, in a fixed order."""
-    by_name = {}
-    for c in model:
-        name = c.criterion.strip().lower()
-        if name in MODEL_CRITERIA and name not in by_name:
-            by_name[name] = c.model_copy(update={"criterion": name})
+def _merge_criteria(model: FitScores, code: list[CriterionScore]) -> list[CriterionScore]:
+    """The model's two ratings plus the code criteria, in a fixed order."""
+    by_name = {
+        "buyer persona fit": CriterionScore(criterion="buyer persona fit", **model.buyer_persona_fit.model_dump()),
+        "pain match": CriterionScore(criterion="pain match", **model.pain_match.model_dump()),
+    }
     by_name.update({c.criterion: c for c in code})
-    return [by_name[n] for n in ALL_CRITERIA if n in by_name]
+    return [by_name[n] for n in ALL_CRITERIA]
 
 
 def _fit_from_criteria(criteria: list[CriterionScore], capped: bool, gates: list[str]) -> int:
@@ -470,7 +497,7 @@ def _score_with(provider: str, icp: ICP, company: Company) -> LeadScore:
     facts, rejected = _check_facts(raw_facts, company)
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount),
                      _geography_criterion(icp, company.location)]
-    criteria = _merge_criteria(q.criteria, code_criteria)
+    criteria = _merge_criteria(q, code_criteria)
     disqualified, review_flags = _apply_rules(icp, facts)
     hit = bool(disqualified)
     fit = _fit_from_criteria(criteria, hit or too_small, icp.gates)
