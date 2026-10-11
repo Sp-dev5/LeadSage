@@ -24,7 +24,13 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 - **Model layer** (`agent/llm.py`): a local open-source model through Ollama first, Gemini as fallback and second opinion.
 - **Evaluation** (`agent/evaluate.py`): grades the scorer against hand-labelled leads.
 
-Steps 2, 3 and 5 to 7 are planned.
+## Roadmap
+
+1. Lead scoring (done)
+2. Walking skeleton: one seeded company goes research, then score, then drafted email
+3. Scoring engine: add intent and engagement on top of fit
+4. **Signal watcher**: watch each company for fresh buying signals and bump it up the queue the moment one fires
+5. Approval pause: the agent stops for a human to approve before "sending"
 
 ## Run it
 
@@ -37,6 +43,7 @@ python -m agent.evaluate          # grade against the labelled leads
 ```
 
 The ICP lives in `data/icp.json`. Change it to score for a different customer.
+Swapping models only touches `agent/llm.py`; nothing that calls it changes.
 
 ## A few terms
 
