@@ -1,6 +1,5 @@
-# District 02 — Solution Architecture & Technical Plan
+# LeadSage — Architecture & Technical Plan
 
-Working name: **TBD** (pick with the repo name).
 
 ## 1. The one loop the product is built around
 
@@ -60,7 +59,7 @@ Every tool call is written to an `agent_events` table (lead, node, tool, input s
 
 ### 2.2 RAG knowledge base
 
-- **Content:** seller's product/service pages, case studies, pricing, objection-handling notes, ICP notes. For the demo, use Spazor Labs' own public pages as the seller KB.
+- **Content:** seller's product/service pages, case studies, pricing, objection-handling notes, ICP notes. For a demo, use the seller's own public pages as the KB.
 - **Pipeline:** upload (PDF/MD/URL) → chunk (~500 tokens, overlap) → embed → `kb_chunks` in pgvector with metadata (doc, section, type = case_study / value_prop / objection / pricing).
 - **Embeddings:** Anthropic has no embedding endpoint. Options: Voyage AI (hosted, simple) or a local `bge-small` / `e5` via sentence-transformers (free, no key). Pick one on day 0.
 - **Where it changes outputs (this is the point):**
@@ -93,7 +92,7 @@ priority = w_fit·Fit + w_intent·Intent + w_eng·Engagement      (defaults 0.45
 - **Intent (0–100):** trigger events from research (hiring for relevant roles, funding, new product, tech change), recency-decayed.
 - **Engagement (0–100):** opens (low weight, unreliable), clicks, replies (sentiment-classified), with time decay.
 - Score recomputed on every event; the UI shows the breakdown and *what changed*.
-- **Honest framing for judges:** there is no outcome data to train on, so this is a rules + LLM-feature model designed so weights can later be fitted (logistic regression) once won/lost data accumulates in the CRM. Do not present synthetic-data ML as "AI scoring".
+- **Honest framing:** there is no outcome data to train on, so this is a rules + LLM-feature model designed so weights can later be fitted (logistic regression) once won/lost data accumulates in the CRM. Do not present synthetic-data ML as "AI scoring".
 
 ### 2.5 Three-step sequence engine
 
@@ -141,7 +140,7 @@ priority = w_fit·Fit + w_intent·Intent + w_eng·Engagement      (defaults 0.45
 | Search | Tavily or Exa | Serper | Built for agent research. |
 | Email | Gmail API (test inbox) | Resend / Mailtrap | Gmail also gives reply detection. |
 | CRM | HubSpot free | — | Real API, free, quick token setup. |
-| Deploy | Vercel (web) + Render/Railway (API) | Docker compose locally | A live URL helps judging. |
+| Deploy | Vercel (web) + Render/Railway (API) | Docker compose locally | A live URL makes it easy to show. |
 
 Decision to make on day 0: **Python backend vs TypeScript end to end.** Recommendation is Python unless most of the team is TS-only.
 

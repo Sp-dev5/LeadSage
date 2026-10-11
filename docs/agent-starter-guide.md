@@ -1,6 +1,6 @@
-# Agent Starter Guide (for Shaivi, Role A)
+# Agent Starter Guide
 
-Goal: before the event, build three tiny programs so that on the day you're building the real product, not learning how agents work. Each one takes an evening at most. Do them in order — each builds on the last.
+Goal: build three tiny programs so that when you build the real product, you already know how agents work. Each one takes an evening at most. Do them in order — each builds on the last.
 
 **The one idea to hold onto:** an "agent" is just a loop. The AI looks at a goal, picks a tool to use, you run that tool, you hand the result back, and it decides what to do next — until it's done. That's it. Everything else is detail.
 
@@ -15,7 +15,7 @@ pip install anthropic
 export ANTHROPIC_API_KEY="your-key-here"
 ```
 
-Get the key from the LLM account your team sets up. For cheap practice, use the small model `claude-haiku-4-5`; for the real product use a stronger one like `claude-sonnet-5-5`. The code is identical; you just change the model name.
+Get an API key for the model you use. For cheap practice, use the small model `claude-haiku-4-5`; for the real product use a stronger one like `claude-sonnet-5-5`. The code is identical; you just change the model name.
 
 > If the organisers give you a different AI provider (OpenAI, Google, etc.), the *ideas* below are the same, but the exact code differs. Tell me which one and I'll adjust this guide.
 
@@ -32,7 +32,7 @@ import anthropic
 
 client = anthropic.Anthropic()
 
-company = "Spazor Labs"
+company = "Acme Corp"
 
 response = client.messages.create(
     model="claude-haiku-4-5",
@@ -75,7 +75,7 @@ class Company(BaseModel):
     summary: str       # 1-2 sentences
     recent_signal: str # something that suggests they might buy
 
-company = "Spazor Labs"
+company = "Acme Corp"
 
 response = client.messages.parse(
     model="claude-haiku-4-5",
@@ -140,18 +140,18 @@ for block in final.content:
         print(block.text)
 ```
 
-**What just happened:** the AI called `research_company` first, then decided on its own to call `find_email` with the name and company, then wrote the answer. You never told it the order — it worked that out. **That decision-making is the thing judges will want to see.**
+**What just happened:** the AI called `research_company` first, then decided on its own to call `find_email` with the name and company, then wrote the answer. You never told it the order — it worked that out. **That decision-making is the thing that matters.**
 
 **You've got it when:** you can watch (add `print` inside each function) the AI call the two tools in a sensible order without you scripting it.
 
 ---
 
-## Where this goes on the day
+## Where this goes
 
 Your real agent is Steps 1–3 stacked up with more tools, in this order per lead:
 1. find companies → 2. find the right person → 3. research (Step 1) → 4. **score and explain** → 5. write the email → then pause for a human to approve.
 
-Steps 4 and 5 are more prompt-writing than new concepts. If you're solid on Steps 1–3 above, you'll spend the event wiring real tools into the loop instead of learning the loop.
+Steps 4 and 5 are more prompt-writing than new concepts. If you're solid on Steps 1–3 above, you'll spend your time wiring real tools into the loop instead of learning the loop.
 
 ## If you get stuck
 
