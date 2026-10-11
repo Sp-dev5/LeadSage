@@ -30,6 +30,7 @@
   "industry_default": 2,
   "fact_rules": [
     {"fact": "sales_motion", "value": "no_sales", "label": "no sales team (self-serve)", "action": "review"},
+    {"fact": "sales_motion", "value": "unknown", "label": "sales motion unknown (needs research)", "action": "review"},
     {"fact": "customers", "value": "consumers", "label": "consumer (B2C) product", "action": "disqualify"},
     {"fact": "sells_sales_tools", "value": "yes", "label": "competitor: sells sales-intelligence or prospecting tools", "action": "disqualify"}
   ]
