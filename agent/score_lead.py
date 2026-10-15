@@ -24,16 +24,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from agent.llm import generate_structured
 
-# Every number that depends on the customer lives in the ICP file (`settings`),
-# not here. What stays in code is the mechanism and facts that are true for anyone.
-
 ALL_CRITERIA = ["industry match", "company size match", "geography match",
                 "buyer persona fit", "pain match"]
 
-# Short forms pycountry doesn't know. Matched case-sensitively so "us" in text doesn't count.
 COUNTRY_ALIASES = {"USA": "US", "US": "US", "UK": "GB", "UAE": "AE"}
-
-# --- Facts the model reports. Closed value lists, so code can apply rules to them.
 
 YesNo = Literal["yes", "no", "unknown"]
 Customers = Literal["businesses", "consumers", "mixed", "unknown"]
@@ -44,8 +38,6 @@ PrimaryBusiness = Literal["software", "services", "unclear"]
 V = TypeVar("V")
 
 
-# `quote` has no default on purpose: a default makes it optional in the JSON schema,
-# and the model then skips it. It comes first so the model finds evidence before answering.
 class Fact(BaseModel, Generic[V]):
     quote: str
     value: V
@@ -62,19 +54,15 @@ class CompanyFacts(BaseModel):
     customers: Fact[Customers]
     sales_motion: Fact[SalesMotion]
     sells_sales_tools: Fact[YesNo]
-    primary_business: Fact[PrimaryBusiness]   # only used when software and services both apply
+    primary_business: Fact[PrimaryBusiness]
 
 
-# Every fact a rule may test, with its allowed values, read from the schema above so the
-# two can't drift. `offering` is derived by code, not reported by the model.
 FACT_VALUES: dict[str, tuple[str, ...]] = {
     name: get_args(field.annotation.model_fields["value"].annotation)
     for name, field in CompanyFacts.model_fields.items() if name != "what_they_sell"
 } | {"offering": get_args(Offering)}
-# Answers that need no quote: they say "nothing found" or "can't tell".
 NO_QUOTE_NEEDED = ("no", "unknown", "unclear")
 REPORTED_FACTS = [f for f in FACT_VALUES if f != "offering"]
-# Exclusion checks, in order, and the offering each one means.
 EXCLUSIONS = [("is_services", "services"), ("is_marketplace", "marketplace"),
               ("is_non_software", "non_software")]
 
@@ -105,7 +93,6 @@ class FactRule(BaseModel):
 
     @model_validator(mode="after")
     def _value_exists(self) -> FactRule:
-        # A value the model can never produce is a dead rule; fail loudly instead.
         if self.fact not in FACT_VALUES:
             raise ValueError(f"fact_rules: unknown fact {self.fact!r}; use one of {list(FACT_VALUES)}")
         if self.value not in FACT_VALUES[self.fact]:
@@ -156,16 +143,15 @@ class ICP(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    buyer_persona: str         # e.g. "Head of Sales / RevOps"
-    pain_solved: str           # the problem our product fixes
-    notes: str = ""            # anything else: what we sell, buying signals
-    # Structured versions of size and geography, scored by code (not the model).
+    buyer_persona: str
+    pain_solved: str
+    notes: str = ""
     company_size_min: int
     company_size_max: int
-    geography_countries: list[str]   # real country names, not regions
-    gates: list[str]                 # criteria that fail the lead when they score <= gate_fail_max
-    industry_map: list[IndustryRule]  # first matching row sets the industry score
-    industry_default: int = Field(ge=0, le=5)  # industry score when no industry_map row matches
+    geography_countries: list[str]
+    gates: list[str]
+    industry_map: list[IndustryRule]
+    industry_default: int = Field(ge=0, le=5)
     fact_rules: list[FactRule]
     settings: Settings
 
@@ -182,7 +168,6 @@ class ICP(BaseModel):
     @field_validator("gates")
     @classmethod
     def _gates_exist(cls, v: list[str]) -> list[str]:
-        # A typo here would silently switch the gate off.
         unknown = [g for g in v if g not in ALL_CRITERIA]
         if unknown:
             raise ValueError(f"Unknown gate criteria {unknown}; use names from {ALL_CRITERIA}")
@@ -196,13 +181,13 @@ class Company(BaseModel):
     industry: str
     size: str
     location: str
-    description: str           # a short brief; later this comes from the research step
+    description: str
 
 
 class Rating(BaseModel):
     """A 0-5 score with the evidence behind it."""
 
-    evidence: str              # before score, so the model reasons before it picks a number
+    evidence: str
     score: int = Field(ge=0, le=5)
 
 
@@ -224,21 +209,19 @@ class FitScores(BaseModel):
 class LeadScore(BaseModel):
     """The final, explainable score we hand to the rest of the app."""
 
-    fit: int                   # 0-100
+    fit: int
     verdict: Literal["qualify", "review", "disqualify"]
     criteria: list[CriterionScore]
     disqualifier_hit: bool
     disqualifier_reason: str
     summary: str
-    facts: dict[str, str] = {}               # checked facts, after the quote rule
-    review_flags: list[str] = []             # review rules that capped the verdict
-    rejected_quotes: list[str] = []          # facts dropped to unknown: quote not in the text
-    provider: str = ""                       # which model produced this
-    second_opinion: LeadScore | None = None  # set when a 2nd model also scored it
+    facts: dict[str, str] = {}
+    review_flags: list[str] = []
+    rejected_quotes: list[str] = []
+    provider: str = ""
+    second_opinion: LeadScore | None = None
 
 
-# Two calls per lead. The facts call never sees our ICP, so it can't confuse our
-# product with theirs.
 FACTS_PROMPT = """You extract facts about a company from its details. Judge only from \
 the text given; never invent facts.
 
@@ -488,7 +471,6 @@ def _verdict(fit: int, disqualifier_hit: bool, s: Settings) -> Literal["qualify"
 
 def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
     """Score one company with one specific model: no fallback, no second opinion."""
-    # Facts code can read straight off the form: identical whichever model runs.
     headcount = _parse_headcount(company.size)
     too_small = headcount is not None and headcount < icp.settings.min_headcount
 
@@ -568,8 +550,6 @@ def score_lead(icp: ICP, company: Company) -> LeadScore:
         )
     return primary
 
-
-# --- A seeded company so this runs out of the box ----------------------
 
 ICP_PATH = Path(__file__).resolve().parent.parent / "data" / "icp.json"
 

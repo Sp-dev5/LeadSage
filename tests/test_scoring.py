@@ -50,8 +50,6 @@ def crit(*scores) -> list[sl.CriterionScore]:
     return [sl.CriterionScore(criterion=n, score=s, evidence="") for n, s in zip(NAMES, scores)]
 
 
-# --- headcount, size, geography ------------------------------------------------
-
 @pytest.mark.parametrize("text, expected", [
     ("120 employees", 120), ("1,200 employees", 1200), ("1.5k staff", 1500),
     ("about 75 people", 75), ("200-250 employees", 200), ("unknown", None),
@@ -80,8 +78,6 @@ def test_unknown_score_comes_from_settings():
     assert sl._size_criterion(icp, None).score == 3
     assert sl._geography_criterion(icp, "Kochi").score == 3
 
-
-# --- facts: quote rule and offering ---------------------------------------------
 
 COMPANY = sl.Company(name="X", industry="B2B SaaS - CRM", size="80", location="Pune, India",
                      description="Sells a CRM to small businesses. Founders do all the selling.")
@@ -154,14 +150,12 @@ def test_apply_rules_splits_disqualify_and_review():
     assert sl._apply_rules(icp, {"customers": "businesses", "sales_motion": "founder_led"}) == ([], [])
 
 
-# --- fit and verdict -------------------------------------------------------------
-
 def test_fit_is_the_average_when_nothing_fails():
     assert sl._fit_from_criteria(crit(5, 5, 2, 5, 5), False, make_icp()) == 88
 
 
 def test_failed_gate_caps_the_fit():
-    assert sl._fit_from_criteria(crit(0, 5, 5, 4, 4), False, make_icp()) == 20   # average would be 72
+    assert sl._fit_from_criteria(crit(0, 5, 5, 4, 4), False, make_icp()) == 20
     assert sl._fit_from_criteria(crit(5, 5, 1, 5, 5), False, make_icp()) == 20
 
 
@@ -183,8 +177,6 @@ def test_verdict(fit, hit, verdict):
     assert sl._verdict(fit, hit, make_icp().settings) == verdict
 
 
-# --- loading the ICP ---------------------------------------------------------------
-
 @pytest.mark.parametrize("name", ["icp.json", "icp_geo_soft.json"])
 def test_shipped_icps_load(name):
     sl.load_icp(DATA / name)
@@ -204,11 +196,11 @@ def test_missing_setting_is_named(tmp_path):
 
 
 @pytest.mark.parametrize("change", [
-    {"disqualifiers": ["fewer than 10 employees"]},                                  # leftover key does nothing
-    {"fact_rules": [{"fact": "customers", "value": "government", "label": "x"}]},   # value never produced
-    {"fact_rules": [{"fact": "salez", "value": "yes", "label": "x"}]},              # unknown fact
-    {"gates": ["industry"]},                                                         # typo in a gate
-    {"industry_map": [{"offering": "saas", "score": 5}]},                            # unknown offering
+    {"disqualifiers": ["fewer than 10 employees"]},
+    {"fact_rules": [{"fact": "customers", "value": "government", "label": "x"}]},
+    {"fact_rules": [{"fact": "salez", "value": "yes", "label": "x"}]},
+    {"gates": ["industry"]},
+    {"industry_map": [{"offering": "saas", "score": 5}]},
 ])
 def test_dead_config_is_rejected(tmp_path, change):
     with pytest.raises(ValueError):
@@ -222,16 +214,12 @@ def test_bad_weights_are_rejected(tmp_path):
         _load(tmp_path, raw)
 
 
-# --- schemas the model fills: guards against bugs we already hit ---------------------
-
 def test_every_fact_requires_a_quote():
-    # An optional quote let the model skip it.
     defs = sl.CompanyFacts.model_json_schema()["$defs"]
     assert all("quote" in d.get("required", []) for d in defs.values())
 
 
 def test_buyer_and_pain_are_required():
-    # A list let the model return nothing, and fit was averaged over three criteria.
     required = sl.FitScores.model_json_schema()["required"]
     assert {"buyer_persona_fit", "pain_match"} <= set(required)
 
@@ -243,8 +231,6 @@ def test_fact_values_match_the_schema():
         value_type = field.annotation.model_fields["value"].annotation
         assert sl.FACT_VALUES[name] == sl.get_args(value_type), name
 
-
-# --- evaluation grading ----------------------------------------------------------------
 
 @pytest.mark.parametrize("label, verdict, grade", [
     ("qualify", "qualify", "OK"), ("qualify", "review", "near"),

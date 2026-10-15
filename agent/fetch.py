@@ -23,8 +23,8 @@ import trafilatura
 from pydantic import BaseModel
 
 USER_AGENT = "LeadSage/0.1"
-TIMEOUT = 10        # seconds, per request
-MAX_CHARS = 4000    # prompts must stay short: the local model has a small context window
+TIMEOUT = 10
+MAX_CHARS = 4000
 MAX_REDIRECTS = 5
 REDIRECT_CODES = (301, 302, 303, 307, 308)
 
@@ -32,7 +32,7 @@ REDIRECT_CODES = (301, 302, 303, 307, 308)
 class Page(BaseModel):
     url: str
     text: str = ""
-    fetched_at: str     # UTC, ISO 8601
+    fetched_at: str
     ok: bool
     error: str = ""
 
@@ -78,7 +78,6 @@ def fetch_page(url: str) -> Page:
         if not _allowed_by_robots(url):
             return _fail(url, "blocked by robots.txt")
 
-        # Redirects are followed by hand so each new address gets its own robots.txt check.
         current = url
         redirects = 0
         while True:
@@ -102,7 +101,6 @@ def fetch_page(url: str) -> Page:
         if "html" not in content_type.lower():
             return _fail(url, f"not HTML ({content_type or 'no content type'})")
 
-        # Bytes, not resp.text: trafilatura reads the page's own charset declaration.
         text = _clean(trafilatura.extract(resp.content, url=current) or "")
         if not text:
             return _fail(url, "no readable text")
@@ -113,7 +111,7 @@ def fetch_page(url: str) -> Page:
         return _fail(url, "could not connect (site down or no such domain)")
     except requests.RequestException as e:
         return _fail(url, f"request failed: {type(e).__name__}")
-    except Exception as e:  # never raise: one bad page must not stop a batch
+    except Exception as e:
         return _fail(url, f"{type(e).__name__}: {e}")
 
 
@@ -121,7 +119,7 @@ def _demo() -> None:
     if len(sys.argv) != 2:
         print("Usage: python -m agent.fetch <url>")
         sys.exit(1)
-    sys.stdout.reconfigure(encoding="utf-8")   # Windows' default (cp1252) can't print every character
+    sys.stdout.reconfigure(encoding="utf-8")
     page = fetch_page(sys.argv[1])
     print(f"ok:         {page.ok}")
     print(f"url:        {page.url}")
