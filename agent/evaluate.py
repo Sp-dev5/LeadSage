@@ -8,20 +8,28 @@ Run it:  python -m agent.evaluate               both models
          python -m agent.evaluate --only ollama one model (Gemini is often overloaded)
          python -m agent.evaluate --file unseen_leads.csv --runs 3 --only ollama
          python -m agent.evaluate --icp icp_geo_soft.json   compare an ICP variant
+         python -m agent.evaluate --file real_leads.csv --text fetched   score the real website
 Needs `ollama serve` running; Gemini needs a key in .env.
 Results are also saved to data/eval_results_<file>_<model>.csv.
+
+--text fetched scores each lead's website (its `url` column) instead of the typed
+description. Pages are cached in data/pages/ so every run scores the same text;
+--refetch downloads them again. A failed fetch falls back to the typed description.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import re
 from collections import Counter
 from pathlib import Path
 
+from agent.fetch import Page, fetch_page
 from agent.score_lead import Company, load_icp, score_once
 
 DATA = Path(__file__).resolve().parent.parent / "data"
+PAGES = DATA / "pages"   # fetched pages, git-ignored: websites change, the cache keeps runs comparable
 ORDER = {"disqualify": 0, "review": 1, "qualify": 2}
 
 
@@ -33,6 +41,35 @@ def _grade(label: str, verdict: str) -> str:
     return "OK" if gap == 0 else "near" if gap == 1 else "MISS"
 
 
+def _slug(name: str) -> str:
+    """Company name as a safe file name: "Acme Co." -> "acme-co"."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _lead_description(row: dict, mode: str, pages: Path = PAGES,
+                      refetch: bool = False) -> tuple[str, str]:
+    """The text to score for one lead, and where it came from.
+
+    Only pages that fetched fine are cached, so a site that was down is tried again next run.
+    """
+    typed = row["description"]
+    url = (row.get("url") or "").strip()
+    if mode == "typed" or not url:
+        return typed, "typed"
+
+    cached = pages / f"{_slug(row['name'])}.json"
+    if cached.exists() and not refetch:
+        return Page.model_validate_json(cached.read_text(encoding="utf-8")).text, "fetched"
+
+    page = fetch_page(url)
+    if not page.ok:
+        print(f"  fetch failed for {row['name']}: {page.error}, using typed", flush=True)
+        return typed, "typed (fetch failed)"
+    pages.mkdir(parents=True, exist_ok=True)
+    cached.write_text(page.model_dump_json(indent=2), encoding="utf-8")
+    return page.text, "fetched"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=["ollama", "gemini"], help="score with just one model")
@@ -41,6 +78,9 @@ def main() -> None:
     ap.add_argument("--file", default="labelled_leads.csv", help="lead CSV in data/ (default: labelled_leads.csv)")
     ap.add_argument("--icp", default="icp.json", help="ICP JSON in data/ (default: icp.json); use a variant to compare rules")
     ap.add_argument("--runs", type=int, default=1, help="score each lead N times and take the majority verdict")
+    ap.add_argument("--text", choices=["typed", "fetched"], default="typed",
+                    help="score the typed description (default) or the lead's website (needs a url column)")
+    ap.add_argument("--refetch", action="store_true", help="with --text fetched: ignore cached pages, download again")
     args = ap.parse_args()
     only = args.only
     providers = (only,) if only else ("ollama", "gemini")
@@ -56,13 +96,15 @@ def main() -> None:
         rows = [r for r in rows if r["name"].lower() in wanted]
     print(f"Scoring {len(rows)} labelled leads from {lead_file.name} (ICP: {icp_file.name}) "
           f"with {' and '.join(providers)}, "
-          f"{runs} run(s) each...\n", flush=True)
+          f"{runs} run(s) each, {args.text} text...\n", flush=True)
 
     results = []
     for i, r in enumerate(rows, 1):
+        # Once per lead, before the runs loop: every run and model scores the same text.
+        description, text_source = _lead_description(r, args.text, refetch=args.refetch)
         company = Company(name=r["name"], industry=r["industry"], size=r["size"],
-                          location=r["location"], description=r["description"])
-        out = {"name": r["name"], "label": r["my_label"].strip().lower()}
+                          location=r["location"], description=description)
+        out = {"name": r["name"], "label": r["my_label"].strip().lower(), "text_source": text_source}
         for p in providers:
             scores = []
             for _ in range(runs):
@@ -112,12 +154,13 @@ def main() -> None:
         print(f"Both differ from you on {len(both_wrong)}: {', '.join(both_wrong) or 'none'}")
 
     icp_tag = "" if icp_file.name == "icp.json" else f"_{icp_file.stem}"
-    out_path = DATA / f"eval_results_{lead_file.stem}{icp_tag}_{'_'.join(providers)}.csv"
+    text_tag = "_fetched" if args.text == "fetched" else ""
+    out_path = DATA / f"eval_results_{lead_file.stem}{icp_tag}{text_tag}_{'_'.join(providers)}.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["name", "my_label"] + [f"{p}_{c}" for p in providers for c in ("verdict", "fit", "grade", "votes")])
+        w.writerow(["name", "my_label", "text_source"] + [f"{p}_{c}" for p in providers for c in ("verdict", "fit", "grade", "votes")])
         for o in results:
-            w.writerow([o["name"], o["label"]] + [x for p in providers for x in o[p]])
+            w.writerow([o["name"], o["label"], o["text_source"]] + [x for p in providers for x in o[p]])
     print(f"\nSaved {out_path}")
 
 
