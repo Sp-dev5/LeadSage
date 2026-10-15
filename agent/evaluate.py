@@ -29,7 +29,7 @@ from agent.fetch import Page, fetch_page
 from agent.score_lead import Company, load_icp, score_once
 
 DATA = Path(__file__).resolve().parent.parent / "data"
-PAGES = DATA / "pages"   # fetched pages, git-ignored: websites change, the cache keeps runs comparable
+PAGES = DATA / "pages"
 ORDER = {"disqualify": 0, "review": 1, "qualify": 2}
 
 
@@ -100,7 +100,6 @@ def main() -> None:
 
     results = []
     for i, r in enumerate(rows, 1):
-        # Once per lead, before the runs loop: every run and model scores the same text.
         description, text_source = _lead_description(r, args.text, refetch=args.refetch)
         company = Company(name=r["name"], industry=r["industry"], size=r["size"],
                           location=r["location"], description=description)
@@ -115,7 +114,6 @@ def main() -> None:
             if not scores:
                 out[p] = ("error", None, "ERR", "")
                 continue
-            # Majority verdict; its fit is the average over the runs that gave it.
             verdict, votes = Counter(s.verdict for s in scores).most_common(1)[0]
             agreeing = [s for s in scores if s.verdict == verdict]
             fit = round(sum(s.fit for s in agreeing) / len(agreeing))

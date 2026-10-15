@@ -23,13 +23,12 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
-# Reads GEMINI_API_KEY, LLM_PROVIDER etc. from a .env file in the project folder.
 load_dotenv()
 
-MODEL = "gemini-3.8-flash"           # Gemini's fast, free-tier model
-OLLAMA_DEFAULT_MODEL = "qwen3.5:9b"  # best of 3 on the unseen leads; override with OLLAMA_MODEL
-OLLAMA_TIMEOUT = 300  # seconds; the first call loads the model into the GPU
-RETRYABLE_CODES = [500, 503, 504]  # temporary Gemini errors worth retrying (429 = quota spent, retrying only burns more)
+MODEL = "gemini-3.8-flash"
+OLLAMA_DEFAULT_MODEL = "qwen3.5:9b"
+OLLAMA_TIMEOUT = 300
+RETRYABLE_CODES = [500, 503, 504]
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -64,10 +63,8 @@ def _ollama_structured(system: str, user_prompt: str, schema: type[T]) -> T:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
-            format=schema.model_json_schema(),  # Ollama constrains the output to this schema
+            format=schema.model_json_schema(),
             options={"temperature": 0.2},
-            # qwen3.5 thinks by default, and with a JSON schema set it then returns nothing.
-            # Other models ignore this.
             think=False,
         )
     except ConnectionError as e:
@@ -102,13 +99,12 @@ def generate_structured(
             system_instruction=system,
             response_mime_type="application/json",
             response_schema=schema,
-            temperature=0.2,  # low = consistent, repeatable judgements
+            temperature=0.2,
         ),
     )
 
     parsed = response.parsed
     if not isinstance(parsed, schema):
-        # Fallback: the SDK couldn't auto-parse; validate the raw text ourselves.
         raw = (response.text or "").strip()
         if not raw:
             raise RuntimeError("Model returned no usable output.")
