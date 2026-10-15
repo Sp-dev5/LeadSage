@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 import sys
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
 import requests
@@ -25,6 +25,8 @@ from pydantic import BaseModel
 USER_AGENT = "LeadSage/0.1"
 TIMEOUT = 10        # seconds, per request
 MAX_CHARS = 4000    # prompts must stay short: the local model has a small context window
+MAX_REDIRECTS = 5
+REDIRECT_CODES = (301, 302, 303, 307, 308)
 
 
 class Page(BaseModel):
@@ -76,8 +78,24 @@ def fetch_page(url: str) -> Page:
         if not _allowed_by_robots(url):
             return _fail(url, "blocked by robots.txt")
 
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT},
-                            timeout=TIMEOUT, allow_redirects=True)
+        # Redirects are followed by hand so each new address gets its own robots.txt check.
+        current = url
+        redirects = 0
+        while True:
+            resp = requests.get(current, headers={"User-Agent": USER_AGENT},
+                                timeout=TIMEOUT, allow_redirects=False)
+            location = resp.headers.get("Location")
+            if resp.status_code not in REDIRECT_CODES or not location:
+                break
+            if redirects == MAX_REDIRECTS:
+                return _fail(url, "too many redirects")
+            current = urljoin(current, location)
+            if urlsplit(current).scheme not in ("http", "https"):
+                return _fail(url, "redirected to a non-http(s) URL")
+            if not _allowed_by_robots(current):
+                return _fail(url, "redirect blocked by robots.txt")
+            redirects += 1
+
         if resp.status_code >= 400:
             return _fail(url, f"HTTP {resp.status_code}")
         content_type = resp.headers.get("Content-Type", "")
@@ -85,10 +103,10 @@ def fetch_page(url: str) -> Page:
             return _fail(url, f"not HTML ({content_type or 'no content type'})")
 
         # Bytes, not resp.text: trafilatura reads the page's own charset declaration.
-        text = _clean(trafilatura.extract(resp.content, url=resp.url) or "")
+        text = _clean(trafilatura.extract(resp.content, url=current) or "")
         if not text:
             return _fail(url, "no readable text")
-        return Page(url=resp.url, text=text, fetched_at=_now(), ok=True)
+        return Page(url=current, text=text, fetched_at=_now(), ok=True)
     except requests.Timeout:
         return _fail(url, f"timed out after {TIMEOUT}s")
     except requests.ConnectionError:
@@ -103,7 +121,7 @@ def _demo() -> None:
     if len(sys.argv) != 2:
         print("Usage: python -m agent.fetch <url>")
         sys.exit(1)
-    sys.stdout.reconfigure(errors="replace")   # Windows consoles can't print every character
+    sys.stdout.reconfigure(encoding="utf-8")   # Windows' default (cp1252) can't print every character
     page = fetch_page(sys.argv[1])
     print(f"ok:         {page.ok}")
     print(f"url:        {page.url}")
