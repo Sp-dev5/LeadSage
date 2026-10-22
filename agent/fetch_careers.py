@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from agent.fetch import MAX_CHARS, fetch_page
+from agent.fetch import MAX_CHARS, fetch_page, slug
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 PAGES = DATA / "pages"
@@ -25,8 +24,7 @@ SALES_WORDS = ("sales", "account executive", "sdr", "revenue")
 
 
 def cache_path(name: str, pages: Path = PAGES) -> Path:
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return pages / f"{slug}-careers.json"
+    return pages / f"{slug(name)}-careers.json"
 
 
 def sales_words_in(text: str) -> list[str]:

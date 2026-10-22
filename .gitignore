@@ -13,3 +13,6 @@ data/eval_results*.csv
 
 # Fetched web pages (cache for --text fetched)
 data/pages/
+
+# Sales-hiring results (python -m agent.signals)
+data/signals_results.csv

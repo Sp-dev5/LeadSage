@@ -14,6 +14,7 @@ NAMES = ["industry match", "company size match", "geography match", "buyer perso
 BASE_ICP = {
     "buyer_persona": "Head of Sales",
     "pain_solved": "Manual prospecting",
+    "sales_roles": {"definition": "a job that sells", "titles": ["account executive", "sdr"]},
     "company_size_min": 50,
     "company_size_max": 500,
     "geography_countries": ["India", "Singapore", "Vietnam", "Australia"],
@@ -67,16 +68,32 @@ def test_size_criterion(headcount, score):
 
 @pytest.mark.parametrize("location, score", [
     ("Bengaluru, India", 5), ("Hanoi, Viet Nam", 5), ("Toronto, Canada", 1),
-    ("Austin, USA", 1), ("London, UK", 1), ("Indiana, USA", 1), ("Kochi", 2), ("", 2),
+    ("Austin, USA", 1), ("London, UK", 1), ("Indiana, USA", 1), ("Nowhereville", 2), ("", 2),
 ])
 def test_geography_criterion(location, score):
     assert sl._geography_criterion(make_icp(), location).score == score
 
 
+@pytest.mark.parametrize("location, score", [
+    ("Sydney, New South Wales", 5), ("Bangalore, Karnataka", 5), ("Chennai, Tamil Nadu", 5),
+    ("Greater Sydney Area", 5),
+    ("San Francisco, California", 1), ("Wilmington, Delaware", 1), ("Toronto, Ontario", 1),
+    ("San Francisco", 2), ("Toronto", 2),
+])
+def test_geography_from_state_or_city(location, score):
+    assert sl._geography_criterion(make_icp(), location).score == score
+
+
+def test_city_name_shared_by_countries_goes_to_the_biggest():
+    assert sl._place_country("Sydney") == ("AU", False)
+    assert sl._place_country("Sydney, New South Wales") == ("AU", True)
+    assert sl._place_country("Nowhereville") is None
+
+
 def test_unknown_score_comes_from_settings():
     icp = make_icp(unknown_score=3)
     assert sl._size_criterion(icp, None).score == 3
-    assert sl._geography_criterion(icp, "Kochi").score == 3
+    assert sl._geography_criterion(icp, "Nowhereville").score == 3
 
 
 COMPANY = sl.Company(name="X", industry="B2B SaaS - CRM", size="80", location="Pune, India",
@@ -113,6 +130,27 @@ def test_quote_not_in_text_drops_to_unknown():
 def test_quote_match_ignores_case_and_dash_style():
     checked, _ = sl._check_facts(facts(builds_own_software=("yes", "b2b saas — crm")), COMPANY)
     assert checked["builds_own_software"] == "yes"
+
+
+ROLE = sl.SalesRole(title="Account Executive", match="exact",
+                    source="https://api.ashbyhq.com/posting-api/job-board/x", fetched_at="2026-10-23T00:00:00+00:00")
+
+
+def test_sales_roles_fill_an_unknown_sales_motion():
+    hiring = COMPANY.model_copy(update={"sales_roles": [ROLE]})
+    checked, _ = sl._check_facts(facts(), hiring)
+    assert checked["sales_motion"] == "sales_team_unclear"
+
+
+def test_sales_roles_never_override_what_the_text_says():
+    hiring = COMPANY.model_copy(update={"sales_roles": [ROLE]})
+    checked, _ = sl._check_facts(facts(sales_motion=("founder_led", "Founders do all the selling")), hiring)
+    assert checked["sales_motion"] == "founder_led"
+
+
+def test_no_sales_roles_leaves_sales_motion_unknown():
+    checked, _ = sl._check_facts(facts(), COMPANY)
+    assert checked["sales_motion"] == "unknown"
 
 
 def test_rejected_primary_business_falls_back_to_unclear():

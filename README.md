@@ -24,6 +24,7 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 - **Model layer** (`agent/llm.py`): a local open-source model through Ollama first, Gemini as fallback and second opinion.
 - **Evaluation** (`agent/evaluate.py`): grades the scorer against hand-labelled leads. With `--text fetched` it scores the company's real website instead of the typed description.
 - **Fetcher** (`agent/fetch.py`): reads a company's web page and returns the text with its source and date. It checks robots.txt first, including at every redirect. A failed fetch never stops a batch.
+- **Sales hiring** (`agent/signals.py`): reads a company's open jobs from its job board (Ashby, Greenhouse, Lever, Keka, Trakstar; found on the careers page or typed in the CSV) and finds the sales roles. A title counts if it contains one of the ICP's sales titles, or if the model says it's a sales role and the title really is on the list. Each role keeps its source and date. Found roles tell the scorer the company has salespeople.
 - **Careers probe** (`agent/fetch_careers.py`): a feasibility check for the hiring signal. It fetches each careers page from `data/signals_leads.csv` (columns `name,careers_url`) and reports whether the page is readable and mentions sales roles. It passes if at least half do.
 
 ## Roadmap
@@ -45,6 +46,7 @@ python -m agent.evaluate          # grade against the labelled leads
 python -m agent.evaluate --file real_leads.csv --text fetched   # score real websites
 python -m agent.fetch https://example.com                       # read one page
 python -m agent.fetch_careers                                   # probe careers pages
+python -m agent.signals                                         # sales roles from job boards
 ```
 
 Run the tests with `pip install -r requirements-dev.txt` then `pytest`.

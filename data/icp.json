@@ -2,6 +2,14 @@
   "buyer_persona": "Head or VP of Sales, RevOps or Sales Ops lead",
   "pain_solved": "Sales reps spend hours researching and writing outreach by hand, and miss the right moment to reach out.",
   "notes": "We sell an AI agent that researches, qualifies and times outreach for B2B sales teams, priced per seat per month. Needs an outbound sales team of 3+ (AEs or SDRs). Strong signals: hiring SDRs, AEs or RevOps; recent seed to Series B funding; outbound described. Weak signals: self-serve only, founder-only sales, 1000+ employees.",
+  "sales_roles": {
+    "definition": "a job whose main work is selling to new customers, finding and contacting prospects, or running the sales team, its process or its tools",
+    "titles": [
+      "account executive", "sales development representative", "sdr", "business development representative", "bdr",
+      "revops", "revenue operations", "sales operations", "sales ops", "inside sales",
+      "sales manager", "head of sales", "vp sales", "vp of sales", "sales director", "chief revenue officer"
+    ]
+  },
   "company_size_min": 50,
   "company_size_max": 500,
   "geography_countries": [
@@ -15,7 +23,7 @@
     "Australia",
     "New Zealand"
   ],
-  "gates": ["industry match", "geography match"],
+  "gates": ["industry match"],
   "industry_map": [
     {"offering": "own_software", "customers": "businesses", "score": 5},
     {"offering": "own_software", "customers": "mixed", "score": 3},
