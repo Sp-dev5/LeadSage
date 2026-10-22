@@ -22,7 +22,9 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 
 - **Lead scoring** (`agent/score_lead.py`): scores a company against the ICP with evidence for every number. Facts like size and country are checked in code; the model only judges buyer and pain.
 - **Model layer** (`agent/llm.py`): a local open-source model through Ollama first, Gemini as fallback and second opinion.
-- **Evaluation** (`agent/evaluate.py`): grades the scorer against hand-labelled leads.
+- **Evaluation** (`agent/evaluate.py`): grades the scorer against hand-labelled leads. With `--text fetched` it scores the company's real website instead of the typed description.
+- **Fetcher** (`agent/fetch.py`): reads a company's web page and returns the text with its source and date. It checks robots.txt first, including at every redirect. A failed fetch never stops a batch.
+- **Careers probe** (`agent/fetch_careers.py`): a feasibility check for the hiring signal. It fetches each careers page from `data/signals_leads.csv` (columns `name,careers_url`) and reports whether the page is readable and mentions sales roles. It passes if at least half do.
 
 ## Roadmap
 
@@ -40,7 +42,12 @@ ollama pull qwen3.5:9b            # local model (default)
 # optional: add GEMINI_API_KEY=your-key to .env for the fallback
 python -m agent.score_lead        # score a sample company
 python -m agent.evaluate          # grade against the labelled leads
+python -m agent.evaluate --file real_leads.csv --text fetched   # score real websites
+python -m agent.fetch https://example.com                       # read one page
+python -m agent.fetch_careers                                   # probe careers pages
 ```
+
+Run the tests with `pip install -r requirements-dev.txt` then `pytest`.
 
 The ICP lives in `data/icp.json`. Change it to score for a different customer.
 Swapping models only touches `agent/llm.py`; nothing that calls it changes.
