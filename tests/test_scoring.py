@@ -138,6 +138,17 @@ def test_quote_match_ignores_case_and_dash_style():
     assert checked["builds_own_software"] == "yes"
 
 
+def test_quote_shortened_with_dots_is_kept():
+    checked, rejected = sl._check_facts(facts(sales_motion=("founder_led", "Sells a CRM... Founders do all")), COMPANY)
+    assert checked["sales_motion"] == "founder_led"
+    assert rejected == []
+
+
+def test_quote_pieces_out_of_order_are_rejected():
+    checked, _ = sl._check_facts(facts(sales_motion=("founder_led", "Founders do all… Sells a CRM")), COMPANY)
+    assert checked["sales_motion"] == "unknown"
+
+
 ROLE = sl.SalesRole(title="Account Executive", match="exact",
                     source="https://api.ashbyhq.com/posting-api/job-board/x", fetched_at="2026-10-23T00:00:00+00:00")
 
@@ -260,6 +271,43 @@ def test_bad_weights_are_rejected(tmp_path):
 def test_every_fact_requires_a_quote():
     defs = sl.CompanyFacts.model_json_schema()["$defs"]
     assert all("quote" in d.get("required", []) for d in defs.values())
+
+
+def ratings(buyer, pain):
+    def rating(score_quote):
+        score, quote = score_quote
+        return sl.QuotedRating(quote=quote, evidence="e", score=score)
+    return sl.FitScores(buyer_persona_fit=rating(buyer), pain_match=rating(pain), summary="")
+
+
+def test_rating_quoting_our_icp_drops_to_unknown():
+    checked, rejected = sl._check_ratings(
+        ratings((2, ""), (0, "Sales reps spend hours researching")), COMPANY, 2)
+    assert [c.score for c in checked] == [2, 2]
+    assert len(rejected) == 1 and "pain match=0" in rejected[0]
+
+
+def test_rating_with_a_real_quote_is_kept():
+    checked, rejected = sl._check_ratings(
+        ratings((1, "Founders do all the selling"), (4, "Sells a CRM to small businesses")), COMPANY, 2)
+    assert [c.score for c in checked] == [1, 4]
+    assert rejected == []
+
+
+def test_unsupported_high_rating_drops_to_unknown():
+    checked, _ = sl._check_ratings(ratings((5, "They hire SDRs"), (2, "")), COMPANY, 2)
+    assert checked[0].score == 2
+
+
+def test_unknown_rating_needs_no_quote():
+    checked, rejected = sl._check_ratings(ratings((3, ""), (3, "")), COMPANY, 3)
+    assert [c.score for c in checked] == [3, 3]
+    assert rejected == []
+
+
+def test_every_rating_requires_a_quote():
+    defs = sl.FitScores.model_json_schema()["$defs"]
+    assert "quote" in defs["QuotedRating"]["required"]
 
 
 def test_buyer_and_pain_are_required():

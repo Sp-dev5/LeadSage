@@ -222,12 +222,21 @@ class CriterionScore(Rating):
     criterion: str
 
 
+class QuotedRating(BaseModel):
+    """A model rating with the company's own words behind it. The quote comes first so
+    the model finds the evidence before it picks a number."""
+
+    quote: str
+    evidence: str
+    score: int = Field(ge=0, le=5)
+
+
 class FitScores(BaseModel):
     """The scoring call's output. Named required fields, not a list, so the model
     can't leave one out."""
 
-    buyer_persona_fit: Rating
-    pain_match: Rating
+    buyer_persona_fit: QuotedRating
+    pain_match: QuotedRating
     summary: str
 
 
@@ -301,13 +310,17 @@ SCORE_PROMPT = """You qualify sales leads for a B2B seller. Judge only from the 
 company details given; never invent facts.
 
 Rate these two criteria on a 0-5 scale (0 = no match, 5 = perfect match). \
-Write the evidence first, then the score.
+For each, first copy a short exact quote from the COMPANY DETAILS that supports the \
+score, then write the evidence, then the score.
 - buyer_persona_fit: does the company have, or need, the buyer we sell to?
 - pain_match: does the company likely have the problem we solve?
 
-These are often unstated. If the description says nothing about them, score {unknown} and \
-write "not mentioned." Score 0 or 1 only when there is positive evidence the company \
-does not fit, for example no sales team, or a pain we don't solve.
+Only the company's own words count as evidence. Text under WHAT WE SELL describes us, \
+never the company: don't quote it.
+
+These are often unstated. If the company details say nothing about them, score {unknown}, \
+leave the quote empty and write "not mentioned." Score 0 or 1 only when a quote shows \
+the company does not fit, for example no sales team, or a pain we don't solve.
 
 Then write a summary of one or two plain sentences a salesperson could read at a glance."""
 
@@ -340,6 +353,23 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().strip("\"'.,;: ")
 
 
+def _source(company: Company) -> str:
+    return _norm(f"{company.industry}. {company.description}")
+
+
+def _quote_found(quote: str, source: str) -> bool:
+    """True if the quote is in the source. A quote shortened with "..." counts when
+    every piece is in the source, in the same order."""
+    pieces = [p for p in (_norm(part) for part in re.split(r"\.\.\.|…", quote)) if p]
+    pos = 0
+    for piece in pieces:
+        pos = source.find(piece, pos)
+        if pos < 0:
+            return False
+        pos += len(piece)
+    return bool(pieces)
+
+
 def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str], list[str]]:
     """Apply the quote rule, fill an unknown sales motion from hiring, then derive `offering`.
 
@@ -348,16 +378,14 @@ def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str],
     Open sales jobs prove the company has salespeople, but not how they find customers,
     so they only turn an unknown sales motion into sales_team_unclear.
     """
-    source = _norm(f"{company.industry}. {company.description}")
+    source = _source(company)
     checked, rejected = {}, []
     for name in REPORTED_FACTS:
         fact = getattr(facts, name)
         value = fact.value
-        if value not in NO_QUOTE_NEEDED:
-            quote = _norm(fact.quote)
-            if not quote or quote not in source:
-                rejected.append(f"{name}={value}: quote {fact.quote!r} not in the company details")
-                value = "unclear" if name == "primary_business" else "unknown"
+        if value not in NO_QUOTE_NEEDED and not _quote_found(fact.quote, source):
+            rejected.append(f"{name}={value}: quote {fact.quote!r} not in the company details")
+            value = "unclear" if name == "primary_business" else "unknown"
         checked[name] = value
     if checked["sales_motion"] == "unknown" and company.sales_roles:
         checked["sales_motion"] = "sales_team_unclear"
@@ -531,13 +559,28 @@ def locate(icp: ICP, location: str) -> Location:
                     evidence=f"{loc}: {country} ({how}), {side} the ICP region")
 
 
-def _merge_criteria(model: FitScores, code: list[CriterionScore]) -> list[CriterionScore]:
-    """The model's two ratings plus the code criteria, in a fixed order."""
-    by_name = {
-        "buyer persona fit": CriterionScore(criterion="buyer persona fit", **model.buyer_persona_fit.model_dump()),
-        "pain match": CriterionScore(criterion="pain match", **model.pain_match.model_dump()),
-    }
-    by_name.update({c.criterion: c for c in code})
+def _check_ratings(q: FitScores, company: Company, unknown: int) -> tuple[list[CriterionScore], list[str]]:
+    """The quote rule for buyer and pain.
+
+    A score other than `unknown` needs a quote that really appears in the company
+    details. Our own ICP text or an invented line is not evidence about the company,
+    so the score drops to unknown and is reported. A real quote keeps the score,
+    low or high.
+    """
+    source = _source(company)
+    checked, rejected = [], []
+    for name, r in (("buyer persona fit", q.buyer_persona_fit), ("pain match", q.pain_match)):
+        score, evidence = r.score, r.evidence
+        if score != unknown and not _quote_found(r.quote, source):
+            rejected.append(f"{name}={score}: quote {r.quote!r} not in the company details")
+            score, evidence = unknown, f"Score {r.score} had no quote from the company, so unknown. {r.evidence}"
+        checked.append(CriterionScore(criterion=name, score=score, evidence=evidence))
+    return checked, rejected
+
+
+def _merge_criteria(*groups: list[CriterionScore]) -> list[CriterionScore]:
+    """All criteria in a fixed order."""
+    by_name = {c.criterion: c for group in groups for c in group}
     return [by_name[n] for n in ALL_CRITERIA]
 
 
@@ -587,8 +630,10 @@ def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
     )
 
     facts, rejected = _check_facts(raw_facts, company)
+    rated, rejected_ratings = _check_ratings(q, company, icp.settings.unknown_score)
+    rejected += rejected_ratings
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
-    criteria = _merge_criteria(q, code_criteria)
+    criteria = _merge_criteria(code_criteria, rated)
     disqualified, review_flags = _apply_rules(icp, facts)
     hit = bool(disqualified)
     fit = _fit_from_criteria(criteria, hit or too_small, icp)
