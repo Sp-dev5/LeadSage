@@ -45,7 +45,6 @@
     "weights": {
       "industry match": 1,
       "company size match": 1,
-      "geography match": 1,
       "buyer persona fit": 1,
       "pain match": 1
     }

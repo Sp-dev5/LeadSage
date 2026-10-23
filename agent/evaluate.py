@@ -7,7 +7,7 @@ own (no fallback, no second-opinion rule), then shows where each one disagrees w
 Run it:  python -m agent.evaluate               both models
          python -m agent.evaluate --only ollama one model (Gemini is often overloaded)
          python -m agent.evaluate --file unseen_leads.csv --runs 3 --only ollama
-         python -m agent.evaluate --icp icp_geo_soft.json   compare an ICP variant
+         python -m agent.evaluate --icp my_icp.json   compare an ICP variant
          python -m agent.evaluate --file real_leads.csv --text fetched   score the real website
 Needs `ollama serve` running; Gemini needs a key in .env.
 Results are also saved to data/eval_results_<file>_<model>.csv.
@@ -18,6 +18,9 @@ description. Pages are cached in data/pages/ so every run scores the same text;
 
 --jobs signals_leads.csv adds each lead's open sales roles from its job board (see
 agent/signals.py). Roles found fill an unknown sales motion; none found changes nothing.
+
+Location is a filter, not a criterion: grades compare verdicts only, and leads outside
+the ICP region are listed separately (the region filter would hide them).
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from collections import Counter
 from pathlib import Path
 
 from agent.fetch import fetch_page, load_or_fetch, slug
-from agent.score_lead import Company, load_icp, score_once
+from agent.score_lead import Company, load_icp, locate, score_once
 from agent.signals import hiring_for, read_rows
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -106,8 +109,9 @@ def main() -> None:
             roles = hiring.roles
         company = Company(name=r["name"], industry=r["industry"], size=r["size"],
                           location=r["location"], description=description, sales_roles=roles)
+        where = locate(icp, r["location"])
         out = {"name": r["name"], "label": r["my_label"].strip().lower(), "text_source": text_source,
-               "sales_roles": len(roles)}
+               "sales_roles": len(roles), "country": where.country, "in_region": where.in_region}
         for p in providers:
             scores = []
             for _ in range(runs):
@@ -135,19 +139,21 @@ def main() -> None:
             f"{p} {out[p][0]}" + (f" ({out[p][3]})" if runs > 1 else "") for p in providers), flush=True)
         results.append(out)
 
-    print(f"\n{'Company':26} {'You':11}" + "".join(f" | {p.capitalize():22}" for p in providers))
+    print(f"\n{'Company':26} {'You':11} {'In region':9}" + "".join(f" | {p.capitalize():22}" for p in providers))
     for o in results:
         cells = ""
         for p in providers:
             v, fit, g, _ = o[p]
             cells += f" | {v} {fit if fit is not None else '-':>3} {g}".ljust(25)
-        print(f"{o['name'][:26]:26} {o['label']:11}{cells}")
+        print(f"{o['name'][:26]:26} {o['label']:11} {o['in_region']:9}{cells}")
 
     print()
     for p in providers:
         grades = [o[p][2] for o in results]
         print(f"{p:7} OK {grades.count('OK')}  near {grades.count('near')}  "
               f"MISS {grades.count('MISS')}  errors {grades.count('ERR')}  (of {len(results)})")
+    outside = [f"{o['name']} ({o['country']})" for o in results if o["in_region"] == "no"]
+    print(f"Outside the ICP region (hidden by the region filter): {', '.join(outside) or 'none'}")
     if len(providers) == 2:
         split = [o["name"] for o in results if o["ollama"][0] != o["gemini"][0]]
         both_wrong = [o["name"] for o in results
@@ -161,10 +167,10 @@ def main() -> None:
     out_path = DATA / f"eval_results_{lead_file.stem}{icp_tag}{text_tag}{jobs_tag}_{'_'.join(providers)}.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["name", "my_label", "text_source", "sales_roles"]
+        w.writerow(["name", "my_label", "text_source", "sales_roles", "country", "in_region"]
                    + [f"{p}_{c}" for p in providers for c in ("verdict", "fit", "grade", "votes")])
         for o in results:
-            w.writerow([o["name"], o["label"], o["text_source"], o["sales_roles"]]
+            w.writerow([o["name"], o["label"], o["text_source"], o["sales_roles"], o["country"], o["in_region"]]
                        + [x for p in providers for x in o[p]])
     print(f"\nSaved {out_path}")
 

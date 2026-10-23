@@ -3,8 +3,9 @@ Lead scoring — the first atom of the LeadSage agent.
 
 Takes an ideal-customer profile (ICP) and a company. The model answers factual
 questions about the company (each backed by a quote) and rates buyer and pain fit.
-Plain Python turns the facts into industry, size and geography scores, applies the
-ICP's rules, and computes a transparent fit score. Every number shows its reasons.
+Plain Python turns the facts into industry and size scores, applies the ICP's rules,
+and computes a transparent fit score. Every number shows its reasons. Location is
+never scored: it is reported (country, in the ICP region or not) for filtering.
 
 Ollama (local) scores first. If it fails, Gemini takes over. Borderline results get
 a Gemini second opinion; if the two disagree, the lead goes to "review".
@@ -26,8 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from agent.llm import generate_structured
 
-ALL_CRITERIA = ["industry match", "company size match", "geography match",
-                "buyer persona fit", "pain match"]
+ALL_CRITERIA = ["industry match", "company size match", "buyer persona fit", "pain match"]
 
 COUNTRY_ALIASES = {"USA": "US", "US": "US", "UK": "GB", "UAE": "AE"}
 
@@ -115,7 +115,7 @@ class Settings(BaseModel):
     size_tolerance: float = Field(
         ge=0, le=1, description="how far outside the size range still scores 3, as a fraction (0.1 = 10%)")
     unknown_score: int = Field(
-        ge=0, le=5, description="score for size, geography, buyer or pain when the text says nothing")
+        ge=0, le=5, description="score for size, buyer or pain when the text says nothing")
     gate_fail_max: int = Field(ge=0, le=5, description="a gate criterion scoring this or lower fails the lead")
     fail_cap: int = Field(
         ge=0, le=100, description="the highest fit a failed lead can get (failed gate, disqualify rule, hard fail)")
@@ -231,12 +231,21 @@ class FitScores(BaseModel):
     summary: str
 
 
+class Location(BaseModel):
+    """Where the company says it is. Shown and filtered on, never scored."""
+
+    country: str = ""
+    in_region: Literal["yes", "no", "unknown"] = "unknown"
+    evidence: str = ""
+
+
 class LeadScore(BaseModel):
     """The final, explainable score we hand to the rest of the app."""
 
     fit: int
     verdict: Literal["qualify", "review", "disqualify"]
     criteria: list[CriterionScore]
+    location: Location = Location()
     disqualifier_hit: bool
     disqualifier_reason: str
     summary: str
@@ -492,34 +501,34 @@ def _place_country(location: str) -> tuple[str, bool] | None:
     return None
 
 
-def _geography_criterion(icp: ICP, location: str) -> CriterionScore:
-    """In-region country -> 5, a recognised other country -> 1, anything else -> unknown_score.
+def _country_code(name: str) -> str:
+    return COUNTRY_ALIASES.get(name) or pycountry.countries.lookup(name).alpha_2
+
+
+def locate(icp: ICP, location: str) -> Location:
+    """The country a location names, and whether it is in the ICP's region.
 
     A country named in the text decides first. Failing that, the state or city
     ("Sydney, New South Wales") is looked up to find its country. A state can place a
     lead outside the region; a bare city can only place it inside, since a city name
-    shared with a faraway one must not trip the gate.
-    Only a positively identified out-of-region country scores low enough to trip the gate.
+    shared with a faraway one must not hide a lead from the filter.
     """
     loc = location.strip()
     in_pat, out_pat = _country_patterns(tuple(icp.geography_countries))
     region = {pycountry.countries.lookup(n).alpha_2 for n in icp.geography_countries}
     if not loc:
-        score, why = icp.settings.unknown_score, "No location given (unknown)"
-    elif m := in_pat.search(loc):
-        score, why = 5, f"{loc}: {m.group(0)} is in the target region"
-    elif m := out_pat.search(loc):
-        score, why = 1, f"{loc}: {m.group(0)} is outside the target region"
+        return Location(evidence="No location given")
+    if m := in_pat.search(loc) or out_pat.search(loc):
+        code, how = _country_code(m.group(0)), f"{m.group(0)} named"
     elif (placed := _place_country(loc)) and (placed[0] in region or placed[1]):
-        code = placed[0]
-        country = pycountry.countries.get(alpha_2=code).name
-        if code in region:
-            score, why = 5, f"{loc}: placed in {country}, which is in the target region"
-        else:
-            score, why = 1, f"{loc}: placed in {country}, which is outside the target region"
+        code, how = placed[0], "placed from the state or city"
     else:
-        score, why = icp.settings.unknown_score, f"{loc}: country not recognised (unknown)"
-    return CriterionScore(criterion="geography match", score=score, evidence=why)
+        return Location(evidence=f"{loc}: country not recognised")
+    country = pycountry.countries.get(alpha_2=code).name
+    inside = code in region
+    side = "in" if inside else "outside"
+    return Location(country=country, in_region="yes" if inside else "no",
+                    evidence=f"{loc}: {country} ({how}), {side} the ICP region")
 
 
 def _merge_criteria(model: FitScores, code: list[CriterionScore]) -> list[CriterionScore]:
@@ -578,8 +587,7 @@ def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
     )
 
     facts, rejected = _check_facts(raw_facts, company)
-    code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount),
-                     _geography_criterion(icp, company.location)]
+    code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
     criteria = _merge_criteria(q, code_criteria)
     disqualified, review_flags = _apply_rules(icp, facts)
     hit = bool(disqualified)
@@ -591,6 +599,7 @@ def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
         fit=fit,
         verdict=verdict,
         criteria=criteria,
+        location=locate(icp, company.location),
         disqualifier_hit=hit,
         disqualifier_reason="; ".join(disqualified),
         summary=q.summary,
@@ -684,6 +693,7 @@ def _demo() -> None:
     print(f"\n{SAMPLE_COMPANY.name}")
     print(f"  Fit: {result.fit}/100   Verdict: {result.verdict.upper()}   (scored by {result.provider})")
     print(f"  {result.summary}\n")
+    print(f"  Location (filter only): {result.location.evidence}")
     print("  Facts: " + ", ".join(f"{k}={v}" for k, v in result.facts.items()))
     print("  Why:")
     for c in result.criteria:
