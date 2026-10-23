@@ -9,15 +9,16 @@ from agent import score_lead as sl
 from agent.evaluate import _grade
 
 DATA = Path(__file__).resolve().parent.parent / "data"
-NAMES = ["industry match", "company size match", "geography match", "buyer persona fit", "pain match"]
+NAMES = ["industry match", "company size match", "buyer persona fit", "pain match"]
 
 BASE_ICP = {
     "buyer_persona": "Head of Sales",
     "pain_solved": "Manual prospecting",
+    "sales_roles": {"definition": "a job that sells", "titles": ["account executive", "sdr"]},
     "company_size_min": 50,
     "company_size_max": 500,
     "geography_countries": ["India", "Singapore", "Vietnam", "Australia"],
-    "gates": ["industry match", "geography match"],
+    "gates": ["industry match"],
     "industry_map": [
         {"offering": "own_software", "customers": "businesses", "score": 5},
         {"offering": "own_software", "customers": "mixed", "score": 3},
@@ -65,18 +66,40 @@ def test_size_criterion(headcount, score):
     assert sl._size_criterion(make_icp(), headcount).score == score
 
 
-@pytest.mark.parametrize("location, score", [
-    ("Bengaluru, India", 5), ("Hanoi, Viet Nam", 5), ("Toronto, Canada", 1),
-    ("Austin, USA", 1), ("London, UK", 1), ("Indiana, USA", 1), ("Kochi", 2), ("", 2),
+@pytest.mark.parametrize("location, country, in_region", [
+    ("Bengaluru, India", "India", "yes"), ("Hanoi, Viet Nam", "Viet Nam", "yes"),
+    ("Toronto, Canada", "Canada", "no"), ("Austin, USA", "United States", "no"),
+    ("London, UK", "United Kingdom", "no"), ("Indiana, USA", "United States", "no"),
+    ("Nowhereville", "", "unknown"), ("", "", "unknown"),
 ])
-def test_geography_criterion(location, score):
-    assert sl._geography_criterion(make_icp(), location).score == score
+def test_locate_from_country(location, country, in_region):
+    where = sl.locate(make_icp(), location)
+    assert (where.country, where.in_region) == (country, in_region)
+
+
+@pytest.mark.parametrize("location, in_region", [
+    ("Sydney, New South Wales", "yes"), ("Bangalore, Karnataka", "yes"), ("Chennai, Tamil Nadu", "yes"),
+    ("Greater Sydney Area", "yes"),
+    ("San Francisco, California", "no"), ("Wilmington, Delaware", "no"), ("Toronto, Ontario", "no"),
+    ("San Francisco", "unknown"), ("Toronto", "unknown"),
+])
+def test_locate_from_state_or_city(location, in_region):
+    assert sl.locate(make_icp(), location).in_region == in_region
+
+
+def test_geography_is_not_a_criterion():
+    assert "geography match" not in sl.ALL_CRITERIA
+
+
+def test_city_name_shared_by_countries_goes_to_the_biggest():
+    assert sl._place_country("Sydney") == ("AU", False)
+    assert sl._place_country("Sydney, New South Wales") == ("AU", True)
+    assert sl._place_country("Nowhereville") is None
 
 
 def test_unknown_score_comes_from_settings():
     icp = make_icp(unknown_score=3)
     assert sl._size_criterion(icp, None).score == 3
-    assert sl._geography_criterion(icp, "Kochi").score == 3
 
 
 COMPANY = sl.Company(name="X", industry="B2B SaaS - CRM", size="80", location="Pune, India",
@@ -115,6 +138,27 @@ def test_quote_match_ignores_case_and_dash_style():
     assert checked["builds_own_software"] == "yes"
 
 
+ROLE = sl.SalesRole(title="Account Executive", match="exact",
+                    source="https://api.ashbyhq.com/posting-api/job-board/x", fetched_at="2026-10-23T00:00:00+00:00")
+
+
+def test_sales_roles_fill_an_unknown_sales_motion():
+    hiring = COMPANY.model_copy(update={"sales_roles": [ROLE]})
+    checked, _ = sl._check_facts(facts(), hiring)
+    assert checked["sales_motion"] == "sales_team_unclear"
+
+
+def test_sales_roles_never_override_what_the_text_says():
+    hiring = COMPANY.model_copy(update={"sales_roles": [ROLE]})
+    checked, _ = sl._check_facts(facts(sales_motion=("founder_led", "Founders do all the selling")), hiring)
+    assert checked["sales_motion"] == "founder_led"
+
+
+def test_no_sales_roles_leaves_sales_motion_unknown():
+    checked, _ = sl._check_facts(facts(), COMPANY)
+    assert checked["sales_motion"] == "unknown"
+
+
 def test_rejected_primary_business_falls_back_to_unclear():
     checked, _ = sl._check_facts(facts(primary_business=("software", "invented quote")), COMPANY)
     assert checked["primary_business"] == "unclear"
@@ -151,22 +195,21 @@ def test_apply_rules_splits_disqualify_and_review():
 
 
 def test_fit_is_the_average_when_nothing_fails():
-    assert sl._fit_from_criteria(crit(5, 5, 2, 5, 5), False, make_icp()) == 88
+    assert sl._fit_from_criteria(crit(5, 2, 5, 5), False, make_icp()) == 85
 
 
 def test_failed_gate_caps_the_fit():
-    assert sl._fit_from_criteria(crit(0, 5, 5, 4, 4), False, make_icp()) == 20
-    assert sl._fit_from_criteria(crit(5, 5, 1, 5, 5), False, make_icp()) == 20
+    assert sl._fit_from_criteria(crit(0, 5, 4, 4), False, make_icp()) == 20
 
 
 def test_hard_fail_caps_the_fit():
-    assert sl._fit_from_criteria(crit(5, 5, 5, 5, 5), True, make_icp()) == 20
+    assert sl._fit_from_criteria(crit(5, 5, 5, 5), True, make_icp()) == 20
 
 
 def test_weights_change_the_average_but_not_the_gate():
     weights = {n: 1 for n in NAMES} | {"industry match": 3}
-    assert sl._fit_from_criteria(crit(5, 5, 1, 5, 5), False, make_icp(weights=weights, gates=[])) == 89
-    assert sl._fit_from_criteria(crit(5, 5, 1, 5, 5), False, make_icp(weights=weights)) == 20
+    assert sl._fit_from_criteria(crit(1, 5, 5, 5), False, make_icp(weights=weights, gates=[])) == 60
+    assert sl._fit_from_criteria(crit(1, 5, 5, 5), False, make_icp(weights=weights)) == 20
 
 
 @pytest.mark.parametrize("fit, hit, verdict", [
@@ -177,9 +220,8 @@ def test_verdict(fit, hit, verdict):
     assert sl._verdict(fit, hit, make_icp().settings) == verdict
 
 
-@pytest.mark.parametrize("name", ["icp.json", "icp_geo_soft.json"])
-def test_shipped_icps_load(name):
-    sl.load_icp(DATA / name)
+def test_shipped_icp_loads():
+    sl.load_icp(DATA / "icp.json")
 
 
 def _load(tmp_path, raw):
@@ -200,6 +242,7 @@ def test_missing_setting_is_named(tmp_path):
     {"fact_rules": [{"fact": "customers", "value": "government", "label": "x"}]},
     {"fact_rules": [{"fact": "salez", "value": "yes", "label": "x"}]},
     {"gates": ["industry"]},
+    {"gates": ["geography match"]},
     {"industry_map": [{"offering": "saas", "score": 5}]},
 ])
 def test_dead_config_is_rejected(tmp_path, change):

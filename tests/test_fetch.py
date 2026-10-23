@@ -183,8 +183,48 @@ def test_redirect_loop_gives_up(monkeypatch):
     assert len(calls) == fetch.MAX_REDIRECTS + 1
 
 
+def test_json_api_returns_raw_json(monkeypatch, robots_allow):
+    response = FakeResponse(content_type="application/json")
+    response.text = '{"jobs": []}'
+    fake_get(monkeypatch, response)
+    page = fetch.fetch_json("https://acme.test/api")
+    assert page.ok and page.text == '{"jobs": []}'
+
+
+def test_json_fetch_refuses_html(monkeypatch, robots_allow):
+    fake_get(monkeypatch, FakeResponse(html_page(BODY)))
+    page = fetch.fetch_json("https://acme.test/api")
+    assert not page.ok and page.error.startswith("not JSON")
+
+
+def test_documented_public_api_skips_robots(monkeypatch):
+    monkeypatch.setattr(fetch, "_allowed_by_robots", lambda url: False)
+    response = FakeResponse(b"", content_type="application/json")
+    response.text = "{}"
+    fake_get(monkeypatch, response)
+    assert fetch.fetch_json("https://api.ashbyhq.com/posting-api/job-board/acme").ok
+    assert not fetch.fetch_json("https://other-api.test/jobs").ok
+
+
+def test_load_or_fetch_saves_only_good_pages(tmp_path):
+    good = fetch.Page(url="u", text="hi", fetched_at="t", ok=True)
+    bad = fetch.Page(url="u", fetched_at="t", ok=False, error="HTTP 500")
+    assert not fetch.load_or_fetch("u", tmp_path / "a.json", lambda url: bad).ok
+    assert not (tmp_path / "a.json").exists()
+    assert fetch.load_or_fetch("u", tmp_path / "a.json", lambda url: good).text == "hi"
+    assert fetch.load_or_fetch("u", tmp_path / "a.json", lambda url: bad).text == "hi"
+
+
 def test_five_redirects_are_still_followed(monkeypatch):
     robots_by_host(monkeypatch, blocked=set())
     hops = [redirect(f"https://acme.test/{i}") for i in range(fetch.MAX_REDIRECTS)]
     fake_get(monkeypatch, responses=hops + [FakeResponse(html_page(BODY))])
     assert fetch.fetch_page("https://acme.test/").ok
+
+
+def test_html_fetch_keeps_links_and_markup(monkeypatch, robots_allow):
+    response = FakeResponse(html_page(BODY))
+    response.text = html_page(BODY).decode()
+    fake_get(monkeypatch, response)
+    page = fetch.fetch_html("https://acme.test/")
+    assert page.ok and "<nav>" in page.text

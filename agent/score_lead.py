@@ -3,8 +3,9 @@ Lead scoring — the first atom of the LeadSage agent.
 
 Takes an ideal-customer profile (ICP) and a company. The model answers factual
 questions about the company (each backed by a quote) and rates buyer and pain fit.
-Plain Python turns the facts into industry, size and geography scores, applies the
-ICP's rules, and computes a transparent fit score. Every number shows its reasons.
+Plain Python turns the facts into industry and size scores, applies the ICP's rules,
+and computes a transparent fit score. Every number shows its reasons. Location is
+never scored: it is reported (country, in the ICP region or not) for filtering.
 
 Ollama (local) scores first. If it fails, Gemini takes over. Borderline results get
 a Gemini second opinion; if the two disagree, the lead goes to "review".
@@ -15,19 +16,22 @@ Run it:  python -m agent.score_lead   (needs `ollama serve` running)
 from __future__ import annotations
 
 import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, get_args
 
+import geonamescache
 import pycountry
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from agent.llm import generate_structured
 
-ALL_CRITERIA = ["industry match", "company size match", "geography match",
-                "buyer persona fit", "pain match"]
+ALL_CRITERIA = ["industry match", "company size match", "buyer persona fit", "pain match"]
 
 COUNTRY_ALIASES = {"USA": "US", "US": "US", "UK": "GB", "UAE": "AE"}
+
+CITY_CLEAR_WIN = 3
 
 YesNo = Literal["yes", "no", "unknown"]
 Customers = Literal["businesses", "consumers", "mixed", "unknown"]
@@ -111,7 +115,7 @@ class Settings(BaseModel):
     size_tolerance: float = Field(
         ge=0, le=1, description="how far outside the size range still scores 3, as a fraction (0.1 = 10%)")
     unknown_score: int = Field(
-        ge=0, le=5, description="score for size, geography, buyer or pain when the text says nothing")
+        ge=0, le=5, description="score for size, buyer or pain when the text says nothing")
     gate_fail_max: int = Field(ge=0, le=5, description="a gate criterion scoring this or lower fails the lead")
     fail_cap: int = Field(
         ge=0, le=100, description="the highest fit a failed lead can get (failed gate, disqualify rule, hard fail)")
@@ -137,6 +141,16 @@ class Settings(BaseModel):
         return self
 
 
+class SalesRolesConfig(BaseModel):
+    """Which open jobs count as sales hiring. `titles` match job titles word for word;
+    `definition` is what the model judges other titles against."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    definition: str
+    titles: list[str] = Field(min_length=1)
+
+
 class ICP(BaseModel):
     """The ideal customer we're selling to. Unknown keys are rejected, so a typo or a
     leftover field can't sit in the file looking like it does something."""
@@ -146,6 +160,7 @@ class ICP(BaseModel):
     buyer_persona: str
     pain_solved: str
     notes: str = ""
+    sales_roles: SalesRolesConfig
     company_size_min: int
     company_size_max: int
     geography_countries: list[str]
@@ -174,6 +189,15 @@ class ICP(BaseModel):
         return v
 
 
+class SalesRole(BaseModel):
+    """An open sales job, copied from the company's job board."""
+
+    title: str
+    match: Literal["exact", "inferred"]
+    source: str
+    fetched_at: str
+
+
 class Company(BaseModel):
     """What we know about a prospect company before outreach."""
 
@@ -182,6 +206,7 @@ class Company(BaseModel):
     size: str
     location: str
     description: str
+    sales_roles: list[SalesRole] = []
 
 
 class Rating(BaseModel):
@@ -206,18 +231,28 @@ class FitScores(BaseModel):
     summary: str
 
 
+class Location(BaseModel):
+    """Where the company says it is. Shown and filtered on, never scored."""
+
+    country: str = ""
+    in_region: Literal["yes", "no", "unknown"] = "unknown"
+    evidence: str = ""
+
+
 class LeadScore(BaseModel):
     """The final, explainable score we hand to the rest of the app."""
 
     fit: int
     verdict: Literal["qualify", "review", "disqualify"]
     criteria: list[CriterionScore]
+    location: Location = Location()
     disqualifier_hit: bool
     disqualifier_reason: str
     summary: str
     facts: dict[str, str] = {}
     review_flags: list[str] = []
     rejected_quotes: list[str] = []
+    sales_roles: list[SalesRole] = []
     provider: str = ""
     second_opinion: LeadScore | None = None
 
@@ -306,10 +341,12 @@ def _norm(text: str) -> str:
 
 
 def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str], list[str]]:
-    """Apply the quote rule, then derive `offering`.
+    """Apply the quote rule, fill an unknown sales motion from hiring, then derive `offering`.
 
     Any answer other than no/unknown/unclear needs a quote that really appears in the
     company details; otherwise the fact drops to its "can't tell" value and is reported.
+    Open sales jobs prove the company has salespeople, but not how they find customers,
+    so they only turn an unknown sales motion into sales_team_unclear.
     """
     source = _norm(f"{company.industry}. {company.description}")
     checked, rejected = {}, []
@@ -322,6 +359,8 @@ def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str],
                 rejected.append(f"{name}={value}: quote {fact.quote!r} not in the company details")
                 value = "unclear" if name == "primary_business" else "unknown"
         checked[name] = value
+    if checked["sales_motion"] == "unknown" and company.sales_roles:
+        checked["sales_motion"] = "sales_team_unclear"
     checked["offering"] = _derive_offering(checked)
     checked["what_they_sell"] = facts.what_they_sell
     return checked, rejected
@@ -414,22 +453,82 @@ def _country_patterns(in_region: tuple[str, ...]) -> tuple[re.Pattern, re.Patter
     return re.compile(in_pat), re.compile(out_pat)
 
 
-def _geography_criterion(icp: ICP, location: str) -> CriterionScore:
-    """In-region country -> 5, a recognised other country -> 1, anything else -> unknown_score.
+def _fold(text: str) -> str:
+    """Lowercase, drop accents, and strip LinkedIn-style "Greater ... Area" wrapping."""
+    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower().strip()
+    plain = re.sub(r"^greater\s+|\s+(metropolitan\s+)?area$", "", plain)
+    return re.sub(r"\s+", " ", plain)
 
-    Only a positively identified out-of-region country scores low enough to trip the gate.
+
+@lru_cache
+def _places() -> tuple[dict[str, str], dict[str, str]]:
+    """Name -> country code for states/provinces (only names that belong to one country)
+    and for cities (only when one country's city of that name is at least CITY_CLEAR_WIN
+    times bigger than any other's: Sydney is Australian, Kochi stays unknown)."""
+    owners: dict[str, set[str]] = {}
+    for sub in pycountry.subdivisions:
+        owners.setdefault(_fold(sub.name), set()).add(sub.country_code)
+    subdivisions = {name: next(iter(codes)) for name, codes in owners.items() if len(codes) == 1}
+
+    biggest: dict[str, dict[str, int]] = {}
+    for city in geonamescache.GeonamesCache().get_cities().values():
+        names = [city["name"], *(a for a in city.get("alternatenames", []) if a.isascii() and len(a) > 3)]
+        for name in names:
+            by_country = biggest.setdefault(_fold(name), {})
+            by_country[city["countrycode"]] = max(by_country.get(city["countrycode"], 0), city["population"])
+    cities = {}
+    for name, by_country in biggest.items():
+        ranked = sorted(by_country.items(), key=lambda kv: kv[1], reverse=True)
+        runner_up = ranked[1][1] if len(ranked) > 1 else 0
+        if ranked[0][1] >= CITY_CLEAR_WIN * max(runner_up, 1):
+            cities[name] = ranked[0][0]
+    return subdivisions, cities
+
+
+def _place_country(location: str) -> tuple[str, bool] | None:
+    """(country code, found via a state) for a "City, State" style location.
+
+    The parts are read from the end backwards and a state beats a city.
+    """
+    subdivisions, cities = _places()
+    parts = [_fold(p) for p in reversed(location.split(",")) if p.strip()]
+    for key in parts:
+        if code := subdivisions.get(key):
+            return code, True
+    for key in parts:
+        if code := cities.get(key):
+            return code, False
+    return None
+
+
+def _country_code(name: str) -> str:
+    return COUNTRY_ALIASES.get(name) or pycountry.countries.lookup(name).alpha_2
+
+
+def locate(icp: ICP, location: str) -> Location:
+    """The country a location names, and whether it is in the ICP's region.
+
+    A country named in the text decides first. Failing that, the state or city
+    ("Sydney, New South Wales") is looked up to find its country. A state can place a
+    lead outside the region; a bare city can only place it inside, since a city name
+    shared with a faraway one must not hide a lead from the filter.
     """
     loc = location.strip()
     in_pat, out_pat = _country_patterns(tuple(icp.geography_countries))
+    region = {pycountry.countries.lookup(n).alpha_2 for n in icp.geography_countries}
     if not loc:
-        score, why = icp.settings.unknown_score, "No location given (unknown)"
-    elif m := in_pat.search(loc):
-        score, why = 5, f"{loc}: {m.group(0)} is in the target region"
-    elif m := out_pat.search(loc):
-        score, why = 1, f"{loc}: {m.group(0)} is outside the target region"
+        return Location(evidence="No location given")
+    if m := in_pat.search(loc) or out_pat.search(loc):
+        code, how = _country_code(m.group(0)), f"{m.group(0)} named"
+    elif (placed := _place_country(loc)) and (placed[0] in region or placed[1]):
+        code, how = placed[0], "placed from the state or city"
     else:
-        score, why = icp.settings.unknown_score, f"{loc}: country not recognised (unknown)"
-    return CriterionScore(criterion="geography match", score=score, evidence=why)
+        return Location(evidence=f"{loc}: country not recognised")
+    country = pycountry.countries.get(alpha_2=code).name
+    inside = code in region
+    side = "in" if inside else "outside"
+    return Location(country=country, in_region="yes" if inside else "no",
+                    evidence=f"{loc}: {country} ({how}), {side} the ICP region")
 
 
 def _merge_criteria(model: FitScores, code: list[CriterionScore]) -> list[CriterionScore]:
@@ -488,8 +587,7 @@ def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
     )
 
     facts, rejected = _check_facts(raw_facts, company)
-    code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount),
-                     _geography_criterion(icp, company.location)]
+    code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
     criteria = _merge_criteria(q, code_criteria)
     disqualified, review_flags = _apply_rules(icp, facts)
     hit = bool(disqualified)
@@ -501,12 +599,14 @@ def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
         fit=fit,
         verdict=verdict,
         criteria=criteria,
+        location=locate(icp, company.location),
         disqualifier_hit=hit,
         disqualifier_reason="; ".join(disqualified),
         summary=q.summary,
         facts=facts,
         review_flags=review_flags,
         rejected_quotes=rejected,
+        sales_roles=company.sales_roles,
         provider=provider,
     )
 
@@ -593,6 +693,7 @@ def _demo() -> None:
     print(f"\n{SAMPLE_COMPANY.name}")
     print(f"  Fit: {result.fit}/100   Verdict: {result.verdict.upper()}   (scored by {result.provider})")
     print(f"  {result.summary}\n")
+    print(f"  Location (filter only): {result.location.evidence}")
     print("  Facts: " + ", ".join(f"{k}={v}" for k, v in result.facts.items()))
     print("  Why:")
     for c in result.criteria:
@@ -603,6 +704,8 @@ def _demo() -> None:
         print(f"  Capped at review: {flag}")
     for r in result.rejected_quotes:
         print(f"  Quote rejected: {r}")
+    for role in result.sales_roles:
+        print(f"  Hiring ({role.match}): {role.title}  [{role.source}]")
     if result.second_opinion:
         so = result.second_opinion
         print(f"\n  Second opinion ({so.provider}): {so.fit}/100 {so.verdict.upper()}")
