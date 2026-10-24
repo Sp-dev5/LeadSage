@@ -3,21 +3,25 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+import app_ui as ui
 from agent import store
 from agent.contacts import typed_contact
-from agent.outreach import contact_for, draft_step, due_dates, load_outreach, next_step, save_outreach, \
-    saved_contact, OutreachConfig
+from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
+                            save_outreach, sending_problems)
+from agent.readiness import QUEUES, in_queue, todo
 from agent.score_lead import load_icp
 
 STATUS_COLORS = {"draft": "orange", "approved": "blue", "sent": "green", "stopped": "gray"}
+STATUS_ICONS = {"draft": ":material/edit_note:", "approved": ":material/check_circle:", "sent": ":material/send:",
+                "stopped": ":material/block:"}
 STOP_STAGES = {"replied": "Replied", "meeting": "Meeting booked", "lost": "Lost"}
 
 icp, cfg = load_icp(), load_outreach()
 now = datetime.now().astimezone()
 
-st.title("Outreach")
-st.caption("The person to write to, a first email where every line about them is cited, and follow-ups. "
-           "Nothing is sent from here: approve an email, send it from your own mailbox, then mark it sent.")
+st.title("Outreach", icon=":material/mail:")
+st.caption("Read each draft, check where every line about the company comes from, then send it from your own mailbox "
+           "and mark it sent. Nothing is sent from this app.")
 
 
 def act(fn, *args) -> None:
@@ -29,19 +33,19 @@ def act(fn, *args) -> None:
 
 
 leads = store.load_all()
-emails = {lead.name: store.load_emails(lead.name) for lead in leads}
-in_play = [lead for lead in leads if lead.score.verdict in cfg.draft_verdicts or emails[lead.name]]
+all_rows = ui.lead_rows(leads, cfg)
+in_play = [r for r in all_rows if r.ready.worth_contacting or r.ready.drafted]
 
 with st.sidebar:
     st.subheader("Draft first emails")
-    todo = [lead for lead in in_play if lead.score.verdict in cfg.draft_verdicts and not emails[lead.name]
-            and lead.stage not in store.STOPPED]
-    st.caption(f"{len(todo)} leads ({', '.join(cfg.draft_verdicts)}) have no email yet. "
-               "Each takes the model about half a minute.")
+    undrafted = [r.lead for r in in_play if r.ready.worth_contacting and not r.ready.drafted
+                 and r.lead.stage not in store.STOPPED]
+    st.caption(f"{len(undrafted)} leads ({', '.join(cfg.draft_verdicts)}) have no email yet. Finding the contact and "
+               "reading their news takes about a minute each.")
     if st.button("Find contacts and draft", icon=":material/edit_note:", type="primary", width="stretch",
-                 disabled=not todo):
-        with st.status(f"Drafting {len(todo)} first emails", expanded=True) as status:
-            for lead in todo:
+                 disabled=not undrafted):
+        with st.status(f"Drafting {len(undrafted)} first emails", expanded=True) as status:
+            for lead in undrafted:
                 try:
                     email = draft_step(lead, 0, icp, cfg)
                     st.write(f"{lead.name}: drafted, {len(email.citations)} cited lines")
@@ -51,20 +55,25 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    with st.expander("Sender and follow-ups"):
-        with st.form("outreach_settings"):
+    with st.expander("Sender and follow-ups", icon=":material/tune:"):
+        with st.form("outreach_settings", border=False):
             name = st.text_input("Sign emails as", cfg.sender_name)
             company = st.text_input("Company", cfg.sender_company)
+            address = st.text_input("Business address", cfg.sender_address,
+                                    help="Shown under your signature. Most countries require one in marketing email.")
+            opt_out = st.text_area("Opt-out line", cfg.opt_out_line, height=80,
+                                   help="Ends every email. An email cannot be approved without it.")
             verdicts = st.multiselect("Draft emails for", ["qualify", "review", "disqualify"], cfg.draft_verdicts)
             days = st.text_input("Follow-ups, days after the first email", ", ".join(map(str, cfg.follow_up_days)))
             words = st.number_input("Longest email, in words", 40, 300, cfg.max_words, step=10)
             startup = st.number_input("Startup: write to the chief executive at or below this headcount", 1, 10000,
                                       cfg.startup_max_headcount, step=10,
                                       help="Used only when no one matching your buyer is named on the website.")
-            if st.form_submit_button("Save", icon=":material/save:"):
+            if st.form_submit_button("Save settings", icon=":material/save:"):
                 try:
                     new = OutreachConfig(**(cfg.model_dump() | {
-                        "sender_name": name, "sender_company": company, "draft_verdicts": verdicts,
+                        "sender_name": name, "sender_company": company, "sender_address": address.strip(),
+                        "opt_out_line": opt_out.strip(), "draft_verdicts": verdicts,
                         "follow_up_days": [int(d) for d in days.split(",") if d.strip()],
                         "max_words": words, "startup_max_headcount": startup}))
                     save_outreach(new)
@@ -72,180 +81,265 @@ with st.sidebar:
                 except ValueError as e:
                     st.error(str(e))
 
+    on_list = store.suppressed()
+    with st.expander(f"Do-not-contact list ({len(on_list)})", icon=":material/shield:"):
+        if not on_list:
+            st.caption("Empty. Add a company from its Privacy menu when it asks not to be contacted.")
+        for company_name, (reason, added) in on_list.items():
+            st.markdown(f"**{company_name}**")
+            st.caption(f"{reason or 'No reason given'} · added {added[:10]}")
+            if st.button("Remove from the list", key=f"unsuppress_{company_name}", icon=":material/undo:"):
+                store.unsuppress(company_name)
+                st.rerun()
+
 if error := st.session_state.pop("outreach_error", None):
     st.error(error, icon=":material/error:")
 
+setup = sending_problems(cfg.opt_out_line, cfg)
+if setup:
+    st.warning("Before you can approve an email: " + "; ".join(setup) + ".", icon=":material/lock:")
+
 if not in_play:
-    st.info("No leads to write to yet. Score leads on the Leads page first.", icon=":material/info:")
+    st.info("No leads to write to yet. Score leads on the Dashboard first.", icon=":material/info:")
     st.stop()
 
-with st.container(horizontal=True):
-    for stage in store.STAGES:
-        st.metric(stage.capitalize(), sum(lead.stage == stage for lead in in_play), border=True)
+ready = [r.ready for r in in_play]
+kpis = st.columns(4)
+kpis[0].metric("Ready to review", sum(r.ready for r in ready), border=True, icon=":material/task_alt:",
+               delta="a hook and a named contact", delta_color="off", delta_arrow="off")
+kpis[1].metric("Need a contact", sum(in_queue(r, "Needs a contact") for r in ready), border=True,
+               icon=":material/person_search:", delta="find or type one in", delta_color="off", delta_arrow="off")
+kpis[2].metric("Need a hook", sum(in_queue(r, "Needs a hook") for r in ready), border=True, icon=":material/bolt:",
+               delta="add a reason to write now", delta_color="off", delta_arrow="off")
+kpis[3].metric("Approved or sent", sum(r.status in ("approved", "sent") for r in ready), border=True,
+               icon=":material/send:",
+               delta=f"{sum(r.lead.stage in ('replied', 'meeting') for r in in_play)} replied",
+               delta_color="off", delta_arrow="off")
 
-rows = []
-for lead in sorted(in_play, key=lambda x: -x.score.fit):
-    contact = saved_contact(lead, cfg)
-    rows.append({
-        "Company": lead.name,
-        "Verdict": lead.score.verdict,
-        "Fit": lead.score.fit,
-        "Stage": lead.stage,
-        "Contact": f"{contact.name}, {contact.title}" if contact else "",
-        "Next step": next_step(lead.stage, emails[lead.name], cfg, now).text,
-    })
-table = pd.DataFrame(rows)
-event = st.dataframe(
-    table, hide_index=True, on_select="rerun", selection_mode="single-row", key="outreach_table",
-    column_config={"Fit": st.column_config.ProgressColumn("Fit", min_value=0, max_value=100, format="%d"),
-                   "Next step": st.column_config.TextColumn("Next step", width="large")},
-)
+queue = st.segmented_control("Queue", QUEUES, default="All", required=True, key="outreach_queue",
+                             format_func=lambda q: f"{q} ({sum(in_queue(r.ready, q) for r in in_play)})")
+queue_rows = sorted((r for r in in_play if in_queue(r.ready, queue)), key=lambda r: -r.lead.score.fit)
 
-if event.selection.rows:
-    st.session_state.outreach_lead = table.iloc[event.selection.rows[0]]["Company"]
-if st.session_state.get("outreach_lead") not in set(table["Company"]):
+table = pd.DataFrame([{
+    "Company": r.lead.name,
+    "Verdict": [r.lead.score.verdict],
+    "Fit": r.lead.score.fit,
+    "Hook": [r.ready.hook] if r.ready.hook else [],
+    "Contact": r.ready.contact or ui.NO_CONTACT,
+    "Email": (r.ready.status or "none").capitalize(),
+    "To do": next_step(r.lead.stage, r.emails, cfg, now).text if r.ready.status in ("sent", "stopped")
+    or r.lead.stage in store.STOPPED else todo(r.ready),
+} for r in queue_rows])
+
+if table.empty:
+    st.info(f"Nothing in \"{queue}\" right now.", icon=":material/inbox:")
+else:
+    with st.container(border=True):
+        st.caption("Best fit first. Select a company to read and approve its emails.")
+        event = st.dataframe(
+            table, hide_index=True, on_select="rerun", selection_mode="single-row", key="outreach_table",
+            height=min(40 + 35 * len(table), 420),
+            column_config={**ui.lead_columns(), "To do": st.column_config.TextColumn("To do", width="medium")},
+        )
+    if event.selection.rows and event.selection.rows[0] < len(table):
+        st.session_state.outreach_lead = table.iloc[event.selection.rows[0]]["Company"]
+
+names = {r.lead.name for r in in_play}
+if st.session_state.get("outreach_lead") not in names:
     st.caption("Select a company to see its contact and emails.")
     st.stop()
 
 lead = store.load(st.session_state.outreach_lead)
+current = next(r for r in in_play if r.lead.name == lead.name)
 lead_emails = {e.step: e for e in store.load_emails(lead.name)}
 stopped = lead.stage in store.STOPPED
+steps = range(len(cfg.follow_up_days) + 1)
+due = due_dates(list(lead_emails.values()), cfg)
+nxt = next_step(lead.stage, list(lead_emails.values()), cfg, now)
 
 with st.container(border=True):
     with st.container(horizontal=True, vertical_alignment="center"):
         st.subheader(lead.name)
-        st.badge(lead.stage.capitalize(), color="gray" if stopped else "blue")
-        st.badge(f"{lead.score.verdict.capitalize()} {lead.score.fit}", color="gray")
-    st.write(lead.score.summary)
-
-    with st.container(horizontal=True):
-        for stage, label in STOP_STAGES.items():
-            st.button(label, key=f"stop_{lead.name}_{stage}", disabled=lead.stage == stage,
-                      on_click=act, args=(store.set_stage, lead.name, stage))
-        picked = st.selectbox("Set stage", store.STAGES, index=store.STAGES.index(lead.stage),
-                              key=f"stage_{lead.name}_{lead.stage}", label_visibility="collapsed")
-        if picked != lead.stage:
-            act(store.set_stage, lead.name, picked)
-            st.rerun()
-
-    st.markdown("**Who to write to**")
-    search = store.load_contacts(lead.name)
-    if search is None:
-        st.caption("Not searched yet. Drafting the first email searches the website first.")
-        if st.button("Search the website for people", icon=":material/person_search:"):
-            with st.spinner("Reading the about and team pages"):
-                contact_for(lead, icp, cfg)
-            st.rerun()
-    else:
-        search = contact_for(lead, icp, cfg)
-        if c := search.contact:
-            where = "typed by you" if c.matches_buyer == "typed" else f"[source]({c.source}), {c.fetched_at[:10]}"
-            why = {"buyer": "matches your buyer", "rep": "chosen by you",
-                   "startup_ceo": f"startup ({lead.company.size}) and no buyer named, so the chief executive"}
-            st.success(f"{c.name}, {c.title} · {why.get(search.chosen_by, 'chosen')} ({where})",
-                       icon=":material/person:")
-        else:
-            st.warning("No one matching your buyer was named on the website.", icon=":material/person_off:")
-        others = [p for p in search.people if p != search.contact]
-        if others:
-            choice = st.selectbox("Other people named on the site", [None] + others, key=f"pick_{lead.name}_{search.contact}",
-                                  format_func=lambda p: "Pick one to write to them instead" if p is None
-                                  else f"{p.name}, {p.title}")
-            if choice is not None:
-                store.save_contacts(lead.name, search.model_copy(update={"contact": choice, "chosen_by": "rep"}))
+        ui.verdict_badge(lead.score.verdict)
+        st.badge(f"Fit {lead.score.fit}/100", icon=":material/speed:", color="gray")
+        st.badge(lead.stage.capitalize(), icon=":material/flag:", color="gray" if stopped else "blue")
+        if lead.name in store.suppressed():
+            st.badge("Do not contact", icon=":material/shield:", color="red")
+        with st.popover("Privacy", icon=":material/shield:"):
+            st.caption("Do not contact stops every email and keeps this company from being drafted for again, "
+                       "even if it is scored again.")
+            reason = st.text_input("Reason (optional)", key=f"dnc_reason_{lead.name}")
+            if st.button("Add to the do-not-contact list", key=f"dnc_{lead.name}", width="stretch",
+                         disabled=lead.name in store.suppressed()):
+                act(store.suppress, lead.name, reason)
                 st.rerun()
-        with st.expander("Add a contact yourself, or see what was searched"):
-            with st.form(f"typed_{lead.name}", border=False):
-                typed_name = st.text_input("Name", key=f"typed_name_{lead.name}")
-                typed_title = st.text_input("Title", key=f"typed_title_{lead.name}")
-                if st.form_submit_button("Use this contact") and typed_name.strip():
-                    store.save_contacts(lead.name, search.model_copy(
-                        update={"contact": typed_contact(typed_name, typed_title), "chosen_by": "rep"}))
-                    st.rerun()
-            for page in search.pages_tried:
-                st.caption(f"Read: {page}")
-            for r in search.rejected:
-                st.caption(f"Rejected (not on the page): {r}")
-            if st.button("Search the website again", icon=":material/refresh:"):
-                with st.spinner("Reading the about and team pages"):
-                    contact_for(lead, icp, cfg, refresh=True)
+            st.caption("Delete removes the score, contacts, news, emails and the website pages saved for this "
+                       "company. The do-not-contact list is kept.")
+            sure = st.checkbox("I understand this cannot be undone", key=f"delete_sure_{lead.name}")
+            if st.button("Delete this lead and its data", key=f"delete_{lead.name}", icon=":material/delete:",
+                         width="stretch", disabled=not sure):
+                removed = forget_lead(lead, cfg)
+                st.session_state.pop("outreach_lead", None)
+                st.toast(f"Deleted {lead.name} and {removed} saved pages.", icon=":material/delete:")
                 st.rerun()
+        with st.popover("Update stage", icon=":material/flag:"):
+            st.caption("A reply, a meeting or a loss stops the follow-ups.")
+            for stage, label in STOP_STAGES.items():
+                st.button(label, key=f"stop_{lead.name}_{stage}", disabled=lead.stage == stage, width="stretch",
+                          on_click=act, args=(store.set_stage, lead.name, stage))
+            picked = st.selectbox("Or set any stage", store.STAGES, index=store.STAGES.index(lead.stage),
+                                  key=f"stage_{lead.name}_{lead.stage}")
+            if picked != lead.stage:
+                act(store.set_stage, lead.name, picked)
+                st.rerun()
+    st.caption(f"{lead.company.size or 'Size unknown'} · {lead.score.location.country or 'Country unknown'} · "
+               f"next step: {nxt.text}")
 
-    if found := store.load_news(lead.name):
-        with st.expander(f"Recent news on their own site ({len(found.items)})"):
-            for item in sorted(found.items, key=lambda i: i.date, reverse=True):
-                st.markdown(f"**{item.date_text}** ({item.kind}): [{item.headline}]({item.source})")
-            if not found.items:
-                st.caption("Nothing dated in the last "
-                           f"{cfg.news_max_age_days} days. Pages read: {len(found.pages_tried)}.")
-            for r in found.rejected:
-                st.caption(f"Dropped: {r}")
+    main, side = st.columns([3, 2], gap="large")
 
-    due = due_dates(list(lead_emails.values()), cfg)
-    nxt = next_step(lead.stage, list(lead_emails.values()), cfg, now)
-    st.markdown(f"**Emails** Â· next: {nxt.text}")
-
-    for step in range(len(cfg.follow_up_days) + 1):
-        email = lead_emails.get(step)
-        name = "First email" if step == 0 else f"Follow-up {step}"
-        when = f" Â· due {due[step]:%d %b %Y}" if step in due else (
-            f" Â· {cfg.follow_up_days[step - 1]} days after the first email" if step else "")
+    with side:
         with st.container(border=True):
-            with st.container(horizontal=True, vertical_alignment="center"):
-                st.markdown(f"**{name}**{when}")
-                if email:
-                    st.badge(email.status.capitalize(), color=STATUS_COLORS[email.status])
-                    if email.edited:
-                        st.badge("Edited by you", color="gray")
-
-            previous_sent = step == 0 or lead_emails.get(step - 1, None) is not None \
-                and lead_emails[step - 1].status == "sent"
-            can_draft = not stopped and (email is None or email.status != "sent") and previous_sent
-            if email is None:
-                if st.button("Draft it", key=f"draft_{lead.name}_{step}", icon=":material/edit_note:", disabled=not can_draft,
-                             help=None if can_draft else "Send the email before it first"):
-                    with st.spinner("Drafting"):
-                        act(draft_step, lead, step, icp, cfg)
+            st.markdown("**Who to write to**")
+            search = store.load_contacts(lead.name)
+            if search is None:
+                st.caption("Not searched yet. Drafting the first email searches the website first.")
+                if st.button("Search the website for people", icon=":material/person_search:"):
+                    with st.spinner("Reading the about and team pages…"):
+                        contact_for(lead, icp, cfg)
                     st.rerun()
-                continue
-
-            if email.hook:
-                st.caption(f"Hook: {email.hook}")
-            for flag in email.flags:
-                st.warning(flag, icon=":material/flag:")
-            editable = email.status == "draft"
-            subject = st.text_input("Subject", email.subject, key=f"subject_{lead.name}_{step}_{email.drafted_at}_{email.edited}", disabled=not editable)
-            body = st.text_area("Body", email.body, key=f"body_{lead.name}_{step}_{email.drafted_at}_{email.edited}", height=260, disabled=not editable)
-
-            with st.container(horizontal=True):
-                if editable:
-                    if st.button("Save my edits", key=f"save_{lead.name}_{step}", icon=":material/save:",
-                                 disabled=(subject, body) == (email.subject, email.body)):
-                        act(store.edit_email, lead.name, step, subject, body)
+            else:
+                search = contact_for(lead, icp, cfg)
+                if c := search.contact:
+                    st.markdown(f"**{c.name}**, {c.title}")
+                    why = {"buyer": "Matches your buyer", "rep": "Chosen by you",
+                           "startup_ceo": f"Startup of {lead.company.size}: no buyer named, so the chief executive",
+                           "closest": "Closest match on their site, not a sales leader: check it fits"}
+                    st.caption(f"{why.get(search.chosen_by, 'Chosen')} · "
+                               + ("typed by you" if c.matches_buyer == "typed"
+                                  else f"[source]({c.source}), {c.fetched_at[:10]}"))
+                else:
+                    st.warning("No one matching your buyer is named on their website. Pick someone below or type "
+                               "a contact in.", icon=":material/person_off:")
+                others = [p for p in search.people if p != search.contact]
+                if others:
+                    choice = st.selectbox("Other people named on their site", [None] + others,
+                                          key=f"pick_{lead.name}_{search.contact}",
+                                          format_func=lambda p: "Pick one to write to them instead" if p is None
+                                          else f"{p.name}, {p.title}")
+                    if choice is not None:
+                        store.save_contacts(lead.name, search.model_copy(update={"contact": choice, "chosen_by": "rep"}))
                         st.rerun()
-                    st.button("Approve", key=f"approve_{lead.name}_{step}", icon=":material/check:", type="primary",
-                              disabled=(subject, body) != (email.subject, email.body),
-                              help="Save your edits first" if (subject, body) != (email.subject, email.body) else None,
-                              on_click=act, args=(store.approve_email, lead.name, step))
-                if email.status == "approved":
-                    st.button("I sent it", key=f"sent_{lead.name}_{step}", icon=":material/send:", type="primary",
-                              on_click=act, args=(store.mark_sent, lead.name, step))
-                if can_draft and email.status != "sent":
-                    if st.button("Redraft", key=f"redraft_{lead.name}_{step}", icon=":material/refresh:"):
-                        with st.spinner("Drafting"):
+                with st.expander("Type a contact in, or see what was searched"):
+                    with st.form(f"typed_{lead.name}", border=False):
+                        typed_name = st.text_input("Name", key=f"typed_name_{lead.name}")
+                        typed_title = st.text_input("Title", key=f"typed_title_{lead.name}")
+                        if st.form_submit_button("Use this contact") and typed_name.strip():
+                            store.save_contacts(lead.name, search.model_copy(
+                                update={"contact": typed_contact(typed_name, typed_title), "chosen_by": "rep"}))
+                            st.rerun()
+                    for page in search.pages_tried:
+                        st.caption(f"Read: {page}")
+                    for rejected in search.rejected:
+                        st.caption(f"Rejected (not on the page): {rejected}")
+                    if st.button("Search the website again", icon=":material/refresh:"):
+                        with st.spinner("Reading the about and team pages…"):
+                            contact_for(lead, icp, cfg, refresh=True)
+                        st.rerun()
+
+        with st.container(border=True):
+            st.markdown("**Hook**")
+            first = lead_emails.get(0)
+            if first and first.hook:
+                st.badge(current.ready.hook, icon=":material/bolt:", color="green")
+                st.caption(first.hook)
+            elif first:
+                st.badge("No hook yet", icon=":material/bolt:", color="gray")
+                st.caption("Nothing timely on their site or job boards. Add a reason to write now (news, funding, a "
+                           "new hire) when you edit the email.")
+            else:
+                st.caption("Drafted with the first email.")
+            if found := store.load_news(lead.name):
+                with st.expander(f"Recent news on their own site ({len(found.items)})"):
+                    for item in sorted(found.items, key=lambda i: i.date, reverse=True):
+                        st.markdown(f"**{item.date_text}** ({item.kind}): [{item.headline}]({item.source})")
+                    if not found.items:
+                        st.caption(f"Nothing dated in the last {cfg.news_max_age_days} days. "
+                                   f"Pages read: {len(found.pages_tried)}.")
+                    for dropped in found.rejected:
+                        st.caption(f"Dropped: {dropped}")
+
+    with main:
+        labels = []
+        for step in steps:
+            email = lead_emails.get(step)
+            icon = STATUS_ICONS[email.status] if email else ":material/schedule:"
+            labels.append(f"{icon} {'First email' if step == 0 else f'Follow-up {step}'}")
+        for tab, step in zip(st.tabs(labels), steps):
+            email = lead_emails.get(step)
+            with tab:
+                when = (f"Due {due[step]:%d %b %Y}" if step in due else
+                        f"{cfg.follow_up_days[step - 1]} days after the first email" if step else "")
+                previous_sent = step == 0 or (lead_emails.get(step - 1) is not None
+                                              and lead_emails[step - 1].status == "sent")
+                can_draft = not stopped and (email is None or email.status != "sent") and previous_sent
+                if email is None:
+                    st.caption(when or "Not drafted yet.")
+                    if st.button("Draft it", key=f"draft_{lead.name}_{step}", icon=":material/edit_note:",
+                                 disabled=not can_draft, type="primary",
+                                 help=None if can_draft else "Send the email before it first"):
+                        with st.spinner("Drafting…"):
                             act(draft_step, lead, step, icp, cfg)
                         st.rerun()
+                    continue
 
-            if email.citations:
-                st.markdown("**Why each line about them is true**")
-                for c in email.citations:
-                    st.markdown(f"- {c.sentence}")
-                    st.caption(f'"{c.quote}" Â· [source]({c.source}) Â· {c.fetched_at[:10]}'
-                               if c.source.startswith("http") and " " not in c.source
-                               else f'"{c.quote}" Â· {c.source} Â· {c.fetched_at[:10]}')
-            if email.rejected:
-                with st.expander(f"Lines cut by the quote check ({len(email.rejected)})"):
-                    for r in email.rejected:
-                        st.caption(r)
-            st.caption(f"Drafted {email.drafted_at[:16].replace('T', ' ')} by {email.model or 'unknown'}"
-                       + (f" Â· sent {email.sent_at[:10]}" if email.sent_at else ""))
+                with st.container(horizontal=True, vertical_alignment="center"):
+                    st.badge(email.status.capitalize(), icon=STATUS_ICONS[email.status], color=STATUS_COLORS[email.status])
+                    if email.edited:
+                        st.badge("Edited by you", icon=":material/edit:", color="gray")
+                    if when:
+                        st.caption(when)
+                for flag in email.flags:
+                    st.warning(flag, icon=":material/flag:")
+                editable = email.status == "draft"
+                key = f"{lead.name}_{step}_{email.drafted_at}_{email.edited}"
+                subject = st.text_input("Subject", email.subject, key=f"subject_{key}", disabled=not editable)
+                body = st.text_area("Body", email.body, key=f"body_{key}", height=300, disabled=not editable)
+                unsaved = (subject, body) != (email.subject, email.body)
+                problems = sending_problems(email.body, cfg)
+
+                with st.container(horizontal=True):
+                    if editable:
+                        if st.button("Save my edits", key=f"save_{lead.name}_{step}", icon=":material/save:",
+                                     disabled=not unsaved):
+                            act(store.edit_email, lead.name, step, subject, body)
+                            st.rerun()
+                        st.button("Approve", key=f"approve_{lead.name}_{step}", icon=":material/check:", type="primary",
+                                  disabled=unsaved or bool(problems),
+                                  help="Save your edits first" if unsaved else None,
+                                  on_click=act, args=(store.approve_email, lead.name, step))
+                    if email.status == "approved":
+                        st.button("I sent it", key=f"sent_{lead.name}_{step}", icon=":material/send:", type="primary",
+                                  on_click=act, args=(store.mark_sent, lead.name, step))
+                    if can_draft and email.status != "sent":
+                        if st.button("Write it again", key=f"redraft_{lead.name}_{step}", icon=":material/refresh:"):
+                            with st.spinner("Drafting…"):
+                                act(draft_step, lead, step, icp, cfg)
+                            st.rerun()
+
+                if editable and problems and not unsaved:
+                    st.caption(":material/lock: Can't approve yet: " + "; ".join(problems) + ".")
+                if email.citations:
+                    with st.expander(f"Where each line about them comes from ({len(email.citations)})",
+                                     expanded=step == 0, icon=":material/fact_check:"):
+                        for c in email.citations:
+                            st.markdown(f"- {c.sentence}")
+                            where = f"[source]({c.source})" if c.source.startswith("http") and " " not in c.source \
+                                else c.source
+                            st.caption(f'"{c.quote}" · {where} · {c.fetched_at[:10]}')
+                if email.rejected:
+                    with st.expander(f"Lines cut by the quote check ({len(email.rejected)})",
+                                     icon=":material/content_cut:"):
+                        for cut in email.rejected:
+                            st.caption(cut)
+                st.caption(f"Drafted {email.drafted_at[:16].replace('T', ' ')} by {email.model or 'unknown'}"
+                           + (f" · sent {email.sent_at[:10]}" if email.sent_at else ""))

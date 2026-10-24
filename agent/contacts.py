@@ -6,13 +6,16 @@ in data/pages/), asks the model for the people named there, and keeps a person o
 both the name and the title really appear on the page. LinkedIn is never read.
 
 The contact is whoever the model says matches our ICP buyer persona. If nobody does and
-the company is a startup, its chief executive or a founder. Otherwise the people found are
-kept so the rep can pick one or type a contact in.
+the company is a startup, its chief executive or a founder. If it is bigger, the closest
+match by title (a revenue, operations or marketing head, then the chief executive), marked
+as such. Either way the people found are kept so the rep can pick someone else or type a
+contact in.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -53,7 +56,7 @@ class ContactSearch(BaseModel):
     """Everyone found on the company's pages, the one chosen, and what was tried."""
 
     contact: Contact | None = None
-    chosen_by: Literal["", "buyer", "startup_ceo", "rep"] = ""
+    chosen_by: Literal["", "buyer", "startup_ceo", "closest", "rep"] = ""
     people: list[Contact] = []
     pages_tried: list[str] = []
     rejected: list[str] = []
@@ -98,14 +101,16 @@ def people_on_page(page: Page, icp: ICP) -> tuple[list[Contact], list[str]]:
 
 def find_contact(name: str, url: str, icp: ICP, contact_pages: list[str], pages: Path = PAGES,
                  fetch: Callable[[str], Page] = fetch_full_text) -> ContactSearch:
-    """Read the company's people pages in order (whole page, not just the main article,
-    where team blocks get dropped) and stop at the first buyer match."""
+    """Fetch the company's people pages (whole page, not just the main article, where team blocks
+    get dropped), then read them in order and stop at the first buyer match."""
     search = ContactSearch(searched_at=_now())
     if not url:
         return search
-    for path in contact_pages:
-        page_url = urljoin(url, path)
-        page = load_or_fetch(page_url, pages / f"{slug(name)}-{slug(path)}-full.json", fetch)
+    urls = [urljoin(url, path) for path in contact_pages]
+    files = [pages / f"{slug(name)}-{slug(path)}-full.json" for path in contact_pages]
+    with ThreadPoolExecutor(max_workers=min(6, len(urls))) as pool:
+        fetched = list(pool.map(lambda uf: load_or_fetch(uf[0], uf[1], fetch), zip(urls, files)))
+    for page_url, page in zip(urls, fetched):
         search.pages_tried.append(page_url if page.ok else f"{page_url} ({page.error})")
         if not page.ok:
             continue
@@ -131,6 +136,18 @@ def startup_fallback(search: ContactSearch, headcount: int | None, max_headcount
     for title in titles:
         if top := next((p for p in search.people if exact_match(p.title, [title])), None):
             return search.model_copy(update={"contact": top, "chosen_by": "startup_ceo"})
+    return search
+
+
+def closest_match(search: ContactSearch, titles: list[str]) -> ContactSearch:
+    """No buyer named, and not a startup: take the person whose title comes first in `titles`
+    (for example a revenue, operations or marketing head, then the chief executive). It is the
+    closest match, not the buyer, so the search says so and the rep can pick someone else."""
+    if search.contact:
+        return search
+    for title in titles:
+        if top := next((p for p in search.people if exact_match(p.title, [title])), None):
+            return search.model_copy(update={"contact": top, "chosen_by": "closest"})
     return search
 
 
