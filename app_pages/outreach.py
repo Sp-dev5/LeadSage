@@ -171,6 +171,16 @@ with st.container(border=True):
                     contact_for(lead, icp, cfg, refresh=True)
                 st.rerun()
 
+    if found := store.load_news(lead.name):
+        with st.expander(f"Recent news on their own site ({len(found.items)})"):
+            for item in sorted(found.items, key=lambda i: i.date, reverse=True):
+                st.markdown(f"**{item.date_text}** ({item.kind}): [{item.headline}]({item.source})")
+            if not found.items:
+                st.caption("Nothing dated in the last "
+                           f"{cfg.news_max_age_days} days. Pages read: {len(found.pages_tried)}.")
+            for r in found.rejected:
+                st.caption(f"Dropped: {r}")
+
     due = due_dates(list(lead_emails.values()), cfg)
     nxt = next_step(lead.stage, list(lead_emails.values()), cfg, now)
     st.markdown(f"**Emails** Â· next: {nxt.text}")

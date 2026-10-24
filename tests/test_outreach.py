@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from agent import contacts, outreach, store
+from agent import contacts, hooks, outreach, store
 from agent.fetch import Page
 from agent.llm import Written
 from agent.score_lead import Company, LeadScore, SalesRole
@@ -14,7 +14,7 @@ from tests.test_scoring import make_icp
 
 CFG = outreach.OutreachConfig(sender_name="Sam", sender_company="LeadSage", draft_verdicts=["qualify", "review"],
                               follow_up_days=[3, 7, 14], max_words=120, contact_pages=["/about", "/team"],
-                              startup_max_headcount=200,
+                              news_pages=["/news", "/blog"], news_max_age_days=90, startup_max_headcount=200,
                               startup_contact_titles=["ceo", "chief executive officer", "founder", "co-founder"],
                               avoid_phrases=["brief conversation", "quick chat"], examples=[])
 ROLE = SalesRole(title="Account Executive, APAC", match="exact", source="https://jobs.example/acme",
@@ -157,7 +157,7 @@ def test_avoided_phrase_gets_one_rewrite(monkeypatch, tmp_path):
         return Written(drafts[len(prompts) - 1], "fake-model", "")
 
     monkeypatch.setattr(outreach, "generate_writing", fake)
-    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    email = outreach.draft_email(NO_ROLES, 0, make_icp(), CFG, PRIYA, [], tmp_path)
     assert len(prompts) == 2 and "It used quick chat" in prompts[1]
     assert "this quarter" in email.body and not any("avoid" in f for f in email.flags)
 
@@ -206,7 +206,7 @@ def test_when_every_claim_is_cut_the_model_gets_one_more_try(monkeypatch, tmp_pa
         return Written(drafts[len(prompts) - 1], "fake-model", "")
 
     monkeypatch.setattr(outreach, "generate_writing", fake)
-    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    email = outreach.draft_email(NO_ROLES, 0, make_icp(), CFG, PRIYA, [], tmp_path)
     assert len(prompts) == 2 and "Every claim was cut" in prompts[1]
     assert len(email.citations) == 1 and "not personal yet" not in " ".join(email.flags)
 
@@ -252,9 +252,93 @@ def test_shipped_examples_stay_clear_of_the_banned_phrases():
 NO_ROLES = LEAD.model_copy(update={"company": COMPANY.model_copy(update={"sales_roles": []})})
 
 
+NEWS = hooks.NewsItem(headline="Acme launches payroll for Singapore", date_text="Oct 20, 2026", date="2026-10-20",
+                      kind="launch", source="https://acme.example/news", fetched_at="2026-10-24T00:00:00+00:00")
+
+
 def test_open_sales_roles_are_the_hook():
-    assert outreach.hook_for(LEAD) == "they have open sales roles: Account Executive, APAC"
-    assert outreach.hook_for(NO_ROLES) == ""
+    hook = outreach.hook_for(LEAD)
+    assert (hook.kind, hook.text) == ("open sales roles", "they have open sales roles: Account Executive, APAC")
+    assert outreach.hook_for(NO_ROLES) == ("", "")
+
+
+def test_recent_news_is_the_hook_when_there_are_no_sales_roles():
+    hook = outreach.hook_for(NO_ROLES, NEWS)
+    assert (hook.kind, hook.text) == ("recent news", "Oct 20, 2026, on their own site: Acme launches payroll for Singapore")
+
+
+def test_sales_roles_beat_news():
+    assert outreach.hook_for(LEAD, NEWS).kind == "open sales roles"
+
+
+def test_prompt_shows_the_news_and_hooks_on_it():
+    prompt = outreach._prompt(NO_ROLES, make_icp(), PRIYA, [], NEWS)
+    assert "RECENT NEWS (from their own site)\n- Oct 20, 2026: Acme launches payroll for Singapore" in prompt
+    assert "HOOK\n- Oct 20, 2026, on their own site: Acme launches payroll for Singapore" in prompt
+    assert "RECENT NEWS" not in outreach._prompt(NO_ROLES, make_icp(), PRIYA, [])
+
+
+def test_claim_quoting_the_news_is_cited_to_the_news_page(tmp_path):
+    kept, rejected = outreach.check_claims(
+        [claim("Acme launches payroll for Singapore", "You launched payroll for Singapore on 20 October.")],
+        NO_ROLES, tmp_path, extra=outreach._news_extra(NEWS))
+    assert rejected == []
+    assert (kept[0].source, kept[0].fetched_at) == (NEWS.source, NEWS.fetched_at)
+
+
+def test_claim_adding_a_detail_the_news_lacks_is_cut(tmp_path):
+    kept, rejected = outreach.check_claims(
+        [claim("Acme launches payroll for Singapore", "You launched payroll for Singapore and Vietnam.")],
+        NO_ROLES, tmp_path, extra=outreach._news_extra(NEWS))
+    assert kept == [] and "Vietnam" in rejected[0]
+
+
+def test_email_opening_with_the_news_records_the_hook(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("Acme launches payroll for Singapore", "You launched payroll in Singapore."))
+    email = outreach.draft_email(NO_ROLES, 0, make_icp(), CFG, PRIYA, [], tmp_path, news=NEWS)
+    assert email.hook.endswith("Acme launches payroll for Singapore")
+    assert not any("hook" in f for f in email.flags)
+
+
+def test_a_draft_that_ignores_the_hook_gets_one_more_try(monkeypatch, tmp_path):
+    drafts = [email_out(claim("payroll software", "You build payroll software.")),
+              email_out(claim("Acme launches payroll for Singapore", "You launched payroll in Singapore."))]
+    prompts = []
+
+    def fake(system, user_prompt, schema):
+        prompts.append(user_prompt)
+        return Written(drafts[len(prompts) - 1], "fake-model", "")
+
+    monkeypatch.setattr(outreach, "generate_writing", fake)
+    email = outreach.draft_email(NO_ROLES, 0, make_icp(), CFG, PRIYA, [], tmp_path, news=NEWS)
+    assert len(prompts) == 2 and "The first claim must be about the HOOK" in prompts[1] and "RECENT NEWS" in prompts[1]
+    assert email.hook.endswith("Acme launches payroll for Singapore") and not any("hook" in f for f in email.flags)
+
+
+def test_a_second_draft_that_still_ignores_the_hook_keeps_the_first_and_flags_it(monkeypatch, tmp_path):
+    ignoring = email_out(claim("payroll software", "You build payroll software."))
+    monkeypatch.setattr(outreach, "generate_writing", lambda system, user_prompt, schema: Written(ignoring, "m", ""))
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert email.hook == "" and "a hook was available (open sales roles) but the email does not use it" in email.flags
+    assert len(email.citations) == 1
+
+
+def test_follow_ups_do_not_chase_the_hook(monkeypatch, tmp_path):
+    prompts = []
+
+    def fake(system, user_prompt, schema):
+        prompts.append(user_prompt)
+        return Written(email_out(claim("payroll software", "You build payroll software.")), "m", "")
+
+    monkeypatch.setattr(outreach, "generate_writing", fake)
+    outreach.draft_email(NO_ROLES, 1, make_icp(), CFG, PRIYA, [], tmp_path, news=NEWS)
+    assert len(prompts) == 1
+
+
+def test_email_that_ignores_the_news_is_flagged(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    email = outreach.draft_email(NO_ROLES, 0, make_icp(), CFG, PRIYA, [], tmp_path, news=NEWS)
+    assert email.hook == "" and "a hook was available (recent news) but the email does not use it" in email.flags
 
 
 def test_prompt_tells_the_model_to_open_with_the_hook():

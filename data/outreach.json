@@ -5,6 +5,8 @@
   "follow_up_days": [3, 7, 14],
   "max_words": 100,
   "contact_pages": ["/about", "/about-us", "/team", "/our-team", "/leadership", "/company"],
+  "news_pages": ["/news", "/blog", "/press", "/newsroom", "/company/news", "/about/news", "/resources/blog", "/press-releases"],
+  "news_max_age_days": 90,
   "startup_max_headcount": 200,
   "startup_contact_titles": ["ceo", "chief executive officer", "founder", "co-founder"],
   "avoid_phrases": ["I hope this finds you well", "brief conversation", "brief chat", "quick chat", "touch base",
