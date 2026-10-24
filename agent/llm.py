@@ -1,51 +1,67 @@
 """
-The model wall.
+The one file that talks to a model.
 
-Every "ask the model to decide something" call in the app goes through this one
-file. It can talk to Google Gemini's free API or to a local open-source model
-running in Ollama. Pick one with LLM_PROVIDER ("ollama" is the default,
-"gemini" for the cloud model), or per call with the `provider` argument. Nothing that calls generate_structured has to change.
+Every "ask the model to decide something" call in the app goes through
+generate_structured, which asks a local open-source model running in Ollama.
+Swapping the model only touches this file.
 
-Gemini: needs GEMINI_API_KEY. Free key at https://aistudio.google.com/
-Ollama: needs `ollama serve` running. Optional OLLAMA_MODEL (default
-qwen3.5:9b) and OLLAMA_HOST (default http://127.0.0.1:11434).
+Needs `ollama serve` running. Optional OLLAMA_MODEL (default qwen3.5:9b),
+OLLAMA_SECOND_MODEL (default qwen3.5:4b, the second opinion) and OLLAMA_HOST (default http://127.0.0.1:11434),
+from the environment or .env.
+
+Writing that a person will read (email drafts) goes through generate_writing: with
+GROQ_API_KEY set it asks a larger model on Groq's free tier (GROQ_MODEL, default
+openai/gpt-oss-120b); with no key, or if Groq fails or is rate limited for too long, the
+local model writes it. Scoring and everything else stays local. Only the drafting prompt
+leaves the machine: public website text about the company, the contact's name and title,
+and our own pitch.
 """
 
 from __future__ import annotations
 
+import copy
 import os
+import time
 from functools import lru_cache
-from typing import TypeVar
+from typing import NamedTuple, TypeVar
 
 import ollama
+import requests
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 from pydantic import BaseModel
 
 load_dotenv()
 
-MODEL = "gemini-3.8-flash"
 OLLAMA_DEFAULT_MODEL = "qwen3.5:9b"
+OLLAMA_DEFAULT_SECOND_MODEL = "qwen3.5:4b"
 OLLAMA_TIMEOUT = 300
-RETRYABLE_CODES = [500, 503, 504]
+
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
+GROQ_TIMEOUT = 60
+GROQ_MAX_WAIT = 65
+GROQ_ATTEMPTS = 3
+GROQ_TEMPERATURE = 0.5
+GROQ_REASONING_EFFORT = "medium"
 
 T = TypeVar("T", bound=BaseModel)
 
 
-@lru_cache(maxsize=1)
-def _get_client() -> genai.Client:
-    """One shared Gemini client, created on first use. The SDK retries temporary
-    errors itself: up to 5 attempts, waits growing from 2s."""
-    if not os.environ.get("GEMINI_API_KEY"):
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set.\n"
-            "Add this line to the .env file in the project folder:\n"
-            "  GEMINI_API_KEY=your-key\n"
-            "Free key: https://aistudio.google.com/"
-        )
-    retry = types.HttpRetryOptions(attempts=5, initial_delay=2.0, http_status_codes=RETRYABLE_CODES)
-    return genai.Client(http_options=types.HttpOptions(retry_options=retry))
+class Written(NamedTuple):
+    """Writing from generate_writing: the result, the model that wrote it, and why the
+    cloud model was skipped after it was tried ("" if it wasn't tried or it worked)."""
+
+    result: BaseModel
+    model: str
+    fallback_reason: str
+
+
+def model_name() -> str:
+    return os.environ.get("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL)
+
+
+def second_model_name() -> str:
+    return os.environ.get("OLLAMA_SECOND_MODEL", OLLAMA_DEFAULT_SECOND_MODEL)
 
 
 @lru_cache(maxsize=1)
@@ -53,12 +69,17 @@ def _ollama_client(host: str) -> ollama.Client:
     return ollama.Client(host=host, timeout=OLLAMA_TIMEOUT)
 
 
-def _ollama_structured(system: str, user_prompt: str, schema: type[T]) -> T:
-    """Same job as the Gemini path, but against a local Ollama server."""
+def generate_structured(system: str, user_prompt: str, schema: type[T], model: str | None = None) -> T:
+    """Ask the model a question and get back clean, validated data (not prose).
+
+    `schema` is a Pydantic model describing the shape we want back. Ollama is told
+    to return JSON matching it, and we hand back a validated instance. `model`
+    defaults to the main model.
+    """
     host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
     try:
         response = _ollama_client(host).chat(
-            model=os.environ.get("OLLAMA_MODEL", OLLAMA_DEFAULT_MODEL),
+            model=model or model_name(),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
@@ -75,38 +96,79 @@ def _ollama_structured(system: str, user_prompt: str, schema: type[T]) -> T:
     return schema.model_validate_json(raw)
 
 
-def generate_structured(
-    system: str, user_prompt: str, schema: type[T], provider: str | None = None
-) -> T:
-    """Ask the model a question and get back clean, validated data (not prose).
+def cloud_model_id() -> str:
+    return f"groq:{os.environ.get('GROQ_MODEL', GROQ_DEFAULT_MODEL)}"
 
-    `schema` is a Pydantic model describing the shape we want back. The model is
-    told to return JSON matching it, and we hand back a validated instance.
 
-    `provider` ("ollama" or "gemini") overrides LLM_PROVIDER for this one call.
-    With neither set, we use Ollama.
-    """
-    provider = (provider or os.environ.get("LLM_PROVIDER", "ollama")).lower()
-    if provider == "ollama":
-        return _ollama_structured(system, user_prompt, schema)
-    if provider != "gemini":
-        raise RuntimeError(f"Unknown LLM_PROVIDER {provider!r}. Use 'gemini' or 'ollama'.")
+def cloud_enabled() -> bool:
+    return bool(os.environ.get("GROQ_API_KEY", "").strip())
 
-    response = _get_client().models.generate_content(
-        model=MODEL,
-        contents=user_prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            response_mime_type="application/json",
-            response_schema=schema,
-            temperature=0.2,
-        ),
-    )
 
-    parsed = response.parsed
-    if not isinstance(parsed, schema):
-        raw = (response.text or "").strip()
-        if not raw:
-            raise RuntimeError("Model returned no usable output.")
-        return schema.model_validate_json(raw)
-    return parsed
+def strict_schema(schema: dict) -> dict:
+    """A copy of the JSON schema with every object closed (no extra fields, all required),
+    which Groq's strict mode demands on nested objects too."""
+    out = copy.deepcopy(schema)
+
+    def close(node) -> None:
+        if isinstance(node, dict):
+            if "properties" in node:
+                node["additionalProperties"] = False
+                node["required"] = list(node["properties"])
+            for child in node.values():
+                close(child)
+        elif isinstance(node, list):
+            for child in node:
+                close(child)
+
+    close(out)
+    return out
+
+
+def _retry_after(resp: requests.Response) -> float:
+    try:
+        return float(resp.headers.get("retry-after", 10))
+    except ValueError:
+        return 10.0
+
+
+def _groq(system: str, user_prompt: str, schema: type[T]) -> T:
+    """Ask Groq for schema-valid JSON. A rate limit (429) is waited out if the wait is short;
+    any other failure raises."""
+    model = os.environ.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
+    body = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user_prompt}],
+        "temperature": GROQ_TEMPERATURE,
+        "response_format": {"type": "json_schema", "json_schema": {
+            "name": schema.__name__, "schema": strict_schema(schema.model_json_schema()), "strict": True}},
+    }
+    if model.startswith("openai/gpt-oss"):
+        body["reasoning_effort"] = GROQ_REASONING_EFFORT
+    headers = {"Authorization": f"Bearer {os.environ['GROQ_API_KEY'].strip()}"}
+    for attempt in range(1, GROQ_ATTEMPTS + 1):
+        resp = requests.post(GROQ_URL, headers=headers, json=body, timeout=GROQ_TIMEOUT)
+        if resp.status_code != 429:
+            break
+        wait = _retry_after(resp)
+        if attempt == GROQ_ATTEMPTS or wait > GROQ_MAX_WAIT:
+            raise RuntimeError(f"rate limited, asked to wait {wait:.0f}s")
+        time.sleep(wait + 1)
+    if not resp.ok:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:120]}")
+    raw = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+    if not raw:
+        raise RuntimeError("no output")
+    return schema.model_validate_json(raw)
+
+
+def generate_writing(system: str, user_prompt: str, schema: type[T]) -> Written:
+    """Structured output for text a person will read: the Groq model if a key is set, else the
+    local main model. If Groq fails for any reason, the local model writes it instead and the
+    reason comes back so the caller can say so."""
+    reason = ""
+    if cloud_enabled():
+        try:
+            return Written(_groq(system, user_prompt, schema), cloud_model_id(), "")
+        except Exception as e:
+            reason = f"{type(e).__name__}: {str(e).replace(os.environ['GROQ_API_KEY'].strip(), '***')[:90]}"
+    return Written(generate_structured(system, user_prompt, schema), model_name(), reason)

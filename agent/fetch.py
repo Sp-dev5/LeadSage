@@ -29,6 +29,7 @@ from pydantic import BaseModel
 USER_AGENT = "LeadSage/0.1"
 TIMEOUT = 10
 MAX_CHARS = 4000
+FULL_MAX_CHARS = 9000
 MAX_REDIRECTS = 5
 REDIRECT_CODES = (301, 302, 303, 307, 308)
 PUBLIC_APIS = {"api.ashbyhq.com"}
@@ -135,6 +136,22 @@ def fetch_page(url: str) -> Page:
         if "html" not in content_type.lower():
             raise _Refused(f"not HTML ({content_type or 'no content type'})")
         text = _clean(trafilatura.extract(resp.content, url=final_url) or "")
+        if not text:
+            raise _Refused("no readable text")
+        return Page(url=final_url, text=text, fetched_at=_now(), ok=True)
+    except Exception as e:
+        return _fail(url, _reason(e))
+
+
+def fetch_full_text(url: str, max_chars: int = FULL_MAX_CHARS) -> Page:
+    """Every visible line of a page, not only the main article. Team and leadership blocks
+    sit outside the main article, so fetch_page drops them. Never raises."""
+    try:
+        resp, final_url = _get(url)
+        content_type = resp.headers.get("Content-Type", "")
+        if "html" not in content_type.lower():
+            raise _Refused(f"not HTML ({content_type or 'no content type'})")
+        text = re.sub(r"\s+", " ", trafilatura.html2txt(resp.text) or "").strip()[:max_chars]
         if not text:
             raise _Refused("no readable text")
         return Page(url=final_url, text=text, fetched_at=_now(), ok=True)

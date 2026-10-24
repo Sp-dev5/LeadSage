@@ -138,6 +138,26 @@ def test_quote_match_ignores_case_and_dash_style():
     assert checked["builds_own_software"] == "yes"
 
 
+@pytest.mark.parametrize("quote", [
+    "b2b saas ‑ crm", "B2B SaaS — CRM", "B2B SaaS – CRM", "b2b saas - crm",
+])
+def test_quote_match_ignores_dash_and_space_variants(quote):
+    checked, _ = sl._check_facts(facts(builds_own_software=("yes", quote)), COMPANY)
+    assert checked["builds_own_software"] == "yes"
+
+
+def test_quote_match_ignores_curly_quote_marks():
+    company = COMPANY.model_copy(update={"description": "It's the founders' CRM, built for \"small\" teams."})
+    quote = "It’s the founders’ CRM, built for “small” teams"
+    checked, rejected = sl._check_facts(facts(sales_motion=("founder_led", quote)), company)
+    assert (checked["sales_motion"], rejected) == ("founder_led", [])
+
+
+def test_a_different_word_still_fails_after_typography_is_unified():
+    checked, _ = sl._check_facts(facts(builds_own_software=("yes", "b2b saas ‑ erp")), COMPANY)
+    assert checked["builds_own_software"] == "unknown"
+
+
 def test_quote_shortened_with_dots_is_kept():
     checked, rejected = sl._check_facts(facts(sales_motion=("founder_led", "Sells a CRM... Founders do all")), COMPANY)
     assert checked["sales_motion"] == "founder_led"
@@ -278,6 +298,125 @@ def ratings(buyer, pain):
         score, quote = score_quote
         return sl.QuotedRating(quote=quote, evidence="e", score=score)
     return sl.FitScores(buyer_persona_fit=rating(buyer), pain_match=rating(pain), summary="")
+
+
+def test_company_with_no_text_is_not_sent_to_the_model(monkeypatch):
+    def no_model(*args, **kwargs):
+        raise AssertionError("the model must not be called")
+
+    monkeypatch.setattr(sl, "generate_structured", no_model)
+    result = sl.score_lead(make_icp(), COMPANY.model_copy(update={"description": "  "}))
+    assert (result.verdict, result.fit, result.review_flags) == ("review", 0, [sl.NO_TEXT_FLAG])
+    assert result.location.country == "India"
+
+
+@pytest.fixture
+def fake_model(monkeypatch):
+    """Fake model: `answers` maps a schema to what it returns; `asked` lists the schemas called."""
+    asked, answers = [], {}
+
+    def fake(system, user_prompt, schema, model=None):
+        asked.append(schema)
+        return answers[schema]
+
+    monkeypatch.setattr(sl, "generate_structured", fake)
+    return asked, answers
+
+
+def test_ruled_out_lead_skips_the_buyer_and_pain_call(fake_model):
+    asked, answers = fake_model
+    answers[sl.CompanyFacts] = facts(customers=("consumers", "Sells a CRM"))
+    result = sl.score_lead(make_icp(), COMPANY)
+    assert asked == [sl.CompanyFacts]
+    assert (result.verdict, result.disqualifier_reason) == ("disqualify", "B2C")
+    assert [c.score for c in result.criteria[2:]] == [2, 2]
+
+
+def test_failed_gate_skips_the_call_only_when_the_cap_is_a_disqualify(fake_model):
+    asked, answers = fake_model
+    answers[sl.CompanyFacts] = facts(is_services=("yes", "Sells a CRM"))
+    answers[sl.FitScores] = ratings((3, ""), (3, ""))
+    assert sl.score_lead(make_icp(), COMPANY).verdict == "disqualify"
+    assert asked == [sl.CompanyFacts]
+    sl.score_lead(make_icp(fail_cap=50), COMPANY)
+    assert asked[1:] == [sl.CompanyFacts, sl.FitScores]
+
+
+def test_live_lead_gets_both_calls(fake_model):
+    asked, answers = fake_model
+    answers[sl.CompanyFacts] = facts(builds_own_software=("yes", "Sells a CRM"),
+                                     customers=("businesses", "to small businesses"))
+    answers[sl.FitScores] = ratings((4, "Founders do all the selling"), (4, "Sells a CRM"))
+    result = sl.score_lead(make_icp(), COMPANY)
+    assert asked == [sl.CompanyFacts, sl.FitScores]
+    assert [c.score for c in result.criteria[2:]] == [4, 4]
+
+
+def lead_score(fit, verdict, model="main", hit=False):
+    return sl.LeadScore(fit=fit, verdict=verdict, criteria=[], disqualifier_hit=hit,
+                        disqualifier_reason="", summary="", model=model)
+
+
+@pytest.fixture
+def two_models(monkeypatch):
+    """Fake score_lead: `results` maps a model (None = main) to the score it returns."""
+    calls, results = [], {}
+
+    def fake(icp, company, model=None):
+        calls.append(model)
+        if isinstance(results[model], Exception):
+            raise results[model]
+        return results[model].model_copy()
+
+    monkeypatch.setattr(sl, "score_lead", fake)
+    return calls, results
+
+
+def test_clear_result_gets_no_second_opinion(two_models):
+    calls, results = two_models
+    results[None] = lead_score(85, "qualify")
+    result = sl.score_with_second_opinion(make_icp(), COMPANY)
+    assert (calls, result.verdict, result.second_opinion) == ([None], "qualify", None)
+
+
+def test_borderline_result_with_agreement_keeps_its_verdict(two_models):
+    calls, results = two_models
+    results[None], results[sl.second_model_name()] = lead_score(55, "review"), lead_score(60, "review", "second")
+    result = sl.score_with_second_opinion(make_icp(), COMPANY)
+    assert len(calls) == 2
+    assert (result.verdict, result.fit, result.second_opinion.fit) == ("review", 55, 60)
+
+
+def test_disagreement_sends_a_disqualified_lead_to_review(two_models):
+    _, results = two_models
+    results[None] = lead_score(35, "disqualify")
+    results[sl.second_model_name()] = lead_score(50, "review", "second")
+    result = sl.score_with_second_opinion(make_icp(), COMPANY)
+    assert result.verdict == "review"
+    assert "models disagree: main disqualify 35, second review 50" in result.review_flags
+
+
+def test_two_disqualifies_agree_however_far_apart(two_models):
+    _, results = two_models
+    results[None] = lead_score(20, "disqualify")
+    results[sl.second_model_name()] = lead_score(35, "disqualify", "second")
+    result = sl.score_with_second_opinion(make_icp(), COMPANY)
+    assert (result.verdict, result.review_flags) == ("disqualify", [])
+
+
+def test_two_reviews_far_apart_still_disagree(two_models):
+    _, results = two_models
+    results[None] = lead_score(45, "review")
+    results[sl.second_model_name()] = lead_score(65, "review", "second")
+    assert sl.score_with_second_opinion(make_icp(), COMPANY).verdict == "review"
+    assert "models disagree" in sl.score_with_second_opinion(make_icp(), COMPANY).review_flags[-1]
+
+
+def test_failed_second_model_keeps_the_main_score(two_models):
+    _, results = two_models
+    results[None], results[sl.second_model_name()] = lead_score(55, "review"), RuntimeError("down")
+    result = sl.score_with_second_opinion(make_icp(), COMPANY)
+    assert (result.verdict, result.second_opinion) == ("review", None)
 
 
 def test_rating_quoting_our_icp_drops_to_unknown():

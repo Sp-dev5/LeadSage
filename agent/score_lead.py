@@ -7,8 +7,8 @@ Plain Python turns the facts into industry and size scores, applies the ICP's ru
 and computes a transparent fit score. Every number shows its reasons. Location is
 never scored: it is reported (country, in the ICP region or not) for filtering.
 
-Ollama (local) scores first. If it fails, Gemini takes over. Borderline results get
-a Gemini second opinion; if the two disagree, the lead goes to "review".
+A local model (Ollama) does both calls; see agent/llm.py. Borderline results are
+scored again by a second local model; if the two disagree, the lead goes to review.
 
 Run it:  python -m agent.score_lead   (needs `ollama serve` running)
 """
@@ -25,13 +25,15 @@ import geonamescache
 import pycountry
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from agent.llm import generate_structured
+from agent.llm import generate_structured, model_name, second_model_name
 
 ALL_CRITERIA = ["industry match", "company size match", "buyer persona fit", "pain match"]
 
 COUNTRY_ALIASES = {"USA": "US", "US": "US", "UK": "GB", "UAE": "AE"}
 
 CITY_CLEAR_WIN = 3
+
+NO_TEXT_FLAG = "needs research: no text about the company"
 
 YesNo = Literal["yes", "no", "unknown"]
 Customers = Literal["businesses", "consumers", "mixed", "unknown"]
@@ -124,7 +126,7 @@ class Settings(BaseModel):
     qualify_at: int = Field(
         ge=0, le=100, description="fit at or above this is qualify; also where the second-opinion band ends")
     disagree_gap: int = Field(
-        ge=0, le=100, description="fit difference between two models that sends a lead to review")
+        ge=0, le=100, description="fit difference between the two models that sends a lead to review")
     weights: dict[str, float] = Field(
         description=f"how much each criterion counts in the fit, one number each for {ALL_CRITERIA}")
 
@@ -262,7 +264,7 @@ class LeadScore(BaseModel):
     review_flags: list[str] = []
     rejected_quotes: list[str] = []
     sales_roles: list[SalesRole] = []
-    provider: str = ""
+    model: str = ""
     second_opinion: LeadScore | None = None
 
 
@@ -347,9 +349,16 @@ def _build_user_prompt(icp: ICP, company: Company) -> str:
     )
 
 
+TYPOGRAPHY = str.maketrans({
+    "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "―": "-", "−": "-",
+    "‘": "'", "’": "'", "“": '"', "”": '"',
+})
+
+
 def _norm(text: str) -> str:
-    """Lowercase, unify dashes, collapse spaces, trim quote marks and end punctuation."""
-    text = text.lower().replace("—", "-").replace("–", "-")
+    """Lowercase, unify dashes and quote marks (hyphen, en and em dash, non-breaking hyphen,
+    curly quotes), collapse spaces, trim quote marks and end punctuation."""
+    text = text.lower().translate(TYPOGRAPHY)
     return re.sub(r"\s+", " ", text).strip().strip("\"'.,;: ")
 
 
@@ -368,6 +377,11 @@ def _quote_found(quote: str, source: str) -> bool:
             return False
         pos += len(piece)
     return bool(pieces)
+
+
+def quote_in(quote: str, text: str) -> bool:
+    """The quote rule for any text: True if the quote really appears in it."""
+    return _quote_found(quote, _norm(text))
 
 
 def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str], list[str]]:
@@ -597,10 +611,33 @@ def _fit_from_criteria(criteria: list[CriterionScore], capped: bool, icp: ICP) -
         return 0
     weighted = sum(s.weights[c.criterion] * c.score for c in criteria)
     fit = round(100 * weighted / (5 * total_weight))
-    gate_failed = any(c.criterion in icp.gates and c.score <= s.gate_fail_max for c in criteria)
-    if capped or gate_failed:
+    if capped or _failed_gates(criteria, icp):
         fit = min(fit, s.fail_cap)
     return fit
+
+
+def _failed_gates(criteria: list[CriterionScore], icp: ICP) -> list[str]:
+    return [c.criterion for c in criteria if c.criterion in icp.gates and c.score <= icp.settings.gate_fail_max]
+
+
+def _ruled_out(disqualified: list[str], too_small: bool, code_criteria: list[CriterionScore], icp: ICP) -> str:
+    """Why the lead is already a disqualify before buyer and pain are scored, or "".
+
+    A disqualify rule always is. A capped lead (too small, or a failed gate on
+    industry or size) is too, when the cap sits below the disqualify cut-off.
+    """
+    if disqualified:
+        return "; ".join(disqualified)
+    s = icp.settings
+    capped = (["under the minimum headcount"] if too_small else []) + _failed_gates(code_criteria, icp)
+    if capped and s.fail_cap < s.disqualify_below:
+        return "failed " + ", ".join(capped)
+    return ""
+
+
+def _not_rated(reason: str, unknown: int) -> list[CriterionScore]:
+    return [CriterionScore(criterion=name, score=unknown, evidence=f"Not scored, already ruled out: {reason}")
+            for name in ("buyer persona fit", "pain match")]
 
 
 def _verdict(fit: int, disqualifier_hit: bool, s: Settings) -> Literal["qualify", "review", "disqualify"]:
@@ -611,8 +648,21 @@ def _verdict(fit: int, disqualifier_hit: bool, s: Settings) -> Literal["qualify"
     return "review"
 
 
-def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
-    """Score one company with one specific model: no fallback, no second opinion."""
+def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScore:
+    """Score one company against the ICP with one model (default: the main one).
+
+    A company with no description is not sent to the model: there is nothing to quote,
+    so any score would be a guess. It comes back as review, fit 0, flagged for research.
+    A company the facts already rule out skips the buyer and pain call.
+    """
+    if not company.description.strip():
+        return LeadScore(
+            fit=0, verdict="review", criteria=[], location=locate(icp, company.location),
+            disqualifier_hit=False, disqualifier_reason="",
+            summary="Not scored: no text about this company (website unreadable and no description). "
+                    "Needs research.",
+            review_flags=[NO_TEXT_FLAG], sales_roles=company.sales_roles,
+        )
     headcount = _parse_headcount(company.size)
     too_small = headcount is not None and headcount < icp.settings.min_headcount
 
@@ -620,21 +670,27 @@ def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
         system=FACTS_PROMPT,
         user_prompt=_company_text(company),
         schema=CompanyFacts,
-        provider=provider,
+        model=model,
     )
-    q = generate_structured(
-        system=SCORE_PROMPT.replace("{unknown}", str(icp.settings.unknown_score)),
-        user_prompt=_build_user_prompt(icp, company),
-        schema=FitScores,
-        provider=provider,
-    )
-
     facts, rejected = _check_facts(raw_facts, company)
-    rated, rejected_ratings = _check_ratings(q, company, icp.settings.unknown_score)
-    rejected += rejected_ratings
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
-    criteria = _merge_criteria(code_criteria, rated)
     disqualified, review_flags = _apply_rules(icp, facts)
+    unknown = icp.settings.unknown_score
+
+    if reason := _ruled_out(disqualified, too_small, code_criteria, icp):
+        rated, summary = _not_rated(reason, unknown), f"Ruled out before buyer and pain were scored: {reason}."
+    else:
+        q = generate_structured(
+            system=SCORE_PROMPT.replace("{unknown}", str(unknown)),
+            user_prompt=_build_user_prompt(icp, company),
+            schema=FitScores,
+            model=model,
+        )
+        rated, rejected_ratings = _check_ratings(q, company, unknown)
+        rejected += rejected_ratings
+        summary = q.summary
+
+    criteria = _merge_criteria(code_criteria, rated)
     hit = bool(disqualified)
     fit = _fit_from_criteria(criteria, hit or too_small, icp)
     verdict = _verdict(fit, hit, icp.settings)
@@ -647,53 +703,53 @@ def score_once(provider: str, icp: ICP, company: Company) -> LeadScore:
         location=locate(icp, company.location),
         disqualifier_hit=hit,
         disqualifier_reason="; ".join(disqualified),
-        summary=q.summary,
+        summary=summary,
         facts=facts,
         review_flags=review_flags,
         rejected_quotes=rejected,
         sales_roles=company.sales_roles,
-        provider=provider,
+        model=model or model_name(),
     )
 
 
-def _is_borderline(s: LeadScore, settings: Settings) -> bool:
-    """Worth a second opinion: disqualified, or in the band between the verdict cut-offs."""
-    return s.disqualifier_hit or settings.disqualify_below <= s.fit < settings.qualify_at
+def is_borderline(s: LeadScore, settings: Settings) -> bool:
+    """Worth a second opinion: disqualified (by a rule or a low fit, since a wrongly
+    dropped lead is the costly mistake), or in the band between the verdict cut-offs."""
+    return s.verdict == "disqualify" or settings.disqualify_below <= s.fit < settings.qualify_at
 
 
 def _models_disagree(a: LeadScore, b: LeadScore, settings: Settings) -> bool:
+    """Different verdicts, or fits disagree_gap apart. Two disqualify verdicts agree,
+    however far apart their fits: both say drop it."""
+    if a.verdict == b.verdict == "disqualify":
+        return False
     return a.verdict != b.verdict or abs(a.fit - b.fit) >= settings.disagree_gap
 
 
-def score_lead(icp: ICP, company: Company) -> LeadScore:
-    """Score one company against the ICP. Returns an explainable LeadScore.
+def with_second_opinion(primary: LeadScore, second: LeadScore, settings: Settings) -> LeadScore:
+    """The main score with the second model's kept beside it. If the two disagree,
+    the lead goes to review for a human, with a flag naming both scores."""
+    result = primary.model_copy(update={"second_opinion": second})
+    if _models_disagree(primary, second, settings):
+        result.review_flags = [*primary.review_flags,
+                               f"models disagree: {primary.model} {primary.verdict} {primary.fit}, "
+                               f"{second.model} {second.verdict} {second.fit}"]
+        result.verdict = "review"
+    return result
 
-    Ollama first. If it fails, Gemini does the job. If the result is borderline,
-    Gemini also scores it, and a disagreement turns the verdict into "review".
-    """
-    try:
-        primary = score_once("ollama", icp, company)
-    except Exception as e:
-        print(f"Ollama failed ({e}); falling back to Gemini.")
-        return score_once("gemini", icp, company)
 
-    if not _is_borderline(primary, icp.settings):
+def score_with_second_opinion(icp: ICP, company: Company) -> LeadScore:
+    """Score with the main model; a borderline result is scored again by the second
+    model. If the second model fails, the main score stands."""
+    primary = score_lead(icp, company)
+    if not is_borderline(primary, icp.settings):
         return primary
-
     try:
-        second = score_once("gemini", icp, company)
+        second = score_lead(icp, company, model=second_model_name())
     except Exception as e:
-        print(f"Gemini second opinion unavailable ({e}); keeping the Ollama score.")
+        print(f"Second opinion unavailable ({e}); keeping the main score.")
         return primary
-
-    primary.second_opinion = second
-    if _models_disagree(primary, second, icp.settings):
-        primary.verdict = "review"
-        primary.summary = (
-            f"Models disagree (Ollama {primary.fit}, Gemini {second.fit}); needs a human look. "
-            + primary.summary
-        )
-    return primary
+    return with_second_opinion(primary, second, icp.settings)
 
 
 ICP_PATH = Path(__file__).resolve().parent.parent / "data" / "icp.json"
@@ -733,10 +789,10 @@ SAMPLE_COMPANY = Company(
 
 
 def _demo() -> None:
-    result = score_lead(load_icp(), SAMPLE_COMPANY)
+    result = score_with_second_opinion(load_icp(), SAMPLE_COMPANY)
 
     print(f"\n{SAMPLE_COMPANY.name}")
-    print(f"  Fit: {result.fit}/100   Verdict: {result.verdict.upper()}   (scored by {result.provider})")
+    print(f"  Fit: {result.fit}/100   Verdict: {result.verdict.upper()}   (scored by {result.model})")
     print(f"  {result.summary}\n")
     print(f"  Location (filter only): {result.location.evidence}")
     print("  Facts: " + ", ".join(f"{k}={v}" for k, v in result.facts.items()))
@@ -751,9 +807,8 @@ def _demo() -> None:
         print(f"  Quote rejected: {r}")
     for role in result.sales_roles:
         print(f"  Hiring ({role.match}): {role.title}  [{role.source}]")
-    if result.second_opinion:
-        so = result.second_opinion
-        print(f"\n  Second opinion ({so.provider}): {so.fit}/100 {so.verdict.upper()}")
+    if so := result.second_opinion:
+        print(f"\n  Second opinion ({so.model}): {so.fit}/100 {so.verdict.upper()}")
         for c in so.criteria:
             print(f"    [{c.score}/5] {c.criterion} — {c.evidence}")
     print()
