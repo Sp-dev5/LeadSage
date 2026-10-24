@@ -1,12 +1,22 @@
 # What makes LeadSage different
 
-Most lead tools return the same shape: a multi-agent loop, RAG, a 3-step cadence, a ranked queue, CRM sync. LeadSage goes deep on one thing that the others don't do.
+Most lead tools return the same shape: a multi-agent loop, RAG, a 3-step cadence, a ranked queue, CRM sync. LeadSage goes deep on one thing: timing, with a source for every claim.
+
+## Where this stands
+
+Built today:
+- Two timing signals, each with its source and date: open sales roles on a company's job board, and recent items (a launch, a partnership, a new hire) from its own news page.
+- Every email opens with one of those as its hook, and every sentence about the company must quote its own text. Drafts with no hook are flagged.
+- A person approves every email. Nothing is sent by the app.
+- Each email ends with an opt-out line and the sender's address; a do-not-contact list and a delete-lead button remove a company's data.
+
+Not built yet: re-checking companies on a schedule, funding and leadership signals from other sites, "act now" cards that move a lead up the queue, tracking replies, an audit log and auto-send. The rest of this page describes where it is going.
 
 ## The differentiator: signal-triggered timing
 
-Every other tool scores each lead once and hands you a ranked list. The order is frozen the moment it's built: open it today or next week, same list. It can't see that a company just posted a job, raised money, or changed leadership.
+A ranked list that is scored once is frozen the moment it's built: open it today or next week, same list. It can't see that a company just posted a job, raised money, or changed leadership. Some tools do track signals, so tracking alone is not the edge. Proving each one with a source is.
 
-**LeadSage keeps watching.** The agent re-checks each company for fresh buying signals on its own, and the moment one fires, that lead jumps the queue with a plain-English reason and a source link. The rep opens the app and the right lead is already waiting at the top.
+**The goal is for LeadSage to keep watching.** The agent re-checks each company for fresh buying signals on its own, and the moment one fires, that lead jumps the queue with a plain-English reason and a source link. The rep opens the app and the right lead is already waiting at the top.
 
 Why timing is the edge, not "explainable scoring":
 - Explainable scoring is table stakes now; everyone has it.
@@ -35,7 +45,7 @@ It's **RAG** (grounded in real sources) and **agentic** (keeps watching on its o
 Timing only matters if the system is one a real client could switch on:
 
 - **Verified before surfaced** — no signal reaches you without a real source. The agent won't invent a reason to act.
-- **Human approves the send** — nothing goes out on its own; optional auto-send only above a score you set.
-- **Full audit log** — every signal, score and action logged; you can see exactly why the system did what it did.
-- **Privacy by default** — minimal PII, unsubscribe enforced in code, deleting a lead wipes its data.
+- **Human approves the send** — nothing goes out on its own. Auto-send is not built; if it is added, it would only apply above a score you set.
+- **Audit log** — today each email keeps the source and date behind every line about the company. A full log of every signal, score and action is planned.
+- **Privacy by default** — minimal personal data (a name and title taken from the company's own site), every email carries an opt-out line, a do-not-contact list keeps a company from being drafted for, and deleting a lead wipes its data and saved pages. The app does not send mail, so it cannot enforce unsubscribes itself.
 - **Honest scoring** — the score explains itself today and is built to tune on reps' real decisions as they use it. No invented ground truth claimed.
