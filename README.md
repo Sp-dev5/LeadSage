@@ -20,8 +20,12 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 
 ## What's built so far
 
+- **The app** (`streamlit_app.py`): a ranked list of scored leads with filters (country, your ICP region, verdict, minimum fit, hiring for sales), and for each lead the reasons behind every number. A second page edits the ideal customer profile. Location is only a filter; it never changes a score.
+- **Pipeline and lead store** (`agent/pipeline.py`, `agent/store.py`): reads each company's website, finds open sales roles, scores it and saves the result in a local SQLite file the app reads.
+- **Outreach** (`agent/outreach.py`, `agent/contacts.py`, the Outreach page): finds the person to write to on the company's own about and team pages, drafts a short first email and up to 3 follow-ups, and tracks each lead's stage (new, drafted, approved, contacted, replied, meeting, lost). Every sentence about the prospect must quote their own website or job posts; sentences without a real quote are cut, and each kept one shows its source and date. A first email should open with a hook, a timely reason to write (today: the company is hiring salespeople); drafts with no hook are flagged so a person adds one before sending. A person approves every email and sends it from their own mailbox; a reply stops the follow-ups. Sender, follow-up days and which leads get emails live in `data/outreach.json`.
+
 - **Lead scoring** (`agent/score_lead.py`): scores a company against the ICP with evidence for every number. Facts like size and country are checked in code; the model only judges buyer and pain.
-- **Model layer** (`agent/llm.py`): a local open-source model through Ollama first, Gemini as fallback and second opinion.
+- **Model layer** (`agent/llm.py`): local open-source models through Ollama do the scoring, so nothing leaves your machine. Optional: with a free Groq key in `.env` (`GROQ_API_KEY`), the email drafts are written by a larger model on Groq's free tier; only the drafting prompt (public website text about the company, the contact's name and title, and your pitch) is sent. Without a key, or if Groq fails, the local model writes them.
 - **Evaluation** (`agent/evaluate.py`): grades the scorer against hand-labelled leads. With `--text fetched` it scores the company's real website instead of the typed description.
 - **Fetcher** (`agent/fetch.py`): reads a company's web page and returns the text with its source and date. It checks robots.txt first, including at every redirect. A failed fetch never stops a batch.
 - **Sales hiring** (`agent/signals.py`): reads a company's open jobs from its job board (Ashby, Greenhouse, Lever, Keka, Trakstar; found on the careers page or typed in the CSV) and finds the sales roles. A title counts if it contains one of the ICP's sales titles, or if the model says it's a sales role and the title really is on the list. Each role keeps its source and date. Found roles tell the scorer the company has salespeople.
@@ -30,7 +34,7 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 ## Roadmap
 
 1. Lead scoring (done)
-2. Walking skeleton: one seeded company goes research, then score, then drafted email
+2. Walking skeleton: research, score, contact, cited email, follow-ups (done; sending stays manual)
 3. Scoring engine: add intent and engagement on top of fit
 4. **Signal watcher**: watch each company for fresh buying signals and bump it up the queue the moment one fires
 5. Approval pause: the agent stops for a human to approve before "sending"
@@ -40,7 +44,10 @@ Salespeople waste most of their day on busywork: hunting for companies to sell t
 ```bash
 pip install -r requirements.txt
 ollama pull qwen3.5:9b            # local model (default)
-# optional: add GEMINI_API_KEY=your-key to .env for the fallback
+python -m agent.pipeline --file real_leads.csv   # research + score into the lead store
+python -m agent.outreach --draft  # find contacts and draft first emails
+python -m agent.outreach --follow-ups            # draft follow-ups that are due
+streamlit run streamlit_app.py    # the app: ranked leads, outreach, why each score
 python -m agent.score_lead        # score a sample company
 python -m agent.evaluate          # grade against the labelled leads
 python -m agent.evaluate --file real_leads.csv --text fetched   # score real websites

@@ -1,0 +1,36 @@
+{
+  "sender_name": "Your name",
+  "sender_company": "LeadSage",
+  "draft_verdicts": ["qualify", "review"],
+  "follow_up_days": [3, 7, 14],
+  "max_words": 100,
+  "contact_pages": ["/about", "/about-us", "/team", "/our-team", "/leadership", "/company"],
+  "startup_max_headcount": 200,
+  "startup_contact_titles": ["ceo", "chief executive officer", "founder", "co-founder"],
+  "avoid_phrases": ["I hope this finds you well", "brief conversation", "brief chat", "quick chat", "touch base",
+                    "circle back", "reach out", "game-changer", "leverage", "synergy",
+                    "this shows", "this tells me", "this indicates", "this suggests",
+                    "just checking in", "bumping this", "following up on my last email", "quick question"],
+  "examples": [
+    {
+      "situation": "first email, they are hiring salespeople",
+      "subject": "two new account executives",
+      "body": "You are hiring two account executives for your new Singapore office. New reps usually spend their first weeks researching accounts before they have a real conversation. We research and qualify prospects and time the first message, so they start on warm conversations. How are you planning to get the new reps ramped on prospecting?"
+    },
+    {
+      "situation": "first email, no hiring signal, written from who their customers are",
+      "subject": "selling to logistics firms",
+      "body": "Your customers are mostly mid-size logistics firms, a market where a good prospect list takes real digging. Our agent researches those companies, works out which ones fit and picks the moment to contact them, so your reps spend their time on conversations. Does your team build those lists by hand today?"
+    },
+    {
+      "situation": "follow-up 1, adds one new thing",
+      "subject": "Re: two new account executives",
+      "body": "One more thought on the new hires. The prospect research they will do in month one is the part we take over, which leaves them more time with buyers. If the timing is wrong, tell me and I will come back after your next quarter."
+    },
+    {
+      "situation": "last follow-up, final and leaves the door open",
+      "subject": "Re: two new account executives",
+      "body": "This is my last note, so I will not clutter your inbox. If prospecting time becomes a bottleneck for the new reps, I would be glad to show you how we handle the research. Either way, good luck with the hiring push."
+    }
+  ]
+}
