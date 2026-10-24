@@ -130,7 +130,7 @@ def exact_match(title: str, sales_titles: list[str]) -> bool:
     return any(re.search(rf"\b{re.escape(_plain(s))}\b", t) for s in sales_titles)
 
 
-def infer_sales_titles(titles: list[str], icp: ICP, provider: str | None = None) -> list[str]:
+def infer_sales_titles(titles: list[str], icp: ICP) -> list[str]:
     """The titles the model calls sales roles. Only answers that copy a given title count."""
     if not titles:
         return []
@@ -140,7 +140,6 @@ def infer_sales_titles(titles: list[str], icp: ICP, provider: str | None = None)
                                    examples=", ".join(icp.sales_roles.titles)),
         user_prompt="JOB TITLES\n" + "\n".join(f"- {t}" for t in asked),
         schema=TitleCalls,
-        provider=provider,
     )
     by_plain = {_plain(t): t for t in asked}
     said_yes = {_plain(c.quote) for c in calls.titles if c.is_sales_role == "yes"}
@@ -157,7 +156,7 @@ def job_board_for(name: str, job_board: str, careers_url: str, pages: Path = PAG
 
 
 def sales_hiring(name: str, job_board: str, icp: ICP, pages: Path = PAGES,
-                 refetch: bool = False, provider: str | None = None) -> Hiring:
+                 refetch: bool = False) -> Hiring:
     """Open sales roles for one company, from its job board. Never raises on a bad board."""
     kind, _, board_id = job_board.partition(":")
     if kind not in BOARDS or not board_id:
@@ -173,7 +172,7 @@ def sales_hiring(name: str, job_board: str, icp: ICP, pages: Path = PAGES,
         return Hiring(ok=False, board=job_board, error=f"unreadable job list: {type(e).__name__}")
 
     exact = [t for t in titles if exact_match(t, icp.sales_roles.titles)]
-    inferred = infer_sales_titles([t for t in titles if t not in exact], icp, provider)
+    inferred = infer_sales_titles([t for t in titles if t not in exact], icp)
     roles = [SalesRole(title=t, match=m, source=page.url, fetched_at=page.fetched_at)
              for ts, m in ((exact, "exact"), (inferred, "inferred")) for t in ts]
     return Hiring(ok=True, board=job_board, jobs_seen=len(titles), roles=roles)

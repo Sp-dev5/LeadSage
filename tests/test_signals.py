@@ -43,7 +43,7 @@ def model(monkeypatch):
 
     seen = Seen()
 
-    def fake(system, user_prompt, schema, provider=None):
+    def fake(system, user_prompt, schema):
         seen.append(user_prompt)
         return schema(titles=[signals.TitleCall(quote=q, is_sales_role=a) for q, a in seen.answers])
 

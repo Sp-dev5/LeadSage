@@ -1,16 +1,14 @@
 """
-Compare each model against your hand labels.
+Compare the scorer against your hand labels.
 
-Scores every lead in data/labelled_leads.csv with Ollama and with Gemini, each on its
-own (no fallback, no second-opinion rule), then shows where each one disagrees with you.
+Scores every lead in data/labelled_leads.csv, then shows where it disagrees with you.
 
-Run it:  python -m agent.evaluate               both models
-         python -m agent.evaluate --only ollama one model (Gemini is often overloaded)
-         python -m agent.evaluate --file unseen_leads.csv --runs 3 --only ollama
+Run it:  python -m agent.evaluate
+         python -m agent.evaluate --file unseen_leads.csv --runs 3
          python -m agent.evaluate --icp my_icp.json   compare an ICP variant
          python -m agent.evaluate --file real_leads.csv --text fetched   score the real website
-Needs `ollama serve` running; Gemini needs a key in .env.
-Results are also saved to data/eval_results_<file>_<model>.csv.
+Needs `ollama serve` running.
+Results are also saved to data/eval_results_<file>_ollama.csv.
 
 --text fetched scores each lead's website (its `url` column) instead of the typed
 description. Pages are cached in data/pages/ so every run scores the same text;
@@ -31,7 +29,7 @@ from collections import Counter
 from pathlib import Path
 
 from agent.fetch import fetch_page, load_or_fetch, slug
-from agent.score_lead import Company, load_icp, locate, score_once
+from agent.score_lead import Company, load_icp, locate, score_lead, score_with_second_opinion
 from agent.signals import hiring_for, read_rows
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -69,7 +67,6 @@ def _signal_rows(file: str) -> dict[str, dict]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", choices=["ollama", "gemini"], help="score with just one model")
     ap.add_argument("--detail", action="store_true", help="print per-criterion scores for leads that aren't OK")
     ap.add_argument("--names", help="comma-separated company names to score (default: all labelled)")
     ap.add_argument("--file", default="labelled_leads.csv", help="lead CSV in data/ (default: labelled_leads.csv)")
@@ -79,9 +76,11 @@ def main() -> None:
                     help="score the typed description (default) or the lead's website (needs a url column)")
     ap.add_argument("--refetch", action="store_true", help="with --text fetched: ignore cached pages, download again")
     ap.add_argument("--jobs", metavar="CSV", help="signals CSV in data/ (name,job_board): add open sales roles as evidence")
+    ap.add_argument("--second-opinion", action="store_true",
+                    help="score borderline leads again with the second model; disagreement -> review")
     args = ap.parse_args()
-    only = args.only
-    providers = (only,) if only else ("ollama", "gemini")
+    providers = ("ollama",)
+    scorer = score_with_second_opinion if args.second_opinion else score_lead
     runs = max(1, args.runs)
     lead_file = DATA / args.file
 
@@ -116,7 +115,7 @@ def main() -> None:
             scores = []
             for _ in range(runs):
                 try:
-                    scores.append(score_once(p, icp, company))
+                    scores.append(scorer(icp, company))
                 except Exception as e:
                     print(f"  {p} failed on {r['name']}: {str(e)[:90]}", flush=True)
             if not scores:
@@ -154,17 +153,12 @@ def main() -> None:
               f"MISS {grades.count('MISS')}  errors {grades.count('ERR')}  (of {len(results)})")
     outside = [f"{o['name']} ({o['country']})" for o in results if o["in_region"] == "no"]
     print(f"Outside the ICP region (hidden by the region filter): {', '.join(outside) or 'none'}")
-    if len(providers) == 2:
-        split = [o["name"] for o in results if o["ollama"][0] != o["gemini"][0]]
-        both_wrong = [o["name"] for o in results
-                      if o["ollama"][2] in ("near", "MISS") and o["gemini"][2] in ("near", "MISS")]
-        print(f"\nModels gave different verdicts on {len(split)}: {', '.join(split) or 'none'}")
-        print(f"Both differ from you on {len(both_wrong)}: {', '.join(both_wrong) or 'none'}")
 
     icp_tag = "" if icp_file.name == "icp.json" else f"_{icp_file.stem}"
     text_tag = "_fetched" if args.text == "fetched" else ""
     jobs_tag = "_jobs" if args.jobs else ""
-    out_path = DATA / f"eval_results_{lead_file.stem}{icp_tag}{text_tag}{jobs_tag}_{'_'.join(providers)}.csv"
+    second_tag = "_second" if args.second_opinion else ""
+    out_path = DATA / f"eval_results_{lead_file.stem}{icp_tag}{text_tag}{jobs_tag}{second_tag}_{'_'.join(providers)}.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["name", "my_label", "text_source", "sales_roles", "country", "in_region"]

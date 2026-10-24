@@ -16,3 +16,5 @@ data/pages/
 
 # Sales-hiring results (python -m agent.signals)
 data/signals_results.csv
+
+data/leadsage.db

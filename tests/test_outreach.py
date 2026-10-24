@@ -1,0 +1,518 @@
+"""Contacts, cited email drafts, follow-up timing and stages. No model, no network."""
+
+import json
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from agent import contacts, outreach, store
+from agent.fetch import Page
+from agent.llm import Written
+from agent.score_lead import Company, LeadScore, SalesRole
+from agent.store import Email
+from tests.test_scoring import make_icp
+
+CFG = outreach.OutreachConfig(sender_name="Sam", sender_company="LeadSage", draft_verdicts=["qualify", "review"],
+                              follow_up_days=[3, 7, 14], max_words=120, contact_pages=["/about", "/team"],
+                              startup_max_headcount=200,
+                              startup_contact_titles=["ceo", "chief executive officer", "founder", "co-founder"],
+                              avoid_phrases=["brief conversation", "quick chat"], examples=[])
+ROLE = SalesRole(title="Account Executive, APAC", match="exact", source="https://jobs.example/acme",
+                 fetched_at="2026-10-23T00:00:00+00:00")
+COMPANY = Company(name="Acme", industry="B2B SaaS", size="120", location="Pune, India",
+                  description="Acme builds payroll software for mid-size firms in India.", sales_roles=[ROLE])
+SCORE = LeadScore(fit=80, verdict="qualify", criteria=[], disqualifier_hit=False, disqualifier_reason="", summary="s")
+LEAD = store.StoredLead(name="Acme", url="https://acme.example", text_source="typed", company=COMPANY,
+                        score=SCORE, scored_at="2026-10-24T00:00:00+00:00", stage="new")
+PRIYA = contacts.Contact(name="Priya Rao", title="VP Sales", matches_buyer="yes",
+                         source="https://acme.example/team", fetched_at="2026-10-24T00:00:00+00:00")
+
+
+def test_shipped_outreach_config_loads():
+    outreach.load_outreach()
+
+
+@pytest.mark.parametrize("change", [{"follow_up_days": [7, 3]}, {"follow_up_days": [0, 3]},
+                                    {"draft_verdicts": []}, {"sender_name": ""}])
+def test_bad_outreach_config_is_rejected(tmp_path, change):
+    path = tmp_path / "outreach.json"
+    path.write_text(json.dumps(CFG.model_dump() | change), encoding="utf-8")
+    with pytest.raises(ValueError):
+        outreach.load_outreach(path)
+
+
+def test_missing_outreach_setting_is_rejected(tmp_path):
+    raw = CFG.model_dump()
+    del raw["max_words"]
+    path = tmp_path / "outreach.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="max_words"):
+        outreach.load_outreach(path)
+
+
+def claim(quote, sentence="A sentence."):
+    return outreach.ClaimOut(quote=quote, sentence=sentence)
+
+
+def test_claim_quoting_the_company_is_kept_with_its_source(tmp_path):
+    kept, rejected = outreach.check_claims([claim("payroll software for mid-size firms")], LEAD, tmp_path)
+    assert rejected == []
+    assert kept[0].source == "https://acme.example (typed description)"
+
+
+def test_claim_quoting_a_job_title_cites_the_job_board(tmp_path):
+    kept, _ = outreach.check_claims([claim("Account Executive, APAC")], LEAD, tmp_path)
+    assert (kept[0].source, kept[0].fetched_at) == (ROLE.source, ROLE.fetched_at)
+
+
+@pytest.mark.parametrize("quote", ["Acme is growing fast", "Sales reps spend hours researching", ""])
+def test_claim_without_a_real_quote_is_rejected(tmp_path, quote):
+    kept, rejected = outreach.check_claims([claim(quote)], LEAD, tmp_path)
+    assert kept == [] and len(rejected) == 1
+
+
+SOURCE = "Acme builds payroll software for mid-size firms in India. Account Executive, APAC. Series A."
+
+
+@pytest.mark.parametrize("sentence, missing", [
+    ("You're hiring AEs in Bangalore.", ["AEs", "Bangalore"]),
+    ("You're hiring Account Executives for APAC.", []),
+    ("Since you build payroll software, reps matter.", []),
+    ("Congrats on raising a Series B of 20 million.", ["B", "20"]),
+    ("SDRs at Acme in India.", ["SDRs"]),
+    ("Your team in India keeps growing.", []),
+])
+def test_unsupported_specifics(sentence, missing):
+    assert outreach.unsupported_specifics(sentence, SOURCE, outreach.PLAIN_CAPS) == missing
+
+
+def test_claim_with_a_real_quote_but_an_added_place_is_cut(tmp_path):
+    kept, rejected = outreach.check_claims(
+        [claim("Account Executive, APAC", "You're hiring Account Executives in Bangalore.")], LEAD, tmp_path)
+    assert kept == [] and "Bangalore" in rejected[0]
+
+
+def test_short_form_job_title_is_cut(tmp_path):
+    kept, _ = outreach.check_claims([claim("Account Executive, APAC", "You're hiring AEs for APAC.")], LEAD, tmp_path)
+    assert kept == []
+
+
+def test_fetched_lead_cites_the_cached_page(tmp_path):
+    page = Page(url="https://acme.example/", text="x", fetched_at="2026-10-20T00:00:00+00:00", ok=True)
+    (tmp_path / "acme.json").write_text(page.model_dump_json(), encoding="utf-8")
+    fetched = LEAD.model_copy(update={"text_source": "fetched"})
+    kept, _ = outreach.check_claims([claim("payroll software")], fetched, tmp_path)
+    assert (kept[0].source, kept[0].fetched_at) == (page.url, page.fetched_at)
+
+
+@pytest.fixture
+def model_writes(monkeypatch):
+    """Fake drafting call: returns whatever EmailOut the test sets."""
+    out = {}
+    monkeypatch.setattr(outreach, "generate_writing",
+                        lambda system, user_prompt, schema: Written(out["email"], "fake-model", out.get("failed", "")))
+    return out
+
+
+def email_out(*claims):
+    return outreach.EmailOut(subject="Payroll outreach", claims=list(claims), pitch="We research leads for you.",
+                             ask="Worth a short call?")
+
+
+def test_only_checked_claims_reach_the_email(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("Account Executive, APAC", "You are hiring an Account Executive for APAC."),
+                                      claim("payroll software", "You build payroll software."),
+                                      claim("raised a Series B", "Congrats on the Series B."))
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert email.body.startswith("Hi Priya,")
+    assert "You build payroll software." in email.body
+    assert "Series B" not in email.body
+    assert email.body.endswith("Sam\nLeadSage")
+    assert (len(email.citations), len(email.rejected), email.flags) == (2, 1, [])
+
+
+def test_email_with_nothing_checked_or_no_contact_is_flagged(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("invented", "You are invented."))
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, None, [], tmp_path)
+    assert email.body.startswith("Hi there,")
+    assert any("not personal yet" in f for f in email.flags)
+    assert any("startup with no one named" in f for f in email.flags)
+    big = LEAD.model_copy(update={"company": COMPANY.model_copy(update={"size": "450"})})
+    assert any("no named contact" in f for f in outreach.draft_email(big, 0, make_icp(), CFG, None, [], tmp_path).flags)
+
+
+def test_avoided_phrase_is_flagged_after_one_retry(model_writes, tmp_path):
+    model_writes["email"] = email_out().model_copy(update={"ask": "Open to a brief conversation?"})
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert "uses phrases you avoid: brief conversation" in email.flags
+
+
+def test_avoided_phrase_gets_one_rewrite(monkeypatch, tmp_path):
+    drafts = [email_out().model_copy(update={"ask": "Open to a quick chat?"}),
+              email_out().model_copy(update={"ask": "Is outbound research on your list this quarter?"})]
+    prompts = []
+
+    def fake(system, user_prompt, schema):
+        prompts.append(user_prompt)
+        return Written(drafts[len(prompts) - 1], "fake-model", "")
+
+    monkeypatch.setattr(outreach, "generate_writing", fake)
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert len(prompts) == 2 and "It used quick chat" in prompts[1]
+    assert "this quarter" in email.body and not any("avoid" in f for f in email.flags)
+
+
+def test_pitch_naming_something_from_nowhere_is_flagged(model_writes, tmp_path):
+    out = email_out(claim("payroll software", "You build payroll software."))
+    model_writes["email"] = out.model_copy(update={"pitch": "Teams like Razorpay cut research time by 40%."})
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert any("Razorpay" in f and "40%" in f for f in email.flags)
+
+
+def test_follow_up_replies_in_the_same_thread(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "Still thinking of your payroll software."))
+    first = Email(step=0, subject="Payroll outreach", body="b", status="sent", drafted_at="x",
+                  sent_at="2026-10-24T00:00:00+00:00")
+    email = outreach.draft_email(LEAD, 1, make_icp(), CFG, PRIYA, [first], tmp_path)
+    assert email.subject == "Re: Payroll outreach"
+
+
+def test_follow_up_repeating_an_earlier_line_is_flagged(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "Payroll again."))
+    first = Email(step=0, subject="s", body="Hi.\n\nWe research leads for you.\n\nAsk.", status="sent",
+                  drafted_at="x", sent_at="2026-10-24T00:00:00+00:00")
+    email = outreach.draft_email(LEAD, 1, make_icp(), CFG, PRIYA, [first], tmp_path)
+    assert "repeats a line from an earlier email" in email.flags
+
+
+def test_fancy_characters_are_made_plain_in_the_email(model_writes, tmp_path):
+    model_writes["email"] = outreach.EmailOut(
+        subject="Acme’s payroll", pitch="We handle research — and timing.", ask="Is AI‑driven outreach useful?",
+        claims=[claim("payroll software for mid‑size firms", "You build payroll software for mid‑size firms.")])
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert "Acme's payroll" == email.subject
+    assert "research, and timing" in email.body and "AI-driven" in email.body and "mid-size" in email.body
+    assert not any(ord(ch) > 127 for ch in email.body)
+    assert email.citations and email.rejected == []
+
+
+def test_when_every_claim_is_cut_the_model_gets_one_more_try(monkeypatch, tmp_path):
+    drafts = [email_out(claim("Acme builds payroll and HR software", "You build payroll software.")),
+              email_out(claim("payroll software for mid-size firms", "You build payroll software for mid-size firms."))]
+    prompts = []
+
+    def fake(system, user_prompt, schema):
+        prompts.append(user_prompt)
+        return Written(drafts[len(prompts) - 1], "fake-model", "")
+
+    monkeypatch.setattr(outreach, "generate_writing", fake)
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert len(prompts) == 2 and "Every claim was cut" in prompts[1]
+    assert len(email.citations) == 1 and "not personal yet" not in " ".join(email.flags)
+
+
+def test_second_try_that_also_fails_keeps_the_first_rejections(monkeypatch, tmp_path):
+    bad = email_out(claim("a quote that is not there", "You do a thing."))
+    monkeypatch.setattr(outreach, "generate_writing", lambda system, user_prompt, schema: Written(bad, "fake-model", ""))
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert email.citations == [] and len(email.rejected) == 1
+    assert any("not personal yet" in f for f in email.flags)
+
+
+def test_examples_go_into_the_prompt_for_first_emails_and_follow_ups(monkeypatch, tmp_path):
+    cfg = CFG.model_copy(update={"examples": [outreach.Example(situation="first email", subject="a subject",
+                                                               body="Example body {with braces}.")]})
+    systems = []
+
+    def fake(system, user_prompt, schema):
+        systems.append(system)
+        return Written(email_out(), "fake-model", "")
+
+    monkeypatch.setattr(outreach, "generate_writing", fake)
+    for step in (0, 1):
+        outreach.draft_email(LEAD, step, make_icp(), cfg, PRIYA, [], tmp_path)
+    assert all("Example 1 (first email)" in s and "Example body {with braces}." in s for s in systems)
+    outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert "EXAMPLES" not in systems[-1]
+
+
+def test_prompt_never_carries_the_verdict_or_the_scorers_summary(monkeypatch, tmp_path):
+    lead = LEAD.model_copy(update={"score": SCORE.model_copy(update={"summary": "Excellent fit, no direct evidence"})})
+    prompt = outreach._prompt(lead, make_icp(), PRIYA, [])
+    assert "Excellent fit" not in prompt and "qualify" not in prompt.lower() and "80" not in prompt
+
+
+def test_shipped_examples_stay_clear_of_the_banned_phrases():
+    cfg = outreach.load_outreach()
+    text = " ".join(f"{e.subject} {e.body}" for e in cfg.examples).lower()
+    assert cfg.examples and not [p for p in cfg.avoid_phrases if p.lower() in text]
+    assert all(len(e.body.split()) <= cfg.max_words for e in cfg.examples)
+
+
+NO_ROLES = LEAD.model_copy(update={"company": COMPANY.model_copy(update={"sales_roles": []})})
+
+
+def test_open_sales_roles_are_the_hook():
+    assert outreach.hook_for(LEAD) == "they have open sales roles: Account Executive, APAC"
+    assert outreach.hook_for(NO_ROLES) == ""
+
+
+def test_prompt_tells_the_model_to_open_with_the_hook():
+    assert "HOOK\n- they have open sales roles" in outreach._prompt(LEAD, make_icp(), PRIYA, [])
+    assert "HOOK" not in outreach._prompt(NO_ROLES, make_icp(), PRIYA, [])
+
+
+def test_email_that_opens_with_the_hook_records_it(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("Account Executive, APAC", "You are hiring an Account Executive for APAC."))
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert email.hook == "they have open sales roles: Account Executive, APAC"
+    assert not any("hook" in f for f in email.flags)
+
+
+def test_email_that_ignores_an_available_hook_is_flagged(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert email.hook == "" and "a hook was available (open sales roles) but the email does not use it" in email.flags
+
+
+def test_company_with_no_timely_signal_is_flagged_as_having_no_hook(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    email = outreach.draft_email(NO_ROLES, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert email.hook == "" and any(f.startswith("no hook:") for f in email.flags)
+
+
+def test_follow_ups_are_not_flagged_for_a_hook(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    email = outreach.draft_email(NO_ROLES, 1, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert not any("hook" in f for f in email.flags)
+
+
+def test_email_records_which_model_wrote_it(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    assert outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path).model == "fake-model"
+
+
+def test_cloud_failure_is_flagged_on_the_draft(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    model_writes["failed"] = "RuntimeError: HTTP 500"
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert any("cloud model failed (RuntimeError: HTTP 500)" in f for f in email.flags)
+
+
+def test_last_follow_up_is_told_it_is_the_last(monkeypatch, tmp_path):
+    systems = []
+
+    def fake(system, user_prompt, schema):
+        systems.append(system)
+        return Written(email_out(), "fake-model", "")
+
+    monkeypatch.setattr(outreach, "generate_writing", fake)
+    for step in (2, 3):
+        outreach.draft_email(LEAD, step, make_icp(), CFG, PRIYA, [], tmp_path)
+    assert [outreach.LAST_NOTE in s for s in systems] == [False, True]
+
+
+def test_no_step_past_the_last_follow_up(model_writes, tmp_path):
+    with pytest.raises(ValueError, match="only 3 follow-ups"):
+        outreach.draft_email(LEAD, 4, make_icp(), CFG, PRIYA, [], tmp_path)
+
+
+T0 = datetime(2026, 10, 24, tzinfo=timezone.utc)
+
+
+def mail(step, status, sent_at=""):
+    return Email(step=step, subject="s", body="b", status=status, drafted_at="x", sent_at=sent_at)
+
+
+@pytest.mark.parametrize("emails, now, action, step", [
+    ([], T0, "draft", 0),
+    ([mail(0, "draft")], T0, "approve", 0),
+    ([mail(0, "approved")], T0, "send", 0),
+    ([mail(0, "sent", T0.isoformat())], T0 + timedelta(days=2), "wait", 1),
+    ([mail(0, "sent", T0.isoformat())], T0 + timedelta(days=3), "draft", 1),
+    ([mail(0, "sent", T0.isoformat()), mail(1, "sent", T0.isoformat())], T0 + timedelta(days=5), "wait", 2),
+    ([mail(0, "sent", T0.isoformat()), mail(1, "draft")], T0 + timedelta(days=1), "approve", 1),
+    ([mail(s, "sent", T0.isoformat()) for s in range(4)], T0 + timedelta(days=30), "done", None),
+])
+def test_next_step(emails, now, action, step):
+    nxt = outreach.next_step("contacted", emails, CFG, now)
+    assert (nxt.action, nxt.step) == (action, step)
+
+
+def test_follow_ups_fall_due_after_the_first_send():
+    due = outreach.due_dates([mail(0, "sent", T0.isoformat())], CFG)
+    assert due == {1: T0 + timedelta(days=3), 2: T0 + timedelta(days=7), 3: T0 + timedelta(days=14)}
+    assert outreach.due_dates([mail(0, "approved")], CFG) == {}
+
+
+def test_a_stopped_lead_has_no_next_step():
+    assert outreach.next_step("replied", [], CFG, T0).action == "stopped"
+
+
+@pytest.fixture
+def db(tmp_path):
+    path = tmp_path / "leads.db"
+    store.save(COMPANY, SCORE, url=LEAD.url, text_source="typed", path=path)
+    return path
+
+
+def stage(db):
+    return store.load("Acme", db).stage
+
+
+def test_stage_follows_the_first_email(db):
+    store.save_email("Acme", mail(0, "draft"), db)
+    assert stage(db) == "drafted"
+    store.approve_email("Acme", 0, db)
+    assert stage(db) == "approved"
+    store.mark_sent("Acme", 0, db)
+    assert stage(db) == "contacted"
+    store.save_email("Acme", mail(1, "draft"), db)
+    assert stage(db) == "contacted"
+
+
+def test_only_an_approved_email_can_be_sent(db):
+    store.save_email("Acme", mail(0, "draft"), db)
+    with pytest.raises(ValueError, match="not approved"):
+        store.mark_sent("Acme", 0, db)
+
+
+def test_follow_up_cannot_go_before_the_email_before_it(db):
+    store.save_email("Acme", mail(0, "draft"), db)
+    store.save_email("Acme", mail(1, "draft"), db)
+    store.approve_email("Acme", 1, db)
+    with pytest.raises(ValueError, match="email 0 has not been sent"):
+        store.mark_sent("Acme", 1, db)
+
+
+def test_a_sent_email_is_never_replaced(db):
+    store.save_email("Acme", mail(0, "draft"), db)
+    store.approve_email("Acme", 0, db)
+    store.mark_sent("Acme", 0, db)
+    with pytest.raises(ValueError, match="already sent"):
+        store.save_email("Acme", mail(0, "draft"), db)
+
+
+def test_editing_needs_approval_again(db):
+    store.save_email("Acme", mail(0, "draft"), db)
+    store.approve_email("Acme", 0, db)
+    store.edit_email("Acme", 0, "New subject", "New body", db)
+    [email] = store.load_emails("Acme", db)
+    assert (email.status, email.subject, email.edited) == ("draft", "New subject", True)
+
+
+def test_reply_stops_the_sequence(db):
+    store.save_email("Acme", mail(0, "draft"), db)
+    store.approve_email("Acme", 0, db)
+    store.mark_sent("Acme", 0, db)
+    store.save_email("Acme", mail(1, "draft"), db)
+    store.set_stage("Acme", "replied", db)
+    assert [e.status for e in store.load_emails("Acme", db)] == ["sent", "stopped"]
+    with pytest.raises(ValueError, match="sequence stopped"):
+        store.save_email("Acme", mail(2, "draft"), db)
+
+
+def test_stage_never_moves_back_on_its_own(db):
+    store.set_stage("Acme", "contacted", db)
+    store.save_email("Acme", mail(0, "draft"), db)
+    assert stage(db) == "contacted"
+
+
+def test_unknown_stage_is_rejected(db):
+    with pytest.raises(ValueError, match="unknown stage"):
+        store.set_stage("Acme", "won", db)
+
+
+def test_contacts_round_trip(db):
+    search = contacts.ContactSearch(contact=PRIYA, people=[PRIYA], pages_tried=["https://acme.example/team"])
+    store.save_contacts("Acme", search, db)
+    assert store.load_contacts("Acme", db) == search
+    assert store.load_contacts("Nobody", db) is None
+
+
+TEAM_PAGE = Page(url="https://acme.example/team", fetched_at="2026-10-24T00:00:00+00:00", ok=True,
+                 text="Our team. Priya Rao, VP Sales. Arjun Mehta, CTO.")
+
+
+@pytest.fixture
+def model_sees(monkeypatch):
+    """Fake people call: returns the people the test sets."""
+    seen = {}
+    monkeypatch.setattr(contacts, "generate_structured",
+                        lambda system, user_prompt, schema: contacts.PeopleSeen(people=seen["people"]))
+    return seen
+
+
+def person(name, title, matches="no"):
+    return contacts.PersonSeen(name=name, title=title, matches_buyer=matches)
+
+
+def test_person_not_on_the_page_is_rejected(model_sees):
+    model_sees["people"] = [person("Priya Rao", "VP Sales", "yes"), person("John Doe", "CEO"),
+                            person("Arjun Mehta", "Chief Revenue Officer")]
+    kept, rejected = contacts.people_on_page(TEAM_PAGE, make_icp())
+    assert [p.name for p in kept] == ["Priya Rao"]
+    assert len(rejected) == 2
+
+
+def test_find_contact_skips_dead_pages_and_stops_at_the_buyer(model_sees, tmp_path):
+    model_sees["people"] = [person("Priya Rao", "VP Sales", "yes"), person("Arjun Mehta", "CTO")]
+    fetched = []
+
+    def fetch(url):
+        fetched.append(url)
+        if url.endswith("/about"):
+            return Page(url=url, fetched_at="t", ok=False, error="HTTP 404")
+        return TEAM_PAGE
+
+    search = contacts.find_contact("Acme", "https://acme.example", make_icp(), ["/about", "/team", "/leadership"],
+                                   tmp_path, fetch)
+    assert fetched == ["https://acme.example/about", "https://acme.example/team"]
+    assert search.contact.name == "Priya Rao"
+    assert [p.name for p in search.people] == ["Priya Rao", "Arjun Mehta"]
+    assert "HTTP 404" in search.pages_tried[0]
+
+
+TITLES = CFG.startup_contact_titles
+
+
+def staff(*people):
+    return contacts.ContactSearch(people=[contacts.Contact(name=n, title=t, matches_buyer="no", source="s",
+                                                           fetched_at="t") for n, t in people])
+
+
+def test_startup_with_no_buyer_gets_the_chief_executive():
+    search = staff(("Madhav Bhagat", "CTO and Co-Founder"), ("Shashank Bijapur", "CEO and Co-Founder"))
+    chosen = contacts.startup_fallback(search, 120, 200, TITLES)
+    assert (chosen.contact.name, chosen.chosen_by) == ("Shashank Bijapur", "startup_ceo")
+
+
+def test_startup_without_a_chief_executive_gets_a_founder():
+    chosen = contacts.startup_fallback(staff(("Ana Ruiz", "Head of Design"), ("Madhav Bhagat", "CTO and Co-Founder")),
+                                       120, 200, TITLES)
+    assert chosen.contact.name == "Madhav Bhagat"
+
+
+@pytest.mark.parametrize("headcount", [None, 201, 5000])
+def test_no_fallback_above_the_startup_size_or_with_unknown_size(headcount):
+    assert contacts.startup_fallback(staff(("Shashank Bijapur", "CEO")), headcount, 200, TITLES).contact is None
+
+
+def test_fallback_never_replaces_a_chosen_contact():
+    search = staff(("Shashank Bijapur", "CEO")).model_copy(update={"contact": PRIYA, "chosen_by": "rep"})
+    assert contacts.startup_fallback(search, 50, 200, TITLES).contact == PRIYA
+
+
+def test_saved_search_gets_the_fallback_and_keeps_it(db):
+    store.save_contacts("Acme", staff(("Shashank Bijapur", "CEO")), db)
+    lead = store.load("Acme", db)
+    assert outreach.saved_contact(lead, CFG, db).name == "Shashank Bijapur"
+    outreach.contact_for(lead, make_icp(), CFG, db)
+    assert store.load_contacts("Acme", db).chosen_by == "startup_ceo"
+
+
+def test_no_buyer_on_the_site_leaves_the_choice_to_the_rep(model_sees, tmp_path):
+    model_sees["people"] = [person("Arjun Mehta", "CTO")]
+    search = contacts.find_contact("Acme", "https://acme.example", make_icp(), ["/team"], tmp_path,
+                                   lambda url: TEAM_PAGE)
+    assert search.contact is None and [p.name for p in search.people] == ["Arjun Mehta"]
