@@ -21,6 +21,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from agent.contacts import ContactSearch
+from agent.hooks import NewsSearch
 from agent.score_lead import Company, LeadScore
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "leadsage.db"
@@ -38,6 +39,10 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS leads (
     stage TEXT NOT NULL DEFAULT 'new'
 );
 CREATE TABLE IF NOT EXISTS contacts (
+    lead TEXT PRIMARY KEY,
+    search TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS news (
     lead TEXT PRIMARY KEY,
     search TEXT NOT NULL
 );
@@ -169,6 +174,19 @@ def load_contacts(lead: str, path: Path = DB_PATH) -> ContactSearch | None:
     with closing(_connect(path)) as conn:
         r = conn.execute("SELECT search FROM contacts WHERE lead = ?", (lead,)).fetchone()
     return ContactSearch.model_validate_json(r["search"]) if r else None
+
+
+def save_news(lead: str, search: NewsSearch, path: Path = DB_PATH) -> None:
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("INSERT INTO news (lead, search) VALUES (?, ?) "
+                     "ON CONFLICT(lead) DO UPDATE SET search = excluded.search",
+                     (lead, search.model_dump_json()))
+
+
+def load_news(lead: str, path: Path = DB_PATH) -> NewsSearch | None:
+    with closing(_connect(path)) as conn:
+        r = conn.execute("SELECT search FROM news WHERE lead = ?", (lead,)).fetchone()
+    return NewsSearch.model_validate_json(r["search"]) if r else None
 
 
 def _emails(conn: sqlite3.Connection, lead: str) -> list[Email]:
