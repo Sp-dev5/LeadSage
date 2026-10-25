@@ -14,6 +14,9 @@ data/eval_results*.csv
 # Fetched web pages (cache for --text fetched)
 data/pages/
 
+# Company logos fetched from their own sites (python -m agent.logos)
+data/logos/
+
 # Sales-hiring results (python -m agent.signals)
 data/signals_results.csv
 

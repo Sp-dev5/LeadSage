@@ -3,7 +3,8 @@ Research and score leads, and keep the results for the app.
 
 For each company in a lead CSV: read its website (cached in data/pages/), find open
 sales roles on its job board when data/signals_leads.csv lists it, score it (with a
-second model on borderline leads), and save it in the lead store.
+second model on borderline leads), save it in the lead store, and keep the logo its
+homepage declares (data/logos/).
 
 Run it:  python -m agent.pipeline --file real_leads.csv
          python -m agent.pipeline --file test_leads.csv --names "Hevo Data,Basecamp"
@@ -19,6 +20,7 @@ from pathlib import Path
 from agent import store
 from agent.evaluate import DATA, _lead_description
 from agent.llm import second_model_name
+from agent.logos import fetch_logo
 from agent.score_lead import ICP, Company, is_borderline, load_icp, score_lead, with_second_opinion
 from agent.signals import hiring_for, read_rows
 
@@ -78,6 +80,8 @@ def score_all(rows: list[dict], icp: ICP, signals: dict[str, dict], report: Call
             continue
         url = (row.get("url") or "").strip()
         store.save(company, result, url=url, text_source=text_source, path=db)
+        if url:
+            fetch_logo(company.name, url)
         report(f"[{i}/{len(rows)}] {company.name}: {result.verdict} {result.fit}")
         if is_borderline(result, icp.settings):
             scored.append((company, result, url, text_source))
