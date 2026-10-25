@@ -1,25 +1,52 @@
 .stApp {
   background-color: #000000;
-  background-image:
-    radial-gradient(1100px 520px at 55% -8%, rgba(46, 214, 170, 0.17), rgba(0, 0, 0, 0) 70%),
-    linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
-  background-size: 100% 100%, 72px 72px, 72px 72px;
+  background-image: radial-gradient(1100px 520px at 55% -8%, rgba(46, 214, 170, 0.16), rgba(0, 0, 0, 0) 70%);
   background-attachment: fixed;
 }
 
 [data-testid="stHeader"] {
   background: transparent;
+  height: 0;
 }
 
 [data-testid="stMainBlockContainer"] {
-  padding-top: 3rem;
-  max-width: 1320px;
+  padding-top: 1.25rem;
+  max-width: 1280px;
+}
+
+.st-key-topbar {
+  padding: 0.5rem 0 1.75rem;
+}
+
+.st-key-navpills {
+  border: 1px solid #1A2823;
+  border-radius: 999px;
+  padding: 4px;
+  background: rgba(8, 15, 13, 0.82);
+}
+
+.st-key-navpills [data-testid="stPageLink"] a {
+  border-radius: 999px;
+  padding: 0.3rem 1rem;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.st-key-navpills [data-testid="stPageLink"] a:hover {
+  background: rgba(91, 233, 198, 0.08);
+}
+
+.st-key-navactive [data-testid="stPageLink"] a {
+  background: #E6F0EC;
+}
+
+.st-key-navactive [data-testid="stPageLink"] a p {
+  color: #03120D;
+  font-weight: 600;
 }
 
 h1 {
-  letter-spacing: -0.03em;
-  line-height: 1.08;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
 }
 
 [data-testid="stMetricValue"],

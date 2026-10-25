@@ -34,12 +34,8 @@ ui.page_header(
     f"{len(rows)} companies scored, {worth} worth contacting, {sent} sent. "
     "Every line about a company in an email shows where it was found.")
 
-with st.container(horizontal=True):
-    if st.button("Review drafts", type="primary", icon=":material/arrow_forward:"):
-        st.session_state.outreach_queue = "Ready to review"
-        st.switch_page("app_pages/outreach.py")
-    if st.button("See all leads", icon=":material/table_rows:"):
-        st.switch_page("app_pages/leads.py")
+if st.button("See all leads", icon=":material/arrow_forward:"):
+    st.switch_page("app_pages/leads.py")
 
 st.space("small")
 ui.stat_grid([
