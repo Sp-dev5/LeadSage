@@ -1,5 +1,5 @@
 """
-Lead scoring — the first atom of the LeadSage agent.
+Lead scoring for LeadSage.
 
 Takes an ideal-customer profile (ICP) and a company. The model answers factual
 questions about the company (each backed by a quote) and rates buyer and pain fit.
@@ -777,7 +777,7 @@ def load_icp(path: Path = ICP_PATH) -> ICP:
 
 SAMPLE_COMPANY = Company(
     name="Northwind Analytics",
-    industry="B2B SaaS — data analytics",
+    industry="B2B SaaS, data analytics",
     size="120 employees",
     location="Bengaluru, India",
     description=(
@@ -798,7 +798,7 @@ def _demo() -> None:
     print("  Facts: " + ", ".join(f"{k}={v}" for k, v in result.facts.items()))
     print("  Why:")
     for c in result.criteria:
-        print(f"    [{c.score}/5] {c.criterion} — {c.evidence}")
+        print(f"    [{c.score}/5] {c.criterion}: {c.evidence}")
     if result.disqualifier_hit:
         print(f"\n  Disqualified: {result.disqualifier_reason}")
     for flag in result.review_flags:
@@ -810,7 +810,7 @@ def _demo() -> None:
     if so := result.second_opinion:
         print(f"\n  Second opinion ({so.model}): {so.fit}/100 {so.verdict.upper()}")
         for c in so.criteria:
-            print(f"    [{c.score}/5] {c.criterion} — {c.evidence}")
+            print(f"    [{c.score}/5] {c.criterion}: {c.evidence}")
     print()
 
 

@@ -13,7 +13,6 @@ violetColor = "#7C3AED"
 grayColor = "#64748B"
 
 [theme.light]
-base = "light"
 primaryColor = "#4F46E5"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F4F5FB"
@@ -24,7 +23,6 @@ dataframeHeaderBackgroundColor = "#F4F5FB"
 chartCategoricalColors = ["#4F46E5", "#0EA5A4", "#C26A00", "#E5484D", "#7C3AED", "#2FA36B", "#64748B"]
 
 [theme.dark]
-base = "dark"
 primaryColor = "#665DEF"
 backgroundColor = "#0E1021"
 secondaryBackgroundColor = "#171A31"

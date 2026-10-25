@@ -27,6 +27,7 @@ import argparse
 import csv
 from collections import Counter
 from pathlib import Path
+from typing import NamedTuple
 
 from agent.fetch import fetch_page, load_or_fetch, slug
 from agent.score_lead import Company, load_icp, locate, score_lead, score_with_second_opinion
@@ -35,6 +36,13 @@ from agent.signals import hiring_for, read_rows
 DATA = Path(__file__).resolve().parent.parent / "data"
 PAGES = DATA / "pages"
 ORDER = {"disqualify": 0, "review": 1, "qualify": 2}
+
+
+class Result(NamedTuple):
+    verdict: str
+    fit: int | None
+    grade: str
+    votes: str
 
 
 def _grade(label: str, verdict: str) -> str:
@@ -119,13 +127,13 @@ def main() -> None:
                 except Exception as e:
                     print(f"  {p} failed on {r['name']}: {str(e)[:90]}", flush=True)
             if not scores:
-                out[p] = ("error", None, "ERR", "")
+                out[p] = Result("error", None, "ERR", "")
                 continue
             verdict, votes = Counter(s.verdict for s in scores).most_common(1)[0]
             agreeing = [s for s in scores if s.verdict == verdict]
             fit = round(sum(s.fit for s in agreeing) / len(agreeing))
-            out[p] = (verdict, fit, _grade(out["label"], verdict), f"{votes}/{len(scores)}")
-            if args.detail and out[p][2] != "OK":
+            out[p] = Result(verdict, fit, _grade(out["label"], verdict), f"{votes}/{len(scores)}")
+            if args.detail and out[p].grade != "OK":
                 s = agreeing[0]
                 print(f"  {p} on {r['name']} (you: {out['label']}, got {verdict} {fit})", flush=True)
                 for c in s.criteria:
@@ -135,7 +143,7 @@ def main() -> None:
                 for flag in s.review_flags:
                     print(f"    review rule: {flag[:110]}", flush=True)
         print(f"[{i}/{len(rows)}] {r['name']}: " + ", ".join(
-            f"{p} {out[p][0]}" + (f" ({out[p][3]})" if runs > 1 else "") for p in providers), flush=True)
+            f"{p} {out[p].verdict}" + (f" ({out[p].votes})" if runs > 1 else "") for p in providers), flush=True)
         results.append(out)
 
     print(f"\n{'Company':26} {'You':11} {'In region':9}" + "".join(f" | {p.capitalize():22}" for p in providers))
@@ -148,7 +156,7 @@ def main() -> None:
 
     print()
     for p in providers:
-        grades = [o[p][2] for o in results]
+        grades = [o[p].grade for o in results]
         print(f"{p:7} OK {grades.count('OK')}  near {grades.count('near')}  "
               f"MISS {grades.count('MISS')}  errors {grades.count('ERR')}  (of {len(results)})")
     outside = [f"{o['name']} ({o['country']})" for o in results if o["in_region"] == "no"]
