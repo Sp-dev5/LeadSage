@@ -1,0 +1,16 @@
+{% macro verdict(group) -%}
+<span class="v {{ {'Qualify': 'v-q', 'Strong fit': 'v-s', 'Review': 'v-r', 'Disqualify': 'v-d'}[group] }}">{{ group }}</span>
+{%- endmacro %}
+
+{% macro squares(fit) -%}
+{% set n = ((fit + 5) // 10) | int %}<span class="sq" aria-hidden="true"><b>{{ '■' * n }}</b>{{ '□' * (10 - n) }}</span>
+{%- endmacro %}
+
+{% macro meter(score, out_of=5, hl=False) -%}
+<span class="meter{{ ' hl' if hl }}" aria-label="{{ score }} of {{ out_of }}">{% for i in range(out_of) %}<i class="{{ 'f' if i < score }}"></i>{% endfor %}<span>{{ score }}/{{ out_of }}</span></span>
+{%- endmacro %}
+
+{% macro company(name, url, href) -%}
+<div class="co"><img src="/logo/{{ name | urlencode }}" alt="" loading="lazy" width="24" height="24">
+  <div><a class="name" href="{{ href }}">{{ name }}</a>{% if url %}<span class="dm">{{ url | domain }}</span>{% endif %}</div></div>
+{%- endmacro %}
