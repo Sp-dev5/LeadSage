@@ -25,7 +25,7 @@ import geonamescache
 import pycountry
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from agent.llm import generate_structured, model_name, second_model_name
+from agent.llm import EXTRACT_TEMPERATURE, JUDGE_TEMPERATURE, generate_structured, model_name, second_model_name
 
 ALL_CRITERIA = ["industry match", "company size match", "buyer persona fit", "pain match"]
 
@@ -61,6 +61,7 @@ class CompanyFacts(BaseModel):
     sales_motion: Fact[SalesMotion]
     sells_sales_tools: Fact[YesNo]
     primary_business: Fact[PrimaryBusiness]
+    non_profit_or_government: Fact[YesNo]
 
 
 FACT_VALUES: dict[str, tuple[str, ...]] = {
@@ -289,8 +290,8 @@ buyers and sellers?
 - builds_own_software: does it sell a software product it built itself \
 (licences or subscriptions)?
 - customers: who pays it?
-  - businesses: companies of any size; SMEs, small businesses and enterprises all count.
-  - consumers: individuals or households.
+  - businesses: companies of any size; SMEs, small businesses and enterprises all count. \nFreelancers, sole proprietors and creators who pay for the product as a business also count.
+  - consumers: individuals or households buying for personal use.
   - mixed: both, substantially.
   - unknown: the text doesn't say.
 - sales_motion: who sells today? Check in this order and pick the first that fits:
@@ -302,6 +303,7 @@ outbound described).
   - sales_team_unclear: has salespeople, but the text doesn't say how they find customers.
   - unknown: the text doesn't say.
 - sells_sales_tools: does its product help sales teams find, research or contact prospects?
+- non_profit_or_government: is it a non-profit, charity, government body or public \nagency, or does it sell mainly to governments and public agencies?
 - primary_business: where does most of its revenue come from? Go by revenue. If the \
 text gives one side's share, the other side is the rest: software at "a quarter of \
 revenue" means three quarters come from services, so services is primary. A small \
@@ -686,6 +688,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
         user_prompt=_company_text(company),
         schema=CompanyFacts,
         model=model,
+        temperature=EXTRACT_TEMPERATURE,
     )
     facts, rejected = _check_facts(raw_facts, company)
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
@@ -700,6 +703,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
             user_prompt=_build_user_prompt(icp, company),
             schema=FitScores,
             model=model,
+            temperature=JUDGE_TEMPERATURE,
         )
         rated, rejected_ratings = _check_ratings(q, company, unknown)
         rejected += rejected_ratings

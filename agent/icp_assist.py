@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from agent.llm import generate_structured
+from agent.llm import WRITE_TEMPERATURE, generate_structured
 
 FIELDS = {
     "buyer_persona": (
@@ -49,5 +49,5 @@ def suggest(field: str, draft: str, context: dict[str, str]) -> str:
     prompt = (f"FIELD: {field} ({FIELDS[field]})\n"
               f"REP'S TEXT: {draft.strip() or '(empty: write a first version from the context)'}\n"
               f"OTHER FIELDS, for context only:\n{others}")
-    result = generate_structured(system=SYSTEM, user_prompt=prompt, schema=Suggestion)
+    result = generate_structured(system=SYSTEM, user_prompt=prompt, schema=Suggestion, temperature=WRITE_TEMPERATURE)
     return " ".join(result.text.replace(" — ", ", ").replace("—", ", ").split())

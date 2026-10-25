@@ -617,7 +617,7 @@ def model_sees(monkeypatch):
     """Fake people call: returns the people the test sets."""
     seen = {}
     monkeypatch.setattr(contacts, "generate_structured",
-                        lambda system, user_prompt, schema: contacts.PeopleSeen(people=seen["people"]))
+                        lambda system, user_prompt, schema, **kw: contacts.PeopleSeen(people=seen["people"]))
     return seen
 
 

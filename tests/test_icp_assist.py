@@ -8,7 +8,7 @@ from agent import icp_assist
 def test_suggest_sends_the_field_draft_and_context(monkeypatch):
     seen = {}
 
-    def fake(system, user_prompt, schema):
+    def fake(system, user_prompt, schema, **kw):
         seen["prompt"] = user_prompt
         return schema(text="Head or VP of Sales  at B2B software companies — usually 5 to 30 reps.")
 

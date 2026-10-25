@@ -69,12 +69,19 @@ def _ollama_client(host: str) -> ollama.Client:
     return ollama.Client(host=host, timeout=OLLAMA_TIMEOUT)
 
 
-def generate_structured(system: str, user_prompt: str, schema: type[T], model: str | None = None) -> T:
+EXTRACT_TEMPERATURE = 0.0
+JUDGE_TEMPERATURE = 0.0
+WRITE_TEMPERATURE = 0.4
+
+
+def generate_structured(system: str, user_prompt: str, schema: type[T], model: str | None = None,
+                        temperature: float = JUDGE_TEMPERATURE) -> T:
     """Ask the model a question and get back clean, validated data (not prose).
 
     `schema` is a Pydantic model describing the shape we want back. Ollama is told
     to return JSON matching it, and we hand back a validated instance. `model`
-    defaults to the main model.
+    defaults to the main model. Reading facts and judging a lead run at temperature 0, so the
+    same text gives the same answer; writing keeps some variety so "write it again" differs.
     """
     host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
     try:
@@ -85,7 +92,7 @@ def generate_structured(system: str, user_prompt: str, schema: type[T], model: s
                 {"role": "user", "content": user_prompt},
             ],
             format=schema.model_json_schema(),
-            options={"temperature": 0.2},
+            options={"temperature": temperature},
             think=False,
         )
     except ConnectionError as e:
@@ -171,4 +178,5 @@ def generate_writing(system: str, user_prompt: str, schema: type[T]) -> Written:
             return Written(_groq(system, user_prompt, schema), cloud_model_id(), "")
         except Exception as e:
             reason = f"{type(e).__name__}: {str(e).replace(os.environ['GROQ_API_KEY'].strip(), '***')[:90]}"
-    return Written(generate_structured(system, user_prompt, schema), model_name(), reason)
+    return Written(generate_structured(system, user_prompt, schema, temperature=WRITE_TEMPERATURE),
+                   model_name(), reason)

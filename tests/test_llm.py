@@ -50,7 +50,7 @@ def groq(monkeypatch):
     monkeypatch.delenv("GROQ_MODEL", raising=False)
     monkeypatch.setattr(llm.requests, "post", post)
     monkeypatch.setattr(llm.time, "sleep", slept.append)
-    monkeypatch.setattr(llm, "generate_structured", lambda system, user_prompt, schema: Draft(subject="local", claims=[]))
+    monkeypatch.setattr(llm, "generate_structured", lambda system, user_prompt, schema, **kw: Draft(subject="local", claims=[]))
     return sent, replies, slept
 
 

@@ -26,7 +26,7 @@ from dateutil import parser as dateparser
 from pydantic import BaseModel
 
 from agent.fetch import Page, fetch_full_text, load_or_fetch, slug
-from agent.llm import generate_structured
+from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import quote_in
 
 PAGES = Path(__file__).resolve().parent.parent / "data" / "pages"
@@ -99,7 +99,8 @@ def parse_date(text: str) -> date | None:
 
 def read_items(page: Page, max_age_days: int, today: date) -> tuple[list[NewsItem], list[str]]:
     """The recent, checked items on one page, and the reasons others were dropped."""
-    seen = generate_structured(NEWS_PROMPT, f"PAGE {page.url}\n{page.text}", ItemsSeen)
+    seen = generate_structured(NEWS_PROMPT, f"PAGE {page.url}\n{page.text}", ItemsSeen,
+                               temperature=EXTRACT_TEMPERATURE)
     kept, rejected, older = [], [], 0
     for it in seen.items:
         if len(it.headline.split()) < MIN_HEADLINE_WORDS:

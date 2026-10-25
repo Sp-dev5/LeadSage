@@ -24,7 +24,7 @@ from urllib.parse import urljoin
 from pydantic import BaseModel
 
 from agent.fetch import Page, fetch_full_text, load_or_fetch, slug
-from agent.llm import generate_structured
+from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import ICP, quote_in
 from agent.signals import exact_match
 
@@ -88,6 +88,7 @@ def people_on_page(page: Page, icp: ICP) -> tuple[list[Contact], list[str]]:
         system=PEOPLE_PROMPT.format(persona=icp.buyer_persona),
         user_prompt=f"PAGE {page.url}\n{page.text}",
         schema=PeopleSeen,
+        temperature=EXTRACT_TEMPERATURE,
     )
     kept, rejected = [], []
     for p in seen.people:
