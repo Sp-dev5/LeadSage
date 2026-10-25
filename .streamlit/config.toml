@@ -24,19 +24,19 @@ showSidebarBorder = true
 showWidgetBorder = true
 linkUnderline = false
 
-primaryColor = "#9AF0DF"
+primaryColor = "#4BEDBD"
 backgroundColor = "#000000"
-secondaryBackgroundColor = "#0A1210"
+secondaryBackgroundColor = "#0B1410"
 textColor = "#EAF4F1"
-linkColor = "#B5F7EA"
+linkColor = "#7DF5D8"
 borderColor = "#1B2A27"
 dataframeBorderColor = "#16231F"
 dataframeHeaderBackgroundColor = "#07100D"
-chartCategoricalColors = ["#9AF0DF", "#E9C47A", "#8C9A96", "#9CC7E8", "#F0A090"]
+chartCategoricalColors = ["#4BEDBD", "#E9C47A", "#8C9A96", "#9CC7E8", "#F0A090"]
 
-greenColor = "#9AF0DF"
-greenTextColor = "#B5F7EA"
-greenBackgroundColor = "#12302A"
+greenColor = "#4BEDBD"
+greenTextColor = "#7DF5D8"
+greenBackgroundColor = "#0D2E25"
 orangeColor = "#E9C47A"
 orangeTextColor = "#F2CD86"
 orangeBackgroundColor = "#2B2212"

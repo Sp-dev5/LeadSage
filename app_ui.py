@@ -21,13 +21,13 @@ from agent.readiness import Readiness, funnel, held_back_by, readiness
 from agent.score_lead import _parse_headcount
 
 VERDICTS = ["qualify", "review", "disqualify"]
-VERDICT_HEX = {"qualify": "#1E4640", "review": "#4B3D22", "disqualify": "#2A3230"}
+VERDICT_HEX = {"qualify": "#124236", "review": "#4B3D22", "disqualify": "#2A3230"}
 VERDICT_BADGE = {"qualify": "green", "review": "orange", "disqualify": "gray"}
 VERDICT_ICON = {"qualify": ":material/check:", "review": ":material/visibility:",
                 "disqualify": ":material/remove:"}
 HOOKS = ["Hiring", "News"]
 HOOK_HEX = ["#1E3B40", "#24353B"]
-BAR_HEX = "#9AF0DF"
+BAR_HEX = "#4BEDBD"
 UNKNOWN = "Unknown"
 NO_CONTACT = "Not found yet"
 
@@ -51,9 +51,9 @@ def monogram(name: str) -> str:
     """A plain initial in a circle, for companies whose site gave no logo."""
     letter = html.escape((name.strip()[:1] or "?").upper())
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
-           f'<circle cx="32" cy="32" r="31" fill="#12302A" stroke="#2C5A52" stroke-width="2"/>'
+           f'<circle cx="32" cy="32" r="31" fill="#0D2E25" stroke="#1E6B55" stroke-width="2"/>'
            f'<text x="32" y="42" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="28" '
-           f'font-weight="600" fill="#B5F7EA">{letter}</text></svg>')
+           f'font-weight="600" fill="#7DF5D8">{letter}</text></svg>')
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 
@@ -127,7 +127,7 @@ def readiness_chart(rows: list[LeadRow]) -> alt.Chart:
     data = pd.DataFrame(funnel([r.ready for r in rows]), columns=["Step", "Leads"])
     data["Label"] = [f"{step}   {n}" for step, n in zip(data["Step"], data["Leads"])]
     top = max(1, int(data["Leads"].max()))
-    track = alt.Chart(data).mark_bar(size=10, cornerRadius=5, opacity=0.12, color="#9AF0DF").encode(
+    track = alt.Chart(data).mark_bar(size=10, cornerRadius=5, opacity=0.12, color="#4BEDBD").encode(
         y=alt.Y("Label:N", sort=None, title=None,
                 axis=alt.Axis(labelLimit=260, ticks=False, domain=False, labelPadding=10)),
         x=alt.X("max_leads:Q", title=None, axis=None, scale=alt.Scale(domain=[0, top])),
