@@ -31,7 +31,7 @@ from typing import Callable, Literal, NamedTuple
 from pydantic import BaseModel
 
 from agent.fetch import fetch_html, fetch_json, load_or_fetch, slug
-from agent.llm import generate_structured
+from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import ICP, SalesRole, load_icp
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -140,6 +140,7 @@ def infer_sales_titles(titles: list[str], icp: ICP) -> list[str]:
                                    examples=", ".join(icp.sales_roles.titles)),
         user_prompt="JOB TITLES\n" + "\n".join(f"- {t}" for t in asked),
         schema=TitleCalls,
+        temperature=EXTRACT_TEMPERATURE,
     )
     by_plain = {_plain(t): t for t in asked}
     said_yes = {_plain(c.quote) for c in calls.titles if c.is_sales_role == "yes"}

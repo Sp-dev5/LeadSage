@@ -28,7 +28,7 @@ def test_parse_date(text, expected):
 def model_sees(monkeypatch):
     seen = {}
     monkeypatch.setattr(hooks, "generate_structured",
-                        lambda system, user_prompt, schema: hooks.ItemsSeen(items=seen["items"]))
+                        lambda system, user_prompt, schema, **kw: hooks.ItemsSeen(items=seen["items"]))
     return seen
 
 

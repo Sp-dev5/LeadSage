@@ -123,7 +123,8 @@ COMPANY = sl.Company(name="X", industry="B2B SaaS - CRM", size="80", location="P
 
 def facts(**values):
     base = {name: {"quote": "", "value": "no"} for name in
-            ("is_services", "is_marketplace", "is_non_software", "builds_own_software", "sells_sales_tools")}
+            ("is_services", "is_marketplace", "is_non_software", "builds_own_software", "sells_sales_tools",
+             "non_profit_or_government")}
     base.update(customers={"quote": "", "value": "unknown"},
                 sales_motion={"quote": "", "value": "unknown"},
                 primary_business={"quote": "", "value": "unclear"})
@@ -328,13 +329,18 @@ def test_company_with_no_text_is_not_sent_to_the_model(monkeypatch):
 @pytest.fixture
 def fake_model(monkeypatch):
     """Fake model: `answers` maps a schema to what it returns; `asked` lists the schemas called."""
-    asked, answers = [], {}
+    class Asked(list):
+        temps: dict = {}
 
-    def fake(system, user_prompt, schema, model=None):
+    asked, answers, temps = Asked(), {}, {}
+
+    def fake(system, user_prompt, schema, model=None, temperature=None):
         asked.append(schema)
+        temps[schema] = temperature
         return answers[schema]
 
     monkeypatch.setattr(sl, "generate_structured", fake)
+    asked.temps = temps
     return asked, answers
 
 
@@ -492,3 +498,32 @@ def test_fact_values_match_the_schema():
 ])
 def test_grade(label, verdict, grade):
     assert _grade(label, verdict) == grade
+
+
+def test_facts_and_the_judgement_both_run_at_temperature_zero(fake_model):
+    asked, answers = fake_model
+    answers[sl.CompanyFacts] = facts()
+    answers[sl.FitScores] = ratings((4, "Sells a CRM"), (4, "Sells a CRM"))
+    sl.score_lead(make_icp(), COMPANY)
+    assert asked.temps[sl.CompanyFacts] == 0.0
+    assert asked.temps[sl.FitScores] == 0.0
+
+
+def test_non_profit_or_government_goes_to_review_not_disqualify(fake_model):
+    asked, answers = fake_model
+    quote = "Sells a CRM"
+    answers[sl.CompanyFacts] = facts(builds_own_software=("yes", quote), customers=("businesses", quote),
+                                     sales_motion=("outbound_team", quote),
+                                     non_profit_or_government=("yes", quote))
+    answers[sl.FitScores] = ratings((5, quote), (5, quote))
+    icp = make_icp(fact_rules=[{"fact": "non_profit_or_government", "value": "yes",
+                                "label": "non-profit or government (check it fits)", "action": "review"}])
+    result = sl.score_lead(icp, COMPANY)
+    assert result.verdict == "review"
+    assert result.review_flags == ["non-profit or government (check it fits)"]
+    assert not result.disqualifier_hit
+
+
+def test_facts_prompt_counts_freelancers_as_businesses_and_asks_about_non_profits():
+    assert "Freelancers, sole proprietors and creators" in sl.FACTS_PROMPT
+    assert "non_profit_or_government" in sl.FACTS_PROMPT
