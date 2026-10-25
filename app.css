@@ -1,0 +1,65 @@
+@keyframes ls-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ls-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+[class*="st-key-rise"],
+[class*="st-key-kpi"] {
+  animation: ls-rise 520ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+.st-key-kpi_1 { animation-delay: 60ms; }
+.st-key-kpi_2 { animation-delay: 120ms; }
+.st-key-kpi_3 { animation-delay: 180ms; }
+.st-key-rise_1 { animation-delay: 220ms; }
+.st-key-rise_2 { animation-delay: 290ms; }
+.st-key-rise_3 { animation-delay: 360ms; }
+.st-key-rise_4 { animation-delay: 430ms; }
+
+[class*="st-key-kpi"] {
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+
+[class*="st-key-kpi"]:hover {
+  transform: translateY(-2px);
+  border-color: rgba(16, 185, 129, 0.55);
+}
+
+[data-testid="stMetricValue"] {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  letter-spacing: -0.025em;
+}
+
+[data-testid="stProgress"] [role="progressbar"] > div > div > div {
+  transform-origin: left center;
+  animation: ls-grow 700ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+button {
+  transition: transform 120ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="st-key-rise"],
+  [class*="st-key-kpi"],
+  [data-testid="stProgress"] [role="progressbar"] > div > div > div {
+    animation: none;
+  }
+  [class*="st-key-kpi"]:hover,
+  button:active {
+    transform: none;
+  }
+}

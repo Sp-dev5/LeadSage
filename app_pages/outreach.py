@@ -19,7 +19,7 @@ STOP_STAGES = {"replied": "Replied", "meeting": "Meeting booked", "lost": "Lost"
 icp, cfg = load_icp(), load_outreach()
 now = datetime.now().astimezone()
 
-st.title("Outreach", icon=":material/mail:")
+st.title("Outreach")
 st.caption("Read each draft, check where every line about the company comes from, then send it from your own mailbox "
            "and mark it sent. Nothing is sent from this app.")
 
@@ -104,20 +104,16 @@ if not in_play:
     st.stop()
 
 ready = [r.ready for r in in_play]
-kpis = st.columns(4)
-kpis[0].metric("Ready to review", sum(r.ready for r in ready), border=True, icon=":material/task_alt:",
-               delta="a hook and a named contact", delta_color="off", delta_arrow="off")
-kpis[1].metric("Need a contact", sum(in_queue(r, "Needs a contact") for r in ready), border=True,
-               icon=":material/person_search:", delta="find or type one in", delta_color="off", delta_arrow="off")
-kpis[2].metric("Need a hook", sum(in_queue(r, "Needs a hook") for r in ready), border=True, icon=":material/bolt:",
-               delta="add a reason to write now", delta_color="off", delta_arrow="off")
-kpis[3].metric("Approved or sent", sum(r.status in ("approved", "sent") for r in ready), border=True,
-               icon=":material/send:",
-               delta=f"{sum(r.lead.stage in ('replied', 'meeting') for r in in_play)} replied",
-               delta_color="off", delta_arrow="off")
+ui.kpi_row([
+    ("Ready to review", sum(r.ready for r in ready), "a hook and a named contact", ""),
+    ("Need a contact", sum(in_queue(r, "Needs a contact") for r in ready), "find or type one in", ""),
+    ("Need a hook", sum(in_queue(r, "Needs a hook") for r in ready), "add a reason to write now", ""),
+    ("Approved or sent", sum(r.status in ("approved", "sent") for r in ready),
+     f"{sum(r.lead.stage in ('replied', 'meeting') for r in in_play)} replied", ""),
+])
 
 queue = st.segmented_control("Queue", QUEUES, default="All", required=True, key="outreach_queue",
-                             format_func=lambda q: f"{q} ({sum(in_queue(r.ready, q) for r in in_play)})")
+                             format_func=lambda q: f"{q}  {sum(in_queue(r.ready, q) for r in in_play)}")
 queue_rows = sorted((r for r in in_play if in_queue(r.ready, queue)), key=lambda r: -r.lead.score.fit)
 
 table = pd.DataFrame([{
@@ -134,7 +130,7 @@ table = pd.DataFrame([{
 if table.empty:
     st.info(f"Nothing in \"{queue}\" right now.", icon=":material/inbox:")
 else:
-    with st.container(border=True):
+    with st.container(border=True, key="rise_1"):
         st.caption("Best fit first. Select a company to read and approve its emails.")
         event = st.dataframe(
             table, hide_index=True, on_select="rerun", selection_mode="single-row", key="outreach_table",

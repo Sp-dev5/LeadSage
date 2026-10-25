@@ -96,3 +96,26 @@ def test_queues():
     assert [q for q in rd.QUEUES if rd.in_queue(needs_hook, q)] == ["All", "Needs a hook"]
     assert [q for q in rd.QUEUES if rd.in_queue(ready, q)] == ["All", "Ready to review"]
     assert [q for q in rd.QUEUES if rd.in_queue(sent, q)] == ["All", "Sent"]
+
+
+def scored(verdict, fit, flags=(), hit=False, reason=""):
+    return LeadScore(fit=fit, verdict=verdict, criteria=[], disqualifier_hit=hit, disqualifier_reason=reason,
+                     summary="s", review_flags=list(flags))
+
+
+@pytest.mark.parametrize("verdict, fit, tab", [
+    ("qualify", 75, "Qualify"),
+    ("review", 100, "Strong fit"),
+    ("review", 70, "Strong fit"),
+    ("review", 69, "Review"),
+    ("disqualify", 80, "Disqualify"),
+])
+def test_group(verdict, fit, tab):
+    assert rd.group(scored(verdict, fit), 70) == tab
+
+
+def test_held_back_by_names_the_rule():
+    assert rd.held_back_by(scored("review", 100, ["sales motion unknown (needs research)"])) == \
+        "sales motion unknown (needs research)"
+    assert rd.held_back_by(scored("disqualify", 20, hit=True, reason="sells to consumers")) == "sells to consumers"
+    assert rd.held_back_by(scored("qualify", 80)) == ""

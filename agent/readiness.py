@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from agent.outreach import OutreachConfig
+from agent.score_lead import LeadScore
 from agent.store import Email, StoredLead
 
 HOOK_LABELS = {"open sales roles": "Hiring", "recent news": "News"}
@@ -74,6 +75,25 @@ def todo(r: Readiness) -> str:
         return "Sequence stopped"
     missing = [what for what, have in (("a contact", r.contact), ("a hook", r.hook)) if not have]
     return "Review and approve" if not missing else "Add " + " and ".join(missing)
+
+
+GROUPS = ["Qualify", "Strong fit", "Review", "Disqualify", "All"]
+
+
+def group(score: LeadScore, qualify_at: int) -> str:
+    """The dashboard tab a lead sits in. A review lead whose fit reaches the qualify cut-off was
+    held back by a rule (sales motion unknown, models disagree...), so it is shown as a strong fit
+    with that reason instead of being lost among the other review leads."""
+    if score.verdict == "review" and score.fit >= qualify_at:
+        return "Strong fit"
+    return score.verdict.capitalize()
+
+
+def held_back_by(score: LeadScore) -> str:
+    """Why a lead is not a qualify, in a few words, or "" when nothing held it back."""
+    if score.disqualifier_hit:
+        return score.disqualifier_reason
+    return "; ".join(score.review_flags)
 
 
 QUEUES = ["All", "Ready to review", "Needs a contact", "Needs a hook", "Approved", "Sent"]
