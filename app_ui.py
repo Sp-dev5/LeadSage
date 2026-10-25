@@ -19,13 +19,13 @@ from agent.readiness import Readiness, funnel, held_back_by, readiness
 from agent.score_lead import _parse_headcount
 
 VERDICTS = ["qualify", "review", "disqualify"]
-VERDICT_HEX = {"qualify": "#0B7A55", "review": "#A16207", "disqualify": "#5B6167"}
+VERDICT_HEX = {"qualify": "#0E7A64", "review": "#8A5A0B", "disqualify": "#3A4542"}
 VERDICT_BADGE = {"qualify": "green", "review": "orange", "disqualify": "gray"}
 VERDICT_ICON = {"qualify": ":material/check:", "review": ":material/visibility:",
                 "disqualify": ":material/remove:"}
 HOOKS = ["Hiring", "News"]
-HOOK_HEX = ["#3D4F49", "#3D4449"]
-BAR_HEX = "#10B981"
+HOOK_HEX = ["#163A33", "#1B2B33"]
+BAR_HEX = "#5BE9C6"
 UNKNOWN = "Unknown"
 NO_CONTACT = "Not found yet"
 
@@ -80,26 +80,40 @@ def lead_columns() -> dict:
     }
 
 
-def kpi_row(items: list[tuple[str, int, str, str]]) -> None:
-    """A row of number cards: (label, value, note, help). Keyed so the page CSS can animate them."""
-    for i, (col, (label, value, note, help_text)) in enumerate(zip(st.columns(len(items)), items)):
-        with col.container(border=True, key=f"kpi_{i}"):
-            st.metric(label, value, delta=note or None, delta_color="off", delta_arrow="off",
-                      help=help_text or None)
+def stat_grid(items: list[tuple[str, int, str, str]]) -> None:
+    """Numbers in one bordered panel, split into cells: (label, value, note, help)."""
+    with st.container(border=True, key="stats"):
+        for col, (label, value, note, help_text) in zip(st.columns(len(items), gap="medium"), items):
+            col.metric(label, value, delta=note or None, delta_color="off", delta_arrow="off",
+                       help=help_text or None)
+
+
+def eyebrow(text: str, icon: str, key: str) -> None:
+    """A small uppercase label above a heading."""
+    with st.container(key=f"eyebrow_{key}"):
+        st.markdown(f":material/{icon}: {text}")
+
+
+def page_header(label: str, icon: str, title: str, highlight: str, subtitle: str) -> None:
+    """Label, a large title with its key words in the accent colour, and one line under it."""
+    with st.container(key="hero"):
+        eyebrow(label, icon, "hero")
+        st.markdown(f"# {title} :green[{highlight}]" if highlight else f"# {title}")
+        st.caption(subtitle)
 
 
 def readiness_chart(rows: list[LeadRow]) -> alt.Chart:
     data = pd.DataFrame(funnel([r.ready for r in rows]), columns=["Step", "Leads"])
     data["Label"] = [f"{step}   {n}" for step, n in zip(data["Step"], data["Leads"])]
     top = max(1, int(data["Leads"].max()))
-    track = alt.Chart(data).mark_bar(size=10, cornerRadius=5, opacity=0.12, color="#8A9096").encode(
+    track = alt.Chart(data).mark_bar(size=10, cornerRadius=5, opacity=0.14, color="#5BE9C6").encode(
         y=alt.Y("Label:N", sort=None, title=None,
                 axis=alt.Axis(labelLimit=260, ticks=False, domain=False, labelPadding=10)),
         x=alt.X("max_leads:Q", title=None, axis=None, scale=alt.Scale(domain=[0, top])),
     ).transform_calculate(max_leads=str(top))
     bars = alt.Chart(data).mark_bar(size=10, cornerRadius=5, color=BAR_HEX).encode(
         y=alt.Y("Label:N", sort=None), x=alt.X("Leads:Q"), tooltip=["Step", "Leads"])
-    return (track + bars).properties(height=270).configure_view(stroke=None)
+    return (track + bars).properties(height=340, background="transparent").configure_view(stroke=None)
 
 
 def verdict_badge(verdict: str) -> None:

@@ -10,52 +10,46 @@ url = "app/static/fonts/geist-latin-wght-normal.woff2"
 weight = "100 900"
 
 [theme]
+base = "dark"
 font = "Geist"
 headingFont = "Geist"
 baseFontSize = 15
 headingFontWeights = [600, 600, 600, 500, 500, 500]
-headingFontSizes = ["30px", "22px", "18px", "16px", "14px", "12px"]
-baseRadius = "10px"
-buttonRadius = "8px"
-metricValueFontSize = "2.1rem"
+headingFontSizes = ["40px", "24px", "18px", "16px", "14px", "12px"]
+baseRadius = "12px"
+buttonRadius = "10px"
+metricValueFontSize = "2.4rem"
 metricValueFontWeight = 600
 showSidebarBorder = true
+showWidgetBorder = true
 linkUnderline = false
-greenColor = "#0B7A55"
-orangeColor = "#A16207"
-redColor = "#C2410C"
-grayColor = "#6B7177"
-blueColor = "#3D6F8E"
-violetColor = "#6B7177"
 
-[theme.light]
-primaryColor = "#047857"
-backgroundColor = "#FAFAF9"
-secondaryBackgroundColor = "#F1F2F0"
-textColor = "#111314"
-linkColor = "#047857"
-borderColor = "#E3E5E2"
-dataframeBorderColor = "#E3E5E2"
-dataframeHeaderBackgroundColor = "#F1F2F0"
-chartCategoricalColors = ["#047857", "#A16207", "#6B7177", "#3D6F8E", "#C2410C"]
+primaryColor = "#5BE9C6"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#0A1210"
+textColor = "#E6F0EC"
+linkColor = "#7CF5D6"
+borderColor = "#1A2823"
+dataframeBorderColor = "#16231F"
+dataframeHeaderBackgroundColor = "#07100D"
+chartCategoricalColors = ["#5BE9C6", "#F2B44C", "#8A9893", "#7FB3D5", "#F07A6A"]
 
-[theme.dark]
-primaryColor = "#047857"
-backgroundColor = "#0C0E0F"
-secondaryBackgroundColor = "#15181A"
-textColor = "#ECEDEE"
-linkColor = "#34D399"
-borderColor = "#23272A"
-dataframeBorderColor = "#23272A"
-dataframeHeaderBackgroundColor = "#121517"
-chartCategoricalColors = ["#34D399", "#F5B544", "#8A9096", "#7FB3D5", "#F0835A"]
+greenColor = "#5BE9C6"
+greenTextColor = "#7CF5D6"
+greenBackgroundColor = "#0D2620"
+orangeColor = "#F2B44C"
+orangeTextColor = "#F5C46B"
+orangeBackgroundColor = "#291E0B"
+redColor = "#F07A6A"
+redTextColor = "#F59B8E"
+redBackgroundColor = "#2A1310"
+grayColor = "#8A9893"
+grayTextColor = "#A9B5B0"
+grayBackgroundColor = "#121A17"
+blueColor = "#7FB3D5"
+violetColor = "#8A9893"
 
-[theme.dark.sidebar]
-backgroundColor = "#0A0C0D"
-secondaryBackgroundColor = "#15181A"
-borderColor = "#1C2023"
-
-[theme.light.sidebar]
-backgroundColor = "#F4F5F3"
-secondaryBackgroundColor = "#E9EBE8"
-borderColor = "#E3E5E2"
+[theme.sidebar]
+backgroundColor = "#030706"
+secondaryBackgroundColor = "#0A1210"
+borderColor = "#14201C"

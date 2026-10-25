@@ -19,9 +19,9 @@ STOP_STAGES = {"replied": "Replied", "meeting": "Meeting booked", "lost": "Lost"
 icp, cfg = load_icp(), load_outreach()
 now = datetime.now().astimezone()
 
-st.title("Outreach")
-st.caption("Read each draft, check where every line about the company comes from, then send it from your own mailbox "
-           "and mark it sent. Nothing is sent from this app.")
+ui.page_header("Pipeline", "mail", "Outreach", "",
+               "Read each draft, check where every line about the company comes from, then send it from your "
+               "own mailbox and mark it sent. Nothing is sent from this app.")
 
 
 def act(fn, *args) -> None:
@@ -100,11 +100,11 @@ if setup:
     st.warning("Before you can approve an email: " + "; ".join(setup) + ".", icon=":material/lock:")
 
 if not in_play:
-    st.info("No leads to write to yet. Score leads on the Dashboard first.", icon=":material/info:")
+    st.info("No leads to write to yet. Score leads on the Leads page first.", icon=":material/info:")
     st.stop()
 
 ready = [r.ready for r in in_play]
-ui.kpi_row([
+ui.stat_grid([
     ("Ready to review", sum(r.ready for r in ready), "a hook and a named contact", ""),
     ("Need a contact", sum(in_queue(r, "Needs a contact") for r in ready), "find or type one in", ""),
     ("Need a hook", sum(in_queue(r, "Needs a hook") for r in ready), "add a reason to write now", ""),
@@ -112,7 +112,8 @@ ui.kpi_row([
      f"{sum(r.lead.stage in ('replied', 'meeting') for r in in_play)} replied", ""),
 ])
 
-queue = st.segmented_control("Queue", QUEUES, default="All", required=True, key="outreach_queue",
+st.session_state.setdefault("outreach_queue", "All")
+queue = st.segmented_control("Queue", QUEUES, required=True, key="outreach_queue",
                              format_func=lambda q: f"{q}  {sum(in_queue(r.ready, q) for r in in_play)}")
 queue_rows = sorted((r for r in in_play if in_queue(r.ready, queue)), key=lambda r: -r.lead.score.fit)
 

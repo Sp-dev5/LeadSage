@@ -1,3 +1,110 @@
+.stApp {
+  background-color: #000000;
+  background-image:
+    radial-gradient(1100px 520px at 55% -8%, rgba(46, 214, 170, 0.17), rgba(0, 0, 0, 0) 70%),
+    linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 100% 100%, 72px 72px, 72px 72px;
+  background-attachment: fixed;
+}
+
+[data-testid="stHeader"] {
+  background: transparent;
+}
+
+[data-testid="stMainBlockContainer"] {
+  padding-top: 3rem;
+  max-width: 1320px;
+}
+
+h1 {
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+}
+
+[data-testid="stMetricValue"],
+[class*="st-key-stat"] p {
+  font-variant-numeric: tabular-nums;
+}
+
+[data-testid="stMetricValue"] {
+  letter-spacing: -0.02em;
+}
+
+[class*="st-key-panel"],
+[class*="st-key-stats"],
+[class*="st-key-tiles"],
+[class*="st-key-kpi"],
+[class*="st-key-rise"] {
+  background: rgba(8, 15, 13, 0.82);
+  border-color: #1A2823 !important;
+}
+
+[class*="st-key-eyebrow"] p {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8A9893;
+  margin: 0;
+}
+
+[class*="st-key-stats"] [data-testid="stColumn"] + [data-testid="stColumn"],
+[class*="st-key-tiles"] [data-testid="stColumn"] + [data-testid="stColumn"] {
+  border-left: 1px solid #1A2823;
+  padding-left: 1.25rem;
+}
+
+[class*="st-key-tiles"] button {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 0.25rem 0;
+}
+
+[class*="st-key-tiles"] [data-testid="stColumn"] {
+  border-radius: 10px;
+  transition: background-color 180ms ease;
+}
+
+[class*="st-key-tiles"] [data-testid="stColumn"]:hover {
+  background-color: rgba(91, 233, 198, 0.06);
+}
+
+[data-testid="stBaseButton-primary"] {
+  background: linear-gradient(180deg, #86F7DA 0%, #3FE0BE 100%);
+  border: 0;
+  color: #03120D;
+  box-shadow: 0 0 0 1px rgba(124, 245, 214, 0.25), 0 10px 28px -12px rgba(63, 224, 190, 0.65);
+}
+
+[data-testid="stBaseButton-primary"] p {
+  color: #03120D;
+  font-weight: 600;
+}
+
+[data-testid="stBaseButton-primary"]:hover {
+  background: linear-gradient(180deg, #A2FBE5 0%, #55E8C8 100%);
+  color: #03120D;
+}
+
+[data-testid="stBaseButton-primary"]:disabled {
+  background: #0D1F1A;
+  box-shadow: none;
+}
+
+[data-testid="stBaseButton-primary"]:disabled p {
+  color: #4F625C;
+}
+
+[data-testid="stBaseButton-secondary"] {
+  background: rgba(8, 15, 13, 0.6);
+  border-color: #24342F;
+}
+
+[data-testid="stBaseButton-secondary"]:hover {
+  border-color: #5BE9C6;
+  color: #E6F0EC;
+}
+
 @keyframes ls-rise {
   from { opacity: 0; transform: translateY(14px); }
   to { opacity: 1; transform: translateY(0); }
@@ -8,35 +115,35 @@
   to { transform: scaleX(1); }
 }
 
-[class*="st-key-rise"],
-[class*="st-key-kpi"] {
-  animation: ls-rise 520ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+[class*="st-key-hero"],
+[class*="st-key-stats"],
+[class*="st-key-tiles"],
+[class*="st-key-panel"],
+[class*="st-key-kpi"],
+[class*="st-key-rise"] {
+  animation: ls-rise 560ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
 }
 
-.st-key-kpi_1 { animation-delay: 60ms; }
-.st-key-kpi_2 { animation-delay: 120ms; }
-.st-key-kpi_3 { animation-delay: 180ms; }
-.st-key-rise_1 { animation-delay: 220ms; }
-.st-key-rise_2 { animation-delay: 290ms; }
-.st-key-rise_3 { animation-delay: 360ms; }
-.st-key-rise_4 { animation-delay: 430ms; }
+.st-key-stats { animation-delay: 80ms; }
+.st-key-tiles { animation-delay: 160ms; }
+.st-key-panel_1, .st-key-kpi_1 { animation-delay: 240ms; }
+.st-key-panel_2, .st-key-kpi_2 { animation-delay: 310ms; }
+.st-key-panel_3, .st-key-kpi_3 { animation-delay: 380ms; }
+.st-key-panel_4 { animation-delay: 450ms; }
+.st-key-rise_1 { animation-delay: 120ms; }
 
+[class*="st-key-panel"],
 [class*="st-key-kpi"] {
-  transition: transform 180ms ease, border-color 180ms ease;
+  transition: border-color 200ms ease, transform 200ms ease;
+}
+
+[class*="st-key-panel"]:hover,
+[class*="st-key-kpi"]:hover {
+  border-color: rgba(91, 233, 198, 0.4) !important;
 }
 
 [class*="st-key-kpi"]:hover {
   transform: translateY(-2px);
-  border-color: rgba(16, 185, 129, 0.55);
-}
-
-[data-testid="stMetricValue"] {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-}
-
-h1 {
-  letter-spacing: -0.025em;
 }
 
 [data-testid="stProgress"] [role="progressbar"] > div > div > div {
@@ -53,8 +160,12 @@ button:active {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [class*="st-key-rise"],
+  [class*="st-key-hero"],
+  [class*="st-key-stats"],
+  [class*="st-key-tiles"],
+  [class*="st-key-panel"],
   [class*="st-key-kpi"],
+  [class*="st-key-rise"],
   [data-testid="stProgress"] [role="progressbar"] > div > div > div {
     animation: none;
   }

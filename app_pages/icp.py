@@ -5,11 +5,12 @@ import pycountry
 import streamlit as st
 from pydantic import ValidationError
 
+import app_ui as ui
 from agent.score_lead import ICP, ICP_PATH
 
-st.title("Ideal customer")
-st.caption("Who you sell to. Every lead is scored against this profile, saved in data/icp.json. "
-           "After a change, rescore the leads to apply it.")
+ui.page_header("Setup", "person_search", "Ideal customer", "",
+               "Who you sell to. Every lead is scored against this profile, saved in data/icp.json. "
+               "After a change, rescore the leads to apply it.")
 
 raw = json.loads(ICP_PATH.read_text(encoding="utf-8"))
 country_names = sorted({c.name for c in pycountry.countries} | set(raw["geography_countries"]))

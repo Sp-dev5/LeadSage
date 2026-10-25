@@ -12,8 +12,8 @@ from agent.score_lead import _parse_headcount, load_icp
 
 icp, cfg = load_icp(), load_outreach()
 
-st.title("Dashboard")
-st.caption("Every company scored against your ideal customer, and how close each one is to a sent email.")
+ui.page_header("Pipeline", "table_rows", "Leads", "",
+               "Every company scored against your ideal customer. Select one to see why it scored that way.")
 
 filters_box = st.sidebar.container()
 st.sidebar.divider()
@@ -68,44 +68,8 @@ if not rows:
     st.warning("No leads match these filters. Loosen them in the sidebar.", icon=":material/filter_alt_off:")
     st.stop()
 
-counts = Counter(r.lead.score.verdict for r in rows)
-ready = [r.ready for r in rows]
-worth = sum(r.worth_contacting for r in ready)
-drafted = sum(r.drafted for r in ready)
-with_hook = sum(r.drafted and bool(r.hook) for r in ready)
-ready_now = sum(r.ready for r in ready)
-needs_contact = sum(r.drafted and r.status == "draft" and not r.contact for r in ready)
-sent = sum(r.status == "sent" for r in ready)
-replied = sum(r.lead.stage in ("replied", "meeting") for r in rows)
-
-ui.kpi_row([
-    ("Leads scored", len(rows),
-     f"{len(df) - len(rows)} hidden by filters" if len(df) > len(rows) else f"{counts['disqualify']} disqualified", ""),
-    ("Worth contacting", worth, f"{drafted} drafted, {with_hook} with a hook",
-     "Leads whose verdict gets an email drafted (set in data/outreach.json)."),
-    ("Ready to review", ready_now, f"{needs_contact} still need a contact",
-     "A draft that opens with a hook and has a named person to write to."),
-    ("Sent", sent, f"{replied} replied", ""),
-])
-
-left, right = st.columns([3, 2])
-with left.container(border=True, key="rise_1"):
-    st.markdown("**Pipeline**")
-    st.caption("From every company scored to emails sent.")
-    st.altair_chart(ui.readiness_chart(rows))
-with right.container(border=True, key="rise_2"):
-    st.markdown("**Ready to review now**")
-    st.caption("A hook to open with and a person to write to. Best fit first.")
-    up_next = sorted((r for r in rows if r.ready.ready), key=lambda r: -r.lead.score.fit)
-    if not up_next:
-        st.caption("Nothing yet. Find contacts and hooks on the Outreach page.")
-    for r in up_next[:7]:
-        with st.container(horizontal=True, vertical_alignment="center"):
-            if st.button(r.lead.name, key=f"next_{r.lead.name}", type="tertiary"):
-                st.session_state.outreach_lead = r.lead.name
-                st.switch_page("app_pages/outreach.py")
-            st.caption(f"{r.ready.hook} · {r.ready.contact} · fit {r.lead.score.fit}",
-                       width="stretch", text_alignment="right")
+if len(df) > len(rows):
+    st.caption(f"{len(df) - len(rows)} of {len(df)} leads hidden by the filters in the sidebar.")
 
 if len(hidden_by_location):
     with st.expander(f"{len(hidden_by_location)} hidden by your location filter", icon=":material/visibility_off:"):
@@ -114,9 +78,10 @@ if len(hidden_by_location):
 
 group_counts = Counter(filtered["Group"])
 group_counts["All"] = len(filtered)
-with st.container(border=True, key="rise_3"):
+st.session_state.setdefault("dashboard_group", "Qualify")
+with st.container(border=True, key="rise_1"):
     picked_group = st.segmented_control(
-        "Show", GROUPS, default="Qualify", required=True, key="dashboard_group", label_visibility="collapsed",
+        "Show", GROUPS, required=True, key="dashboard_group", label_visibility="collapsed",
         format_func=lambda g: f"{g}  {group_counts[g]}")
     st.caption({
         "Qualify": "Strong matches with nothing holding them back.",
@@ -157,7 +122,7 @@ current = rows[index]
 lead, s, r = current.lead, current.lead.score, current.ready
 headcount = _parse_headcount(lead.company.size)
 
-with st.container(border=True, key=f"rise_card_{index}"):
+with st.container(border=True, key=f"panel_card_{index}"):
     with st.container(horizontal=True, vertical_alignment="center"):
         st.subheader(lead.name)
         ui.verdict_badge(s.verdict)
