@@ -114,6 +114,8 @@ class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     min_headcount: int = Field(ge=0, description="fewer employees than this is a hard fail")
+    max_size_factor: float = Field(
+        ge=1, description="more employees than company_size_max times this is a hard fail (3 = three times the largest)")
     size_tolerance: float = Field(
         ge=0, le=1, description="how far outside the size range still scores 3, as a fraction (0.1 = 10%)")
     unknown_score: int = Field(
@@ -460,6 +462,8 @@ def _size_criterion(icp: ICP, headcount: int | None) -> CriterionScore:
         score, why = s.unknown_score, "Headcount not stated (unknown)"
     elif headcount < s.min_headcount:
         score, why = 0, f"{headcount} employees, under the {s.min_headcount} minimum (hard fail)"
+    elif headcount > hi * s.max_size_factor:
+        score, why = 0, f"{headcount} employees, over {s.max_size_factor:g} times the {hi} maximum (hard fail)"
     elif lo <= headcount <= hi:
         score, why = 5, f"{headcount} employees, within {lo}-{hi}"
     elif lo * (1 - s.size_tolerance) <= headcount <= hi * (1 + s.size_tolerance):
@@ -620,16 +624,27 @@ def _failed_gates(criteria: list[CriterionScore], icp: ICP) -> list[str]:
     return [c.criterion for c in criteria if c.criterion in icp.gates and c.score <= icp.settings.gate_fail_max]
 
 
-def _ruled_out(disqualified: list[str], too_small: bool, code_criteria: list[CriterionScore], icp: ICP) -> str:
+def _size_fail(icp: ICP, headcount: int | None) -> str:
+    """Why the headcount alone fails the lead, or "" when it doesn't."""
+    if headcount is None:
+        return ""
+    if headcount < icp.settings.min_headcount:
+        return "under the minimum headcount"
+    if headcount > icp.company_size_max * icp.settings.max_size_factor:
+        return "far over the maximum headcount"
+    return ""
+
+
+def _ruled_out(disqualified: list[str], size_fail: str, code_criteria: list[CriterionScore], icp: ICP) -> str:
     """Why the lead is already a disqualify before buyer and pain are scored, or "".
 
-    A disqualify rule always is. A capped lead (too small, or a failed gate on
-    industry or size) is too, when the cap sits below the disqualify cut-off.
+    A disqualify rule always is. A capped lead (too small, far too large, or a failed
+    gate on industry or size) is too, when the cap sits below the disqualify cut-off.
     """
     if disqualified:
         return "; ".join(disqualified)
     s = icp.settings
-    capped = (["under the minimum headcount"] if too_small else []) + _failed_gates(code_criteria, icp)
+    capped = ([size_fail] if size_fail else []) + _failed_gates(code_criteria, icp)
     if capped and s.fail_cap < s.disqualify_below:
         return "failed " + ", ".join(capped)
     return ""
@@ -664,7 +679,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
             review_flags=[NO_TEXT_FLAG], sales_roles=company.sales_roles,
         )
     headcount = _parse_headcount(company.size)
-    too_small = headcount is not None and headcount < icp.settings.min_headcount
+    size_fail = _size_fail(icp, headcount)
 
     raw_facts = generate_structured(
         system=FACTS_PROMPT,
@@ -677,7 +692,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
     disqualified, review_flags = _apply_rules(icp, facts)
     unknown = icp.settings.unknown_score
 
-    if reason := _ruled_out(disqualified, too_small, code_criteria, icp):
+    if reason := _ruled_out(disqualified, size_fail, code_criteria, icp):
         rated, summary = _not_rated(reason, unknown), f"Ruled out before buyer and pain were scored: {reason}."
     else:
         q = generate_structured(
@@ -692,7 +707,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
 
     criteria = _merge_criteria(code_criteria, rated)
     hit = bool(disqualified)
-    fit = _fit_from_criteria(criteria, hit or too_small, icp)
+    fit = _fit_from_criteria(criteria, hit or bool(size_fail), icp)
     verdict = _verdict(fit, hit, icp.settings)
     if review_flags and verdict == "qualify":
         verdict = "review"

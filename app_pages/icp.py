@@ -100,6 +100,7 @@ with st.container(border=True, key="panel_3"):
             ("A failed gate caps fit at", s["fail_cap"]),
             ("Gate fails at a score of", s["gate_fail_max"]),
             ("Minimum headcount", s["min_headcount"]),
+            ("Hard fail above this many times the largest size", s["max_size_factor"]),
             ("Score when unknown", s["unknown_score"]),
             ("Models disagree at a fit gap of", s["disagree_gap"]),
         ], columns=["Setting", "Value"]), hide_index=True)
