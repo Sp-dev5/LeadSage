@@ -118,7 +118,9 @@ queue = st.segmented_control("Queue", QUEUES, required=True, key="outreach_queue
 queue_rows = sorted((r for r in in_play if in_queue(r.ready, queue)), key=lambda r: -r.lead.score.fit)
 
 table = pd.DataFrame([{
+    "Logo": ui.logo(r.lead.name),
     "Company": r.lead.name,
+    "Website": r.lead.url or None,
     "Verdict": [r.lead.score.verdict],
     "Fit": r.lead.score.fit,
     "Hook": [r.ready.hook] if r.ready.hook else [],
@@ -131,7 +133,7 @@ table = pd.DataFrame([{
 if table.empty:
     st.info(f"Nothing in \"{queue}\" right now.", icon=":material/inbox:")
 else:
-    with st.container(border=True, key="rise_1"):
+    with st.container(border=True, key=f"swap_{QUEUES.index(queue)}"):
         st.caption("Best fit first. Select a company to read and approve its emails.")
         event = st.dataframe(
             table, hide_index=True, on_select="rerun", selection_mode="single-row", key="outreach_table",
@@ -154,9 +156,12 @@ steps = range(len(cfg.follow_up_days) + 1)
 due = due_dates(list(lead_emails.values()), cfg)
 nxt = next_step(lead.stage, list(lead_emails.values()), cfg, now)
 
-with st.container(border=True):
+with st.container(border=True, key=f"panel_lead_{sorted(names).index(lead.name)}"):
     with st.container(horizontal=True, vertical_alignment="center"):
+        st.image(ui.logo(lead.name), width=40)
         st.subheader(lead.name)
+        if lead.url:
+            st.link_button("Website", lead.url, icon=":material/open_in_new:", type="tertiary")
         ui.verdict_badge(lead.score.verdict)
         st.badge(f"Fit {lead.score.fit}/100", icon=":material/speed:", color="gray")
         st.badge(lead.stage.capitalize(), icon=":material/flag:", color="gray" if stopped else "blue")

@@ -83,32 +83,35 @@ with st.container(border=True, key="rise_1"):
     picked_group = st.segmented_control(
         "Show", GROUPS, required=True, key="dashboard_group", label_visibility="collapsed",
         format_func=lambda g: f"{g}  {group_counts[g]}")
-    st.caption({
-        "Qualify": "Strong matches with nothing holding them back.",
-        "Strong fit": f"Fit {icp.settings.qualify_at} or more, held at review by one rule. The reason is in the last column.",
-        "Review": "Worth a look. Each one says what held it back.",
-        "Disqualify": "Not a fit, with the reason.",
-        "All": "Every lead, best fit first.",
-    }[picked_group])
     table = filtered if picked_group == "All" else filtered[filtered["Group"] == picked_group]
     table = table.sort_values("Fit", ascending=False, kind="stable").reset_index(drop=True)
-    columns = ["Company", "Verdict", "Fit", "Hook", "Contact", "Stage", "Country", "Headcount", "Sales roles"]
+    columns = ["Logo", "Company", "Website", "Verdict", "Fit", "Hook", "Contact", "Stage", "Country",
+               "Headcount", "Sales roles"]
     if picked_group != "Qualify":
         columns.append("Held back by")
-    if table.empty:
-        st.caption("No leads here with these filters.")
-        event = None
-    else:
-        event = st.dataframe(
-            table,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="leads_table",
-            height=min(40 + 35 * len(table), 525),
-            column_order=columns,
-            column_config=ui.lead_columns(),
-        )
+    with st.container(key=f"swap_{GROUPS.index(picked_group)}"):
+        st.caption({
+            "Qualify": "Strong matches with nothing holding them back.",
+            "Strong fit": f"Fit {icp.settings.qualify_at} or more, held at review by one rule. "
+                          "The reason is in the last column.",
+            "Review": "Worth a look. Each one says what held it back.",
+            "Disqualify": "Not a fit, with the reason.",
+            "All": "Every lead, best fit first.",
+        }[picked_group])
+        if table.empty:
+            st.caption("No leads here with these filters.")
+            event = None
+        else:
+            event = st.dataframe(
+                table,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="leads_table",
+                height=min(40 + 35 * len(table), 525),
+                column_order=columns,
+                column_config=ui.lead_columns(),
+            )
 
 if event and event.selection.rows and event.selection.rows[0] < len(table):
     st.session_state.dashboard_lead = table.iloc[event.selection.rows[0]]["Company"]
@@ -124,12 +127,16 @@ headcount = _parse_headcount(lead.company.size)
 
 with st.container(border=True, key=f"panel_card_{index}"):
     with st.container(horizontal=True, vertical_alignment="center"):
+        st.image(ui.logo(lead.name), width=40)
         st.subheader(lead.name)
         ui.verdict_badge(s.verdict)
         st.badge(f"Fit {s.fit}/100", color="gray")
         st.badge(lead.stage.capitalize(), color="gray")
         if lead.name in store.suppressed():
             st.badge("Do not contact", icon=":material/shield:", color="red")
+        st.space("stretch")
+        if lead.url:
+            st.link_button("Website", lead.url, icon=":material/open_in_new:")
     st.write(s.summary)
     with st.container(horizontal=True):
         st.metric("Headcount", f"{headcount:,}" if headcount else "Unknown")
