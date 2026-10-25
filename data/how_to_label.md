@@ -1,13 +1,8 @@
 # How to label
 
-Pretend you sell an AI tool that helps sales teams find and time outreach to the right prospects. The ideal customer (ICP) is what the scorer uses:
+Pretend you sell the product described in `icp.json`. Read it first: the buyer persona, the pain it solves, the notes, the size range and the `fact_rules` are what the scorer uses, so label against the same rules. They change when the file changes, so this page does not repeat them.
 
-- Industry: B2B SaaS (software sold to businesses)
-- Size: 50-500 employees
-- Location: India or APAC
-- Buyer: Head of Sales or RevOps
-- Pain: sales reps waste hours on manual prospecting and miss the right moment to reach out
-- Disqualifiers (automatic no): fewer than 10 employees, not a software company, no sales team
+Location is a filter in the app, not part of the score. Label on fit alone.
 
 For each row, fill `my_label` and a short `why`:
 - qualify: you would want to contact them today

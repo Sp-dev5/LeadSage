@@ -6,21 +6,23 @@
 
 ## What it does, in one paragraph
 
-Salespeople waste most of their day on busywork: hunting for companies to sell to, reading up on each one, finding the right person, and writing "personal" emails one at a time. LeadSage does that work for them. You describe your ideal customer; it finds matching companies, researches them, scores each lead and explains why, writes a personalised first email, and runs the follow-ups. The payoff: **less busywork, plus a ranked list that says who to contact first, and when.**
+Salespeople waste most of their day on busywork: reading up on each company, finding the right person, and writing "personal" emails one at a time. LeadSage does that work for them. You describe your ideal customer and give it a list of companies; it researches each one, scores it and explains why, finds a person to write to, and drafts a personalised first email and up to three follow-ups for a person to approve and send. The payoff: **less busywork, plus a ranked list that shows who is closest to a sent email.**
 
 ## How it works (the loop everything serves)
 
+Steps 1 and 3 to 6 are built. Step 2 is partly built, and step 7 is planned.
+
 1. **Describe the ideal customer**: industry, size, location, the problem you solve.
-2. **Find companies and the right person** at each one.
-3. **Research** each company and write a short brief, with sources.
+2. **Find the right person** at each company. (Finding the companies themselves is not built: you supply the list.)
+3. **Research** each company, with sources and dates.
 4. **Score the lead and explain why** it's worth chasing.
 5. **Write a personalised email** that references something real about them.
-6. **A human approves**, then up to 3 follow-ups go out, stopping if they reply.
-7. **The best leads rise to the top**, and everything syncs to a CRM.
+6. **A human approves** each email and sends it. Follow-ups are drafted for 3, 7 and 14 days later and stop if the lead replies, books a meeting or is lost.
+7. **The best leads rise to the top**, and everything syncs to a CRM. (Planned.)
 
 ## What's built so far
 
-- **The app** (`streamlit_app.py`): a ranked list of scored leads with filters (country, your ICP region, verdict, minimum fit, hiring for sales), and for each lead the reasons behind every number. A second page edits the ideal customer profile. Location is only a filter; it never changes a score.
+- **The app** (`streamlit_app.py`): a dashboard with a ranked list of scored leads, filters (country, your ICP region, verdict, minimum fit, hiring for sales), charts of the verdicts and of how ready each lead is for outreach, and for each lead the reasons behind every number. An Outreach page is the work queue for emails, and a third page edits the ideal customer profile. It follows your system's light or dark setting. Location is only a filter; it never changes a score.
 - **Pipeline and lead store** (`agent/pipeline.py`, `agent/store.py`): reads each company's website, finds open sales roles, scores it and saves the result in a local SQLite file the app reads.
 - **Outreach** (`agent/outreach.py`, `agent/contacts.py`, the Outreach page): finds the person to write to on the company's own about and team pages, drafts a short first email and up to 3 follow-ups, and tracks each lead's stage (new, drafted, approved, contacted, replied, meeting, lost). Every sentence about the prospect must quote their own website or job posts; sentences without a real quote are cut, and each kept one shows its source and date. A first email should open with a hook, a timely reason to write: the company is hiring salespeople, or its own news page shows something recent (a launch, a partnership, a new hire). Drafts with no hook are flagged so a person adds one before sending. A person approves every email and sends it from their own mailbox; a reply stops the follow-ups. Sender, follow-up days and which leads get emails live in `data/outreach.json`.
 

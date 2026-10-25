@@ -16,6 +16,8 @@ CFG = outreach.OutreachConfig(sender_name="Sam", sender_company="LeadSage", draf
                               follow_up_days=[3, 7, 14], max_words=120, contact_pages=["/about", "/team"],
                               news_pages=["/news", "/blog"], news_max_age_days=90, startup_max_headcount=200,
                               startup_contact_titles=["ceo", "chief executive officer", "founder", "co-founder"],
+                              closest_contact_titles=["chief operating officer", "ceo"],
+                              sender_address="1 Test Street, Pune", opt_out_line='Reply "no thanks" to stop.',
                               avoid_phrases=["brief conversation", "quick chat"], examples=[])
 ROLE = SalesRole(title="Account Executive, APAC", match="exact", source="https://jobs.example/acme",
                  fetched_at="2026-10-23T00:00:00+00:00")
@@ -127,7 +129,7 @@ def test_only_checked_claims_reach_the_email(model_writes, tmp_path):
     assert email.body.startswith("Hi Priya,")
     assert "You build payroll software." in email.body
     assert "Series B" not in email.body
-    assert email.body.endswith("Sam\nLeadSage")
+    assert email.body.endswith("Sam\nLeadSage\n1 Test Street, Pune\n\nReply \"no thanks\" to stop.")
     assert (len(email.citations), len(email.rejected), email.flags) == (2, 1, [])
 
 
@@ -371,6 +373,36 @@ def test_follow_ups_are_not_flagged_for_a_hook(model_writes, tmp_path):
     assert not any("hook" in f for f in email.flags)
 
 
+def test_signature_and_opt_out_line_do_not_count_towards_the_word_limit(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    tight = CFG.model_copy(update={"max_words": 25})
+    email = outreach.draft_email(LEAD, 0, make_icp(), tight, PRIYA, [], tmp_path)
+    assert len(email.body.split()) > 25 and not any("word limit" in f for f in email.flags)
+
+
+def test_every_email_ends_with_the_signature_address_and_opt_out_line(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    for step in (0, 2):
+        body = outreach.draft_email(LEAD, step, make_icp(), CFG, PRIYA, [], tmp_path).body
+        assert "Sam\nLeadSage\n1 Test Street, Pune" in body and body.endswith('Reply "no thanks" to stop.')
+
+
+def test_sending_problems_are_named():
+    ok = "Hi.\n\nSam\n\nReply \"no thanks\" to stop."
+    assert outreach.sending_problems(ok, CFG) == []
+    assert outreach.sending_problems("Hi.", CFG) == ["the opt-out line is missing: put it back at the end"]
+    unset = CFG.model_copy(update={"sender_name": "Your name", "sender_address": " "})
+    problems = outreach.sending_problems(ok, unset)
+    assert len(problems) == 2 and "your name" in problems[0] and "business address" in problems[1]
+
+
+def test_closest_match_is_flagged_on_the_draft(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
+    email = outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path, contact_how="closest")
+    assert any("closest match on their site, not a sales leader" in f for f in email.flags)
+    assert not any("closest" in f for f in outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path).flags)
+
+
 def test_email_records_which_model_wrote_it(model_writes, tmp_path):
     model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
     assert outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path).model == "fake-model"
@@ -502,6 +534,57 @@ def test_stage_never_moves_back_on_its_own(db):
     assert stage(db) == "contacted"
 
 
+def test_do_not_contact_stops_the_lead_and_cannot_be_undone_by_a_stage_change(db):
+    store.save_email("Acme", mail(0, "draft"), db)
+    store.suppress("Acme", "asked not to be contacted", db)
+    assert stage(db) == "lost" and [e.status for e in store.load_emails("Acme", db)] == ["stopped"]
+    with pytest.raises(ValueError, match="do-not-contact list"):
+        store.set_stage("Acme", "new", db)
+    assert store.suppressed(db)["Acme"][0] == "asked not to be contacted"
+    store.unsuppress("Acme", db)
+    store.set_stage("Acme", "new", db)
+    assert stage(db) == "new"
+
+
+def test_scoring_a_suppressed_company_again_keeps_it_lost(db):
+    store.suppress("Acme", "", db)
+    store.save(COMPANY, SCORE, url="", text_source="fetched", path=db)
+    assert stage(db) == "lost"
+
+
+def test_a_company_can_be_suppressed_before_it_is_scored(tmp_path):
+    path = tmp_path / "leads.db"
+    store.suppress("Newco", "unsubscribed", path)
+    store.save(COMPANY.model_copy(update={"name": "Newco"}), SCORE, url="", text_source="typed", path=path)
+    assert store.load("Newco", path).stage == "lost"
+
+
+def test_deleting_a_lead_removes_its_rows_and_cached_pages_but_keeps_the_do_not_contact_list(db, tmp_path):
+    store.save_email("Acme", mail(0, "draft"), db)
+    store.save_contacts("Acme", staff(("Zed Khan", "CEO")), db)
+    store.save_news("Acme", hooks.NewsSearch(searched_at="t"), db)
+    store.suppress("Acme", "asked", db)
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    for name in ("acme.json", "acme-jobs.json", "acme-about-full.json", "acme-news-blog-full.json",
+                 "acme-labs.json", "acme-labs-about-full.json"):
+        (pages / name).write_text("{}", encoding="utf-8")
+    removed = outreach.forget_lead(store.load("Acme", db), CFG, db, pages)
+    assert removed == 4
+    assert sorted(p.name for p in pages.iterdir()) == ["acme-labs-about-full.json", "acme-labs.json"]
+    with pytest.raises(KeyError):
+        store.load("Acme", db)
+    assert (store.load_emails("Acme", db), store.load_contacts("Acme", db), store.load_news("Acme", db)) == ([], None, None)
+    assert "Acme" in store.suppressed(db)
+
+
+def test_a_stopped_lead_is_not_drafted_for(db, monkeypatch):
+    store.suppress("Acme", "", db)
+    monkeypatch.setattr(outreach, "contact_for", lambda *a, **k: pytest.fail("searched"))
+    with pytest.raises(ValueError, match="sequence stopped"):
+        outreach.draft_step(store.load("Acme", db), 0, make_icp(), CFG, db)
+
+
 def test_unknown_stage_is_rejected(db):
     with pytest.raises(ValueError, match="unknown stage"):
         store.set_stage("Acme", "won", db)
@@ -551,8 +634,10 @@ def test_find_contact_skips_dead_pages_and_stops_at_the_buyer(model_sees, tmp_pa
 
     search = contacts.find_contact("Acme", "https://acme.example", make_icp(), ["/about", "/team", "/leadership"],
                                    tmp_path, fetch)
-    assert fetched == ["https://acme.example/about", "https://acme.example/team"]
+    assert sorted(fetched) == ["https://acme.example/about", "https://acme.example/leadership",
+                               "https://acme.example/team"]
     assert search.contact.name == "Priya Rao"
+    assert len(search.pages_tried) == 2
     assert [p.name for p in search.people] == ["Priya Rao", "Arjun Mehta"]
     assert "HTTP 404" in search.pages_tried[0]
 
@@ -585,6 +670,25 @@ def test_no_fallback_above_the_startup_size_or_with_unknown_size(headcount):
 def test_fallback_never_replaces_a_chosen_contact():
     search = staff(("Shashank Bijapur", "CEO")).model_copy(update={"contact": PRIYA, "chosen_by": "rep"})
     assert contacts.startup_fallback(search, 50, 200, TITLES).contact == PRIYA
+
+
+def test_closest_match_takes_the_first_title_on_the_list():
+    search = staff(("Ana Ruiz", "Head of Design"), ("Zed Khan", "CEO"), ("Lee Wong", "Chief Operating Officer"))
+    chosen = contacts.closest_match(search, ["chief operating officer", "ceo"])
+    assert (chosen.contact.name, chosen.chosen_by) == ("Lee Wong", "closest")
+
+
+def test_closest_match_finds_nobody_when_no_title_fits_and_never_replaces_a_contact():
+    assert contacts.closest_match(staff(("Ana Ruiz", "Head of Design")), ["ceo"]).contact is None
+    kept = staff(("Zed Khan", "CEO")).model_copy(update={"contact": PRIYA, "chosen_by": "rep"})
+    assert contacts.closest_match(kept, ["ceo"]).contact == PRIYA
+
+
+def test_a_bigger_company_gets_the_closest_match_not_the_startup_fallback(db):
+    big = store.load("Acme", db).model_copy(update={"company": COMPANY.model_copy(update={"size": "450"})})
+    store.save_contacts("Acme", staff(("Zed Khan", "CEO"), ("Lee Wong", "Chief Operating Officer")), db)
+    assert outreach.saved_contact(big, CFG, db).name == "Lee Wong"
+    assert outreach.contact_for(big, make_icp(), CFG, db).chosen_by == "closest"
 
 
 def test_saved_search_gets_the_fallback_and_keeps_it(db):

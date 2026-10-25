@@ -148,7 +148,7 @@ def find_news(name: str, url: str, paths: list[str], max_age_days: int, pages: P
     today = today or date.today()
     urls = [urljoin(url, p) for p in paths]
     files = [pages / f"{slug(name)}-news-{slug(p)}-full.json" for p in paths]
-    with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+    with ThreadPoolExecutor(max_workers=min(6, len(urls))) as pool:
         fetched = list(pool.map(lambda uf: _page(uf[0], uf[1], fetch), zip(urls, files)))
     readable = []
     for page_url, page in zip(urls, fetched):

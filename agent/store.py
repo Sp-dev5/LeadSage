@@ -42,6 +42,11 @@ CREATE TABLE IF NOT EXISTS contacts (
     lead TEXT PRIMARY KEY,
     search TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS suppressed (
+    lead TEXT PRIMARY KEY,
+    reason TEXT NOT NULL,
+    added_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS news (
     lead TEXT PRIMARY KEY,
     search TEXT NOT NULL
@@ -82,6 +87,7 @@ class Email(BaseModel):
     subject: str
     body: str
     hook: str = ""
+    hook_kind: str = ""
     citations: list[Citation] = []
     rejected: list[str] = []
     flags: list[str] = []
@@ -105,13 +111,16 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 
 def save(company: Company, score: LeadScore, url: str, text_source: str, path: Path = DB_PATH) -> None:
+    """Save a scored company. One on the do-not-contact list starts out lost, so scoring it
+    again can never reopen it."""
     with closing(_connect(path)) as conn, conn:
+        stage = "lost" if _is_suppressed(conn, company.name) else "new"
         conn.execute(
-            """INSERT INTO leads (name, url, text_source, company, score, scored_at)
-               VALUES (?, ?, ?, ?, ?, ?)
+            """INSERT INTO leads (name, url, text_source, company, score, scored_at, stage)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(name) DO UPDATE SET url = excluded.url, text_source = excluded.text_source,
                    company = excluded.company, score = excluded.score, scored_at = excluded.scored_at""",
-            (company.name, url, text_source, company.model_dump_json(), score.model_dump_json(), now()),
+            (company.name, url, text_source, company.model_dump_json(), score.model_dump_json(), now(), stage),
         )
 
 
@@ -156,11 +165,51 @@ def set_stage(lead: str, stage: str, path: Path = DB_PATH) -> None:
         raise ValueError(f"unknown stage {stage!r}; use one of {STAGES}")
     with closing(_connect(path)) as conn, conn:
         _stage(conn, lead)
+        if stage not in STOPPED and _is_suppressed(conn, lead):
+            raise ValueError(f"{lead} is on the do-not-contact list: remove it from the list first")
         conn.execute("UPDATE leads SET stage = ? WHERE name = ?", (stage, lead))
         if stage in STOPPED:
             for email in _emails(conn, lead):
                 if email.status in ("draft", "approved"):
                     _put_email(conn, lead, email.model_copy(update={"status": "stopped"}))
+
+
+def _is_suppressed(conn: sqlite3.Connection, lead: str) -> bool:
+    return conn.execute("SELECT 1 FROM suppressed WHERE lead = ?", (lead,)).fetchone() is not None
+
+
+def suppress(lead: str, reason: str = "", path: Path = DB_PATH) -> None:
+    """Put a company on the do-not-contact list. If it is a lead, it becomes lost and its unsent
+    emails are stopped. The company may not be a lead yet: the list also keeps it from being drafted
+    for later."""
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("INSERT INTO suppressed (lead, reason, added_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT(lead) DO UPDATE SET reason = excluded.reason",
+                     (lead, reason.strip(), now()))
+        exists = conn.execute("SELECT 1 FROM leads WHERE name = ?", (lead,)).fetchone()
+    if exists:
+        set_stage(lead, "lost", path)
+
+
+def unsuppress(lead: str, path: Path = DB_PATH) -> None:
+    """Take a company off the list. Its stage stays lost until the rep sets another."""
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("DELETE FROM suppressed WHERE lead = ?", (lead,))
+
+
+def suppressed(path: Path = DB_PATH) -> dict[str, tuple[str, str]]:
+    """Company -> (reason, when it was added)."""
+    with closing(_connect(path)) as conn:
+        rows = conn.execute("SELECT lead, reason, added_at FROM suppressed ORDER BY added_at").fetchall()
+    return {r["lead"]: (r["reason"], r["added_at"]) for r in rows}
+
+
+def delete_lead(lead: str, path: Path = DB_PATH) -> None:
+    """Remove everything stored about a company: its score, contacts, news and emails. The
+    do-not-contact list is kept, so a company that asked to be left alone stays left alone."""
+    with closing(_connect(path)) as conn, conn:
+        for table, column in (("emails", "lead"), ("news", "lead"), ("contacts", "lead"), ("leads", "name")):
+            conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (lead,))
 
 
 def save_contacts(lead: str, search: ContactSearch, path: Path = DB_PATH) -> None:

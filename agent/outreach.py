@@ -28,7 +28,7 @@ from typing import Literal, NamedTuple
 from pydantic import BaseModel, Field, field_validator
 
 from agent import store
-from agent.contacts import Contact, ContactSearch, find_contact, startup_fallback
+from agent.contacts import Contact, ContactSearch, closest_match, find_contact, startup_fallback
 from agent.fetch import Page, slug
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
 from agent.llm import generate_writing
@@ -63,6 +63,13 @@ class OutreachConfig(BaseModel):
     startup_max_headcount: int = Field(gt=0, description="at or below this headcount, a company with no "
                                                          "buyer named gets its chief executive instead")
     startup_contact_titles: list[str] = Field(min_length=1, description="titles for that fallback, best first")
+    closest_contact_titles: list[str] = Field(
+        min_length=1, description="for a company that is not a startup and names no buyer: the titles tried "
+                                  "in order for the closest match, best first")
+    sender_address: str = Field(description="your business or postal address, shown under the signature; most "
+                                            "countries require one in marketing email")
+    opt_out_line: str = Field(min_length=1, description="the line at the end of every email that tells the reader "
+                                                        "how to stop hearing from you")
     avoid_phrases: list[str] = Field(description="stock phrases the emails must not use; a draft with one is flagged")
     examples: list[Example] = Field(description="sample emails shown to the model for tone, length and shape")
 
@@ -286,11 +293,30 @@ def check_claims(claims: list[ClaimOut], lead: StoredLead, pages: Path = PAGES,
     return kept, rejected
 
 
-def _body(contact: Contact | None, citations: list[Citation], out: EmailOut, cfg: OutreachConfig) -> str:
+def _body(contact: Contact | None, citations: list[Citation], out: EmailOut) -> str:
+    """The email the reader sees up to the ask, without the signature and opt-out line."""
     greeting = f"Hi {contact.name.split()[0]}," if contact else "Hi there,"
     personal = " ".join(c.sentence for c in citations)
-    parts = [greeting, personal, out.pitch.strip(), out.ask.strip(), f"{cfg.sender_name}\n{cfg.sender_company}"]
-    return "\n\n".join(p for p in parts if p)
+    return "\n\n".join(p for p in [greeting, personal, out.pitch.strip(), out.ask.strip()] if p)
+
+
+def _footer(cfg: OutreachConfig) -> str:
+    """The signature (name, company, address) and the opt-out line every email ends with."""
+    signature = "\n".join(line for line in [cfg.sender_name, cfg.sender_company, cfg.sender_address] if line.strip())
+    return f"{signature}\n\n{cfg.opt_out_line}"
+
+
+def sending_problems(body: str, cfg: OutreachConfig) -> list[str]:
+    """What stops an email from being approved: the opt-out line was cut, or the sender details
+    are still the placeholders. Marketing email needs both in most countries."""
+    problems = []
+    if cfg.opt_out_line not in body:
+        problems.append("the opt-out line is missing: put it back at the end")
+    if cfg.sender_name.strip().lower() in ("", "your name"):
+        problems.append("your name is not set (Sender and follow-ups in the sidebar)")
+    if not cfg.sender_address.strip():
+        problems.append("your business address is not set (Sender and follow-ups in the sidebar)")
+    return problems
 
 
 def _plain(text: str) -> str:
@@ -314,7 +340,8 @@ def _repeats(part: str, earlier_body: str) -> bool:
 
 
 def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, contact: Contact | None,
-                earlier: list[Email], pages: Path = PAGES, news: NewsItem | None = None) -> Email:
+                earlier: list[Email], pages: Path = PAGES, news: NewsItem | None = None,
+                contact_how: str = "") -> Email:
     """Draft email `step` (0 = first) for one lead. Unchecked claims never reach the body."""
     total = len(cfg.follow_up_days)
     avoid = ", ".join(f'"{p}"' for p in cfg.avoid_phrases) or "none"
@@ -359,7 +386,8 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
         if _hook_used(lead, again_citations, news):
             out, written_by, cloud_failed = again, again_by, again_failed
             citations, rejected = again_citations, again_rejected
-    body = _body(contact, citations, out, cfg)
+    core = _body(contact, citations, out)
+    body = f"{core}\n\n{_footer(cfg)}"
     ours = f"{_company_source(lead)} {icp.buyer_persona} {icp.pain_solved} {icp.notes}"
     loose = unsupported_specifics(f"{out.pitch.strip()} {out.ask.strip()}", ours, allowed)
     first = next((e for e in earlier if e.step == 0), None)
@@ -382,16 +410,19 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
         flags.append("startup with no one named on its site: add the chief executive's name before sending")
     elif contact is None:
         flags.append("no named contact: add one before sending")
-    words = len(body.split())
+    words = len(core.split())
     if words > cfg.max_words:
         flags.append(f"{words} words, over the {cfg.max_words}-word limit")
+    if contact_how == "closest":
+        flags.append("the contact is the closest match on their site, not a sales leader: check it fits")
     if any(_repeats(part, e.body) for e in earlier for part in (out.pitch, out.ask)):
         flags.append("repeats a line from an earlier email")
-    if used := [p for p in cfg.avoid_phrases if p.lower() in body.lower()]:
+    if used := [p for p in cfg.avoid_phrases if p.lower() in core.lower()]:
         flags.append(f"uses phrases you avoid: {', '.join(used)}")
     if loose:
         flags.append(f"pitch or ask names {', '.join(loose)}, found in neither their text nor ours: check it")
-    return Email(step=step, subject=subject, body=body, hook=hook_in_email, citations=citations, rejected=rejected,
+    return Email(step=step, subject=subject, body=body, hook=hook_in_email,
+                 hook_kind=hook.kind if hook_in_email else "", citations=citations, rejected=rejected,
                  flags=flags, model=written_by, drafted_at=store.now())
 
 
@@ -432,28 +463,32 @@ def next_step(stage: str, emails: list[Email], cfg: OutreachConfig, now: datetim
     return NextStep(action="done", text="All emails sent, no reply yet")
 
 
+def _with_fallbacks(search: ContactSearch, lead: StoredLead, cfg: OutreachConfig) -> ContactSearch:
+    """No buyer named: a startup writes to its chief executive or a founder; any other company to
+    the closest match by title. A contact already chosen is never replaced."""
+    startup = startup_fallback(search, _parse_headcount(lead.company.size), cfg.startup_max_headcount,
+                               cfg.startup_contact_titles)
+    return closest_match(startup, cfg.closest_contact_titles)
+
+
 def saved_contact(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH) -> Contact | None:
-    """The contact a saved search gives, startup fallback included, without searching or saving."""
+    """The contact a saved search gives, fallbacks included, without searching or saving."""
     search = store.load_contacts(lead.name, db)
-    if search is None:
-        return None
-    return startup_fallback(search, _parse_headcount(lead.company.size), cfg.startup_max_headcount,
-                            cfg.startup_contact_titles).contact
+    return _with_fallbacks(search, lead, cfg).contact if search else None
 
 
 def contact_for(lead: StoredLead, icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH,
                 refresh: bool = False) -> ContactSearch:
-    """The saved contact search for a lead, or a new one from its website. With no buyer
-    named at a startup, its chief executive or a founder is chosen instead."""
+    """The saved contact search for a lead, or a new one from its website, with the fallbacks
+    applied when it names no buyer."""
     search = None if refresh else store.load_contacts(lead.name, db)
     fresh = search is None
     if fresh:
         search = find_contact(lead.name, lead.url, icp, cfg.contact_pages)
-    fallback = startup_fallback(search, _parse_headcount(lead.company.size), cfg.startup_max_headcount,
-                                cfg.startup_contact_titles)
-    if fresh or fallback is not search:
-        store.save_contacts(lead.name, fallback, db)
-    return fallback
+    chosen = _with_fallbacks(search, lead, cfg)
+    if fresh or chosen is not search:
+        store.save_contacts(lead.name, chosen, db)
+    return chosen
 
 
 def news_for(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH, refresh: bool = False) -> NewsSearch:
@@ -473,12 +508,30 @@ def news_for(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH, re
 def draft_step(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH) -> Email:
     """Find the contact and, if the lead has no sales roles to open with, its recent news; draft email
     `step` with the earlier ones in view, and save it."""
-    contact = contact_for(lead, icp, cfg, db).contact
+    if lead.stage in store.STOPPED:
+        raise ValueError(f"{lead.name}: sequence stopped ({lead.stage}), no new drafts")
+    search = contact_for(lead, icp, cfg, db)
     news = None if lead.company.sales_roles or step else best_item(news_for(lead, cfg, db).items)
     earlier = [e for e in store.load_emails(lead.name, db) if e.step < step and e.status == "sent"]
-    email = draft_email(lead, step, icp, cfg, contact, earlier, news=news)
+    email = draft_email(lead, step, icp, cfg, search.contact, earlier, news=news, contact_how=search.chosen_by)
     store.save_email(lead.name, email, db)
     return email
+
+
+def forget_lead(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH, pages: Path = PAGES) -> int:
+    """Delete everything stored about a company: its rows in the lead store and the website pages
+    cached for it. The do-not-contact list is kept. Returns how many cached pages were removed."""
+    store.delete_lead(lead.name, db)
+    base = slug(lead.name)
+    names = {f"{base}.json", f"{base}-careers.json", f"{base}-careers-html.json", f"{base}-jobs.json"}
+    names |= {f"{base}-{slug(p)}-full.json" for p in cfg.contact_pages}
+    names |= {f"{base}-news-{slug(p)}-full.json" for p in cfg.news_pages}
+    removed = 0
+    for name in names:
+        if (pages / name).exists():
+            (pages / name).unlink()
+            removed += 1
+    return removed
 
 
 def _report(lead: str, email: Email) -> str:
