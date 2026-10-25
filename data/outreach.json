@@ -16,7 +16,7 @@
                              "chief operating officer", "head of operations", "chief marketing officer",
                              "head of marketing", "ceo", "chief executive officer", "founder", "co-founder"],
   "sender_address": "",
-  "opt_out_line": "If this is not relevant, reply \"no thanks\" and I will not write again.",
+  "opt_out_line": "If this isn't for you, just let me know and I won't email again.",
   "avoid_phrases": ["I hope this finds you well", "brief conversation", "brief chat", "quick chat", "touch base",
                     "circle back", "reach out", "game-changer", "leverage", "synergy",
                     "this shows", "this tells me", "this indicates", "this suggests",
