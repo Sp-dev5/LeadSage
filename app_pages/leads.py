@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import app_ui as ui
-from agent import store
+from agent import export, store
 from agent.outreach import load_outreach
 from agent.pipeline import lead_files, read_leads, score_all, signal_rows
 from agent.readiness import GROUPS, group
@@ -67,6 +67,14 @@ hidden_by_location = df[~location_ok & other_ok]
 if not rows:
     st.warning("No leads match these filters. Loosen them in the sidebar.", icon=":material/filter_alt_off:")
     st.stop()
+
+with st.sidebar:
+    st.divider()
+    st.subheader("Export")
+    st.download_button(f"Leads as CSV ({len(rows)})", key="export_leads", icon=":material/download:", width="stretch",
+                       data=export.leads_csv([r.lead for r in rows], {r.lead.name: r.ready.contact for r in rows}),
+                       file_name="leads.csv", mime="text/csv",
+                       help="The leads the filters show, for a CRM import or a spreadsheet.")
 
 if len(df) > len(rows):
     st.caption(f"{len(df) - len(rows)} of {len(df)} leads hidden by the filters in the sidebar.")

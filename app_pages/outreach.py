@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import app_ui as ui
-from agent import store
+from agent import export, store
 from agent.contacts import typed_contact
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
                             save_outreach, sending_problems)
@@ -102,6 +102,15 @@ if setup:
 if not in_play:
     st.info("No leads to write to yet. Score leads on the Leads page first.", icon=":material/info:")
     st.stop()
+
+with st.sidebar:
+    st.divider()
+    st.subheader("Export")
+    st.download_button("Emails as CSV", key="export_emails", icon=":material/download:", width="stretch",
+                       data=export.emails_csv([r.lead for r in in_play], {r.lead.name: r.emails for r in in_play},
+                                              {r.lead.name: r.ready.contact for r in in_play}),
+                       file_name="emails.csv", mime="text/csv",
+                       help="Every first email and follow-up, with its status, for a CRM import or a spreadsheet.")
 
 ready = [r.ready for r in in_play]
 ui.stat_grid([
@@ -343,5 +352,5 @@ with st.container(border=True, key=f"panel_lead_{sorted(names).index(lead.name)}
                                      icon=":material/content_cut:"):
                         for cut in email.rejected:
                             st.caption(cut)
-                st.caption(f"Drafted {email.drafted_at[:16].replace('T', ' ')} by {email.model or 'unknown'}"
-                           + (f" · sent {email.sent_at[:10]}" if email.sent_at else ""))
+                if email.sent_at:
+                    st.caption(f"Sent {email.sent_at[:10]}")
