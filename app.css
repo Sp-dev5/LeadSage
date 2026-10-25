@@ -1,8 +1,8 @@
 .stApp {
   background-color: #000000;
   background-image:
-    radial-gradient(1000px 500px at 50% -10%, rgba(160, 245, 228, 0.14), rgba(0, 0, 0, 0) 70%),
-    radial-gradient(700px 420px at 85% 0%, rgba(150, 205, 255, 0.06), rgba(0, 0, 0, 0) 70%);
+    radial-gradient(1100px 560px at 50% -12%, rgba(45, 129, 93, 0.42), rgba(0, 0, 0, 0) 70%),
+    radial-gradient(700px 420px at 88% 0%, rgba(88, 242, 227, 0.07), rgba(0, 0, 0, 0) 70%);
   background-attachment: fixed;
 }
 
@@ -44,8 +44,8 @@ h1 {
 [class*="st-key-stats"],
 [class*="st-key-tiles"],
 [class*="st-key-rise"] {
-  background: linear-gradient(180deg, rgba(205, 255, 246, 0.05) 0%, rgba(205, 255, 246, 0.015) 100%);
-  border: 1px solid rgba(205, 255, 246, 0.09) !important;
+  background: linear-gradient(180deg, rgba(120, 255, 210, 0.055) 0%, rgba(120, 255, 210, 0.014) 100%);
+  border: 1px solid rgba(150, 255, 220, 0.10) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(16px) saturate(120%);
 }
@@ -62,7 +62,7 @@ h1 {
 }
 
 .st-key-navpills [data-testid="stPageLink"] a:hover {
-  background: rgba(205, 255, 246, 0.08);
+  background: rgba(150, 255, 220, 0.08);
 }
 
 .st-key-navactive [data-testid="stPageLink"] a {
@@ -85,7 +85,7 @@ h1 {
 
 [class*="st-key-stats"] [data-testid="stColumn"] + [data-testid="stColumn"],
 [class*="st-key-tiles"] [data-testid="stColumn"] + [data-testid="stColumn"] {
-  border-left: 1px solid rgba(205, 255, 246, 0.08);
+  border-left: 1px solid rgba(150, 255, 220, 0.08);
   padding-left: 1.25rem;
 }
 
@@ -101,29 +101,29 @@ h1 {
 }
 
 [class*="st-key-tiles"] [data-testid="stColumn"]:hover {
-  background-color: rgba(205, 255, 246, 0.05);
+  background-color: rgba(150, 255, 220, 0.05);
 }
 
 [data-testid^="stBaseButton-primary"] {
-  background: linear-gradient(180deg, #F4FFFC 0%, #CBFAEF 42%, #96EEDC 100%);
+  background: linear-gradient(180deg, #8CF8DF 0%, #4BEDBD 55%, #2CCB9E 100%);
   border: 0;
-  color: #062520;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 0 0 1px rgba(170, 250, 232, 0.35),
-    0 10px 30px -12px rgba(140, 240, 220, 0.55);
+  color: #04241B;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 0 0 1px rgba(88, 242, 227, 0.25),
+    0 10px 30px -12px rgba(75, 237, 189, 0.6);
 }
 
 [data-testid^="stBaseButton-primary"] p {
-  color: #062520;
+  color: #04241B;
   font-weight: 600;
 }
 
 [data-testid^="stBaseButton-primary"]:hover {
-  background: linear-gradient(180deg, #FFFFFF 0%, #DCFCF4 42%, #ABF3E4 100%);
-  color: #062520;
+  background: linear-gradient(180deg, #A6FBE8 0%, #62F2CA 55%, #3AD9AE 100%);
+  color: #04241B;
 }
 
 [data-testid^="stBaseButton-primary"]:disabled {
-  background: rgba(205, 255, 246, 0.06);
+  background: rgba(150, 255, 220, 0.06);
   box-shadow: none;
 }
 
@@ -132,19 +132,19 @@ h1 {
 }
 
 [data-testid="stBaseButton-secondary"] {
-  background: rgba(205, 255, 246, 0.03);
-  border-color: rgba(205, 255, 246, 0.14);
+  background: rgba(150, 255, 220, 0.03);
+  border-color: rgba(150, 255, 220, 0.14);
 }
 
 [data-testid="stBaseButton-secondary"]:hover {
-  border-color: #9AF0DF;
+  border-color: #4BEDBD;
   color: #EAF4F1;
 }
 
 [data-testid="stMultiSelectTagsContainer"] [data-tag] {
-  background: rgba(154, 240, 223, 0.12) !important;
-  border: 1px solid rgba(154, 240, 223, 0.28);
-  color: #D4FBF2 !important;
+  background: rgba(75, 237, 189, 0.12) !important;
+  border: 1px solid rgba(75, 237, 189, 0.30);
+  color: #CFFBEE !important;
 }
 
 [data-testid="stMultiSelectTagsContainer"] [data-tag] * {
@@ -195,7 +195,7 @@ h1 {
 }
 
 [class*="st-key-panel"]:hover {
-  border-color: rgba(154, 240, 223, 0.28) !important;
+  border-color: rgba(75, 237, 189, 0.30) !important;
 }
 
 [data-testid="stProgress"] [role="progressbar"] > div > div > div {
@@ -211,13 +211,20 @@ button:active {
   transform: scale(0.97);
 }
 
+@keyframes ls-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   [class*="st-key-hero"],
   [class*="st-key-stats"],
   [class*="st-key-tiles"],
   [class*="st-key-panel"],
   [class*="st-key-rise"],
-  [class*="st-key-swap"],
+  [class*="st-key-swap"] {
+    animation-name: ls-fade;
+  }
   [data-testid="stProgress"] [role="progressbar"] > div > div > div {
     animation: none;
   }
