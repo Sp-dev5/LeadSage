@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from agent import score_lead as sl
 from agent.evaluate import _grade
@@ -30,7 +31,7 @@ BASE_ICP = {
         {"fact": "customers", "value": "consumers", "label": "B2C", "action": "disqualify"},
     ],
     "settings": {
-        "min_headcount": 10, "size_tolerance": 0.1, "unknown_score": 2, "gate_fail_max": 1,
+        "min_headcount": 10, "max_size_factor": 3, "size_tolerance": 0.1, "unknown_score": 2, "gate_fail_max": 1,
         "fail_cap": 20, "disqualify_below": 40, "qualify_at": 70, "disagree_gap": 15,
         "weights": {n: 1 for n in NAMES},
     },
@@ -60,10 +61,24 @@ def test_parse_headcount(text, expected):
 
 
 @pytest.mark.parametrize("headcount, score", [
-    (None, 2), (9, 0), (120, 5), (45, 3), (550, 3), (551, 1), (5200, 1),
+    (None, 2), (9, 0), (120, 5), (45, 3), (550, 3), (551, 1), (1500, 1), (1501, 0), (5200, 0),
 ])
 def test_size_criterion(headcount, score):
     assert sl._size_criterion(make_icp(), headcount).score == score
+
+
+@pytest.mark.parametrize("headcount, reason", [
+    (None, ""), (9, "under the minimum headcount"), (120, ""), (1500, ""), (1501, "far over the maximum headcount"),
+])
+def test_size_fail(headcount, reason):
+    assert sl._size_fail(make_icp(), headcount) == reason
+
+
+def test_max_size_factor_is_required():
+    raw = json.loads(json.dumps(BASE_ICP))
+    del raw["settings"]["max_size_factor"]
+    with pytest.raises(ValidationError):
+        sl.ICP.model_validate(raw)
 
 
 @pytest.mark.parametrize("location, country, in_region", [
@@ -330,6 +345,15 @@ def test_ruled_out_lead_skips_the_buyer_and_pain_call(fake_model):
     assert asked == [sl.CompanyFacts]
     assert (result.verdict, result.disqualifier_reason) == ("disqualify", "B2C")
     assert [c.score for c in result.criteria[2:]] == [2, 2]
+
+
+def test_company_far_over_the_size_range_is_dropped_without_the_scoring_call(fake_model):
+    asked, answers = fake_model
+    answers[sl.CompanyFacts] = facts()
+    result = sl.score_lead(make_icp(), COMPANY.model_copy(update={"size": "5,200 employees"}))
+    assert asked == [sl.CompanyFacts]
+    assert result.verdict == "disqualify" and result.fit <= 20
+    assert "far over the maximum headcount" in result.summary
 
 
 def test_failed_gate_skips_the_call_only_when_the_cap_is_a_disqualify(fake_model):

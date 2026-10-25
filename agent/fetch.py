@@ -181,6 +181,21 @@ def fetch_html(url: str) -> Page:
     return _fetch_raw(url, "html")
 
 
+MAX_IMAGE_BYTES = 300_000
+
+
+def fetch_image(url: str) -> tuple[bytes, str] | None:
+    """An image's bytes and content type, robots.txt respected; None if it can't be had. Never raises."""
+    try:
+        resp, _ = _get(url)
+        content_type = resp.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        if not content_type.startswith("image/") or len(resp.content) > MAX_IMAGE_BYTES:
+            return None
+        return resp.content, content_type
+    except Exception:
+        return None
+
+
 def slug(name: str) -> str:
     """Company name as a safe file name: "Acme Co." -> "acme-co"."""
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")

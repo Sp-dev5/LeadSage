@@ -1,35 +1,55 @@
+[server]
+enableStaticServing = true
+
+[client]
+toolbarMode = "minimal"
+
+[[theme.fontFaces]]
+family = "Geist"
+url = "app/static/fonts/geist-latin-wght-normal.woff2"
+weight = "100 900"
+
 [theme]
-font = "sans-serif"
-baseRadius = "0.6rem"
-buttonRadius = "0.6rem"
-metricValueFontSize = "2rem"
+base = "dark"
+font = "Geist"
+headingFont = "Geist"
+baseFontSize = 15
+headingFontWeights = [500, 500, 600, 500, 500, 500]
+headingFontSizes = ["52px", "28px", "18px", "16px", "14px", "12px"]
+baseRadius = "16px"
+buttonRadius = "full"
+metricValueFontSize = "2.4rem"
 metricValueFontWeight = 600
 showSidebarBorder = true
-greenColor = "#2FA36B"
-orangeColor = "#C26A00"
-redColor = "#E5484D"
-blueColor = "#3B82F6"
-violetColor = "#7C3AED"
-grayColor = "#64748B"
+showWidgetBorder = true
+linkUnderline = false
 
-[theme.light]
-base = "light"
-primaryColor = "#4F46E5"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F5FB"
-textColor = "#1B1E3D"
-borderColor = "#E2E5F1"
-dataframeBorderColor = "#E2E5F1"
-dataframeHeaderBackgroundColor = "#F4F5FB"
-chartCategoricalColors = ["#4F46E5", "#0EA5A4", "#C26A00", "#E5484D", "#7C3AED", "#2FA36B", "#64748B"]
+primaryColor = "#9AF0DF"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#0A1210"
+textColor = "#EAF4F1"
+linkColor = "#B5F7EA"
+borderColor = "#1B2A27"
+dataframeBorderColor = "#16231F"
+dataframeHeaderBackgroundColor = "#07100D"
+chartCategoricalColors = ["#9AF0DF", "#E9C47A", "#8C9A96", "#9CC7E8", "#F0A090"]
 
-[theme.dark]
-base = "dark"
-primaryColor = "#665DEF"
-backgroundColor = "#0E1021"
-secondaryBackgroundColor = "#171A31"
-textColor = "#E8EAF6"
-borderColor = "#2B3050"
-dataframeBorderColor = "#2B3050"
-dataframeHeaderBackgroundColor = "#171A31"
-chartCategoricalColors = ["#8B85F5", "#2DD4BF", "#F5A524", "#F26D72", "#A78BFA", "#4ADE80", "#94A3B8"]
+greenColor = "#9AF0DF"
+greenTextColor = "#B5F7EA"
+greenBackgroundColor = "#12302A"
+orangeColor = "#E9C47A"
+orangeTextColor = "#F2CD86"
+orangeBackgroundColor = "#2B2212"
+redColor = "#F07A6A"
+redTextColor = "#F59B8E"
+redBackgroundColor = "#2A1310"
+grayColor = "#8A9893"
+grayTextColor = "#B4C1BC"
+grayBackgroundColor = "#151C1A"
+blueColor = "#7FB3D5"
+violetColor = "#8A9893"
+
+[theme.sidebar]
+backgroundColor = "#030706"
+secondaryBackgroundColor = "#0A1210"
+borderColor = "#14201C"

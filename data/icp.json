@@ -35,6 +35,7 @@
   "industry_default": 2,
   "settings": {
     "min_headcount": 10,
+    "max_size_factor": 3,
     "size_tolerance": 0.1,
     "unknown_score": 2,
     "gate_fail_max": 1,

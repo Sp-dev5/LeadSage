@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import app_ui as ui
-from agent import store
+from agent import export, store
 from agent.contacts import typed_contact
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
                             save_outreach, sending_problems)
@@ -19,9 +19,9 @@ STOP_STAGES = {"replied": "Replied", "meeting": "Meeting booked", "lost": "Lost"
 icp, cfg = load_icp(), load_outreach()
 now = datetime.now().astimezone()
 
-st.title("Outreach", icon=":material/mail:")
-st.caption("Read each draft, check where every line about the company comes from, then send it from your own mailbox "
-           "and mark it sent. Nothing is sent from this app.")
+ui.page_header("Pipeline", "mail", "Outreach", "",
+               "Read each draft, check where every line about the company comes from, then send it from your "
+               "own mailbox and mark it sent. Nothing is sent from this app.")
 
 
 def act(fn, *args) -> None:
@@ -100,28 +100,36 @@ if setup:
     st.warning("Before you can approve an email: " + "; ".join(setup) + ".", icon=":material/lock:")
 
 if not in_play:
-    st.info("No leads to write to yet. Score leads on the Dashboard first.", icon=":material/info:")
+    st.info("No leads to write to yet. Score leads on the Leads page first.", icon=":material/info:")
     st.stop()
 
-ready = [r.ready for r in in_play]
-kpis = st.columns(4)
-kpis[0].metric("Ready to review", sum(r.ready for r in ready), border=True, icon=":material/task_alt:",
-               delta="a hook and a named contact", delta_color="off", delta_arrow="off")
-kpis[1].metric("Need a contact", sum(in_queue(r, "Needs a contact") for r in ready), border=True,
-               icon=":material/person_search:", delta="find or type one in", delta_color="off", delta_arrow="off")
-kpis[2].metric("Need a hook", sum(in_queue(r, "Needs a hook") for r in ready), border=True, icon=":material/bolt:",
-               delta="add a reason to write now", delta_color="off", delta_arrow="off")
-kpis[3].metric("Approved or sent", sum(r.status in ("approved", "sent") for r in ready), border=True,
-               icon=":material/send:",
-               delta=f"{sum(r.lead.stage in ('replied', 'meeting') for r in in_play)} replied",
-               delta_color="off", delta_arrow="off")
+with st.sidebar:
+    st.divider()
+    st.subheader("Export")
+    st.download_button("Emails as CSV", key="export_emails", icon=":material/download:", width="stretch",
+                       data=export.emails_csv([r.lead for r in in_play], {r.lead.name: r.emails for r in in_play},
+                                              {r.lead.name: r.ready.contact for r in in_play}),
+                       file_name="emails.csv", mime="text/csv",
+                       help="Every first email and follow-up, with its status, for a CRM import or a spreadsheet.")
 
-queue = st.segmented_control("Queue", QUEUES, default="All", required=True, key="outreach_queue",
-                             format_func=lambda q: f"{q} ({sum(in_queue(r.ready, q) for r in in_play)})")
+ready = [r.ready for r in in_play]
+ui.stat_grid([
+    ("Ready to review", sum(r.ready for r in ready), "a hook and a named contact", ""),
+    ("Need a contact", sum(in_queue(r, "Needs a contact") for r in ready), "find or type one in", ""),
+    ("Need a hook", sum(in_queue(r, "Needs a hook") for r in ready), "add a reason to write now", ""),
+    ("Approved or sent", sum(r.status in ("approved", "sent") for r in ready),
+     f"{sum(r.lead.stage in ('replied', 'meeting') for r in in_play)} replied", ""),
+])
+
+st.session_state.setdefault("outreach_queue", "All")
+queue = st.segmented_control("Queue", QUEUES, required=True, key="outreach_queue",
+                             format_func=lambda q: f"{q}  {sum(in_queue(r.ready, q) for r in in_play)}")
 queue_rows = sorted((r for r in in_play if in_queue(r.ready, queue)), key=lambda r: -r.lead.score.fit)
 
 table = pd.DataFrame([{
+    "Logo": ui.logo(r.lead.name),
     "Company": r.lead.name,
+    "Website": r.lead.url or None,
     "Verdict": [r.lead.score.verdict],
     "Fit": r.lead.score.fit,
     "Hook": [r.ready.hook] if r.ready.hook else [],
@@ -134,7 +142,7 @@ table = pd.DataFrame([{
 if table.empty:
     st.info(f"Nothing in \"{queue}\" right now.", icon=":material/inbox:")
 else:
-    with st.container(border=True):
+    with st.container(border=True, key=f"swap_{QUEUES.index(queue)}"):
         st.caption("Best fit first. Select a company to read and approve its emails.")
         event = st.dataframe(
             table, hide_index=True, on_select="rerun", selection_mode="single-row", key="outreach_table",
@@ -157,9 +165,12 @@ steps = range(len(cfg.follow_up_days) + 1)
 due = due_dates(list(lead_emails.values()), cfg)
 nxt = next_step(lead.stage, list(lead_emails.values()), cfg, now)
 
-with st.container(border=True):
+with st.container(border=True, key=f"panel_lead_{sorted(names).index(lead.name)}"):
     with st.container(horizontal=True, vertical_alignment="center"):
+        st.image(ui.logo(lead.name), width=40)
         st.subheader(lead.name)
+        if lead.url:
+            st.link_button("Website", lead.url, icon=":material/open_in_new:", type="tertiary")
         ui.verdict_badge(lead.score.verdict)
         st.badge(f"Fit {lead.score.fit}/100", icon=":material/speed:", color="gray")
         st.badge(lead.stage.capitalize(), icon=":material/flag:", color="gray" if stopped else "blue")
@@ -341,5 +352,5 @@ with st.container(border=True):
                                      icon=":material/content_cut:"):
                         for cut in email.rejected:
                             st.caption(cut)
-                st.caption(f"Drafted {email.drafted_at[:16].replace('T', ' ')} by {email.model or 'unknown'}"
-                           + (f" · sent {email.sent_at[:10]}" if email.sent_at else ""))
+                if email.sent_at:
+                    st.caption(f"Sent {email.sent_at[:10]}")

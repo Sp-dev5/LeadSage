@@ -4,15 +4,16 @@ import pandas as pd
 import streamlit as st
 
 import app_ui as ui
-from agent import store
+from agent import export, store
 from agent.outreach import load_outreach
 from agent.pipeline import lead_files, read_leads, score_all, signal_rows
+from agent.readiness import GROUPS, group
 from agent.score_lead import _parse_headcount, load_icp
 
 icp, cfg = load_icp(), load_outreach()
 
-st.title("Dashboard", icon=":material/dashboard:")
-st.caption("Every company researched and scored against your ideal customer, and how close each one is to a sent email.")
+ui.page_header("Pipeline", "table_rows", "Leads", "",
+               "Every company scored against your ideal customer. Select one to see why it scored that way.")
 
 filters_box = st.sidebar.container()
 st.sidebar.divider()
@@ -39,7 +40,7 @@ if not leads:
 
 all_rows = ui.lead_rows(leads, cfg)
 df = ui.lead_frame(all_rows)
-verdict = df["Verdict"].str[0]
+df["Group"] = [group(r.lead.score, icp.settings.qualify_at) for r in all_rows]
 
 with filters_box:
     st.subheader("Filters")
@@ -48,8 +49,6 @@ with filters_box:
                             help="Countries set on the Ideal customer page. Unknown locations stay visible.")
     picked = st.multiselect("Country", known + [ui.UNKNOWN] if ui.UNKNOWN in set(df["Country"]) else known,
                             placeholder="All countries")
-    verdicts = st.pills("Verdict", ui.VERDICTS, selection_mode="multi", default=ui.VERDICTS,
-                        format_func=str.capitalize)
     min_fit = st.slider("Minimum fit", 0, 100, 0, step=5)
     hiring_only = st.toggle("Only companies hiring for sales")
 
@@ -58,86 +57,94 @@ if picked:
     location_ok &= df["Country"].isin(picked)
 if region_only:
     location_ok &= df["In ICP region"] != "no"
-other_ok = verdict.isin(verdicts or ui.VERDICTS) & (df["Fit"] >= min_fit)
+other_ok = df["Fit"] >= min_fit
 if hiring_only:
     other_ok &= df["Sales roles"] > 0
-shown_df = df[location_ok & other_ok].sort_values("Fit", ascending=False, kind="stable")
-rows = [all_rows[i] for i in shown_df.index]
+filtered = df[location_ok & other_ok]
+rows = [all_rows[i] for i in filtered.index]
 hidden_by_location = df[~location_ok & other_ok]
 
 if not rows:
     st.warning("No leads match these filters. Loosen them in the sidebar.", icon=":material/filter_alt_off:")
     st.stop()
 
-counts = Counter(r.lead.score.verdict for r in rows)
-ready = [r.ready for r in rows]
-worth = sum(r.worth_contacting for r in ready)
-drafted = sum(r.drafted for r in ready)
-with_hook = sum(r.drafted and bool(r.hook) for r in ready)
-ready_now = sum(r.ready for r in ready)
-needs_contact = sum(r.drafted and r.status == "draft" and not r.contact for r in ready)
-sent = sum(r.status == "sent" for r in ready)
+with st.sidebar:
+    st.divider()
+    st.subheader("Export")
+    st.download_button(f"Leads as CSV ({len(rows)})", key="export_leads", icon=":material/download:", width="stretch",
+                       data=export.leads_csv([r.lead for r in rows], {r.lead.name: r.ready.contact for r in rows}),
+                       file_name="leads.csv", mime="text/csv",
+                       help="The leads the filters show, for a CRM import or a spreadsheet.")
 
-replied = sum(r.lead.stage in ("replied", "meeting") for r in rows)
-kpis = st.columns(4)
-kpis[0].metric("Leads scored", len(rows), border=True, icon=":material/database:",
-               delta=f"{len(df) - len(rows)} hidden by filters" if len(df) > len(rows) else f"{counts['disqualify']} disqualified",
-               delta_color="off", delta_arrow="off")
-kpis[1].metric("Worth contacting", worth, border=True, icon=":material/person_search:",
-               delta=f"{drafted} emails drafted, {with_hook} with a hook", delta_color="off", delta_arrow="off",
-               help="Leads whose verdict gets an email drafted (set in data/outreach.json).")
-kpis[2].metric("Ready to review", ready_now, border=True, icon=":material/task_alt:",
-               delta=f"{needs_contact} still need a contact", delta_color="off", delta_arrow="off",
-               help="A draft that opens with a hook and has a named person to write to.")
-kpis[3].metric("Sent", sent, border=True, icon=":material/send:",
-               delta=f"{replied} replied", delta_color="off", delta_arrow="off")
-
-left, right = st.columns([2, 3])
-with left.container(border=True):
-    st.markdown("**Verdicts**")
-    st.altair_chart(ui.verdict_chart(rows))
-with right.container(border=True):
-    st.markdown("**Outreach readiness**")
-    st.altair_chart(ui.readiness_chart(rows))
+if len(df) > len(rows):
+    st.caption(f"{len(df) - len(rows)} of {len(df)} leads hidden by the filters in the sidebar.")
 
 if len(hidden_by_location):
     with st.expander(f"{len(hidden_by_location)} hidden by your location filter", icon=":material/visibility_off:"):
-        for _, r in hidden_by_location.sort_values("Fit", ascending=False).iterrows():
-            st.markdown(f"**{r['Company']}** ({r['Country']}): {r['Verdict'][0].capitalize()}, fit {r['Fit']}")
+        for _, h in hidden_by_location.sort_values("Fit", ascending=False).iterrows():
+            st.markdown(f"**{h['Company']}** ({h['Country']}): {h['Verdict'][0].capitalize()}, fit {h['Fit']}")
 
-table = shown_df.reset_index(drop=True)
-with st.container(border=True):
-    st.markdown(f"**Leads** ({len(table)})")
-    st.caption("Best first. Click a column to sort, or select a row to see why it scored that way.")
-    event = st.dataframe(
-        table,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="leads_table",
-        height=min(40 + 35 * len(table), 525),
-        column_order=["Company", "Verdict", "Fit", "Hook", "Contact", "Stage", "Country", "Headcount", "Sales roles"],
-        column_config=ui.lead_columns(),
-    )
+group_counts = Counter(filtered["Group"])
+group_counts["All"] = len(filtered)
+st.session_state.setdefault("dashboard_group", "Qualify")
+with st.container(border=True, key="rise_1"):
+    picked_group = st.segmented_control(
+        "Show", GROUPS, required=True, key="dashboard_group", label_visibility="collapsed",
+        format_func=lambda g: f"{g}  {group_counts[g]}")
+    table = filtered if picked_group == "All" else filtered[filtered["Group"] == picked_group]
+    table = table.sort_values("Fit", ascending=False, kind="stable").reset_index(drop=True)
+    columns = ["Logo", "Company", "Website", "Verdict", "Fit", "Hook", "Contact", "Stage", "Country",
+               "Headcount", "Sales roles"]
+    if picked_group != "Qualify":
+        columns.append("Held back by")
+    with st.container(key=f"swap_{GROUPS.index(picked_group)}"):
+        st.caption({
+            "Qualify": "Strong matches with nothing holding them back.",
+            "Strong fit": f"Fit {icp.settings.qualify_at} or more, held at review by one rule. "
+                          "The reason is in the last column.",
+            "Review": "Worth a look. Each one says what held it back.",
+            "Disqualify": "Not a fit, with the reason.",
+            "All": "Every lead, best fit first.",
+        }[picked_group])
+        if table.empty:
+            st.caption("No leads here with these filters.")
+            event = None
+        else:
+            event = st.dataframe(
+                table,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="leads_table",
+                height=min(40 + 35 * len(table), 525),
+                column_order=columns,
+                column_config=ui.lead_columns(),
+            )
 
-if event.selection.rows and event.selection.rows[0] < len(table):
+if event and event.selection.rows and event.selection.rows[0] < len(table):
     st.session_state.dashboard_lead = table.iloc[event.selection.rows[0]]["Company"]
 names = [r.lead.name for r in rows]
 if st.session_state.get("dashboard_lead") not in names:
+    st.caption("Select a row to see why it scored that way.")
     st.stop()
 
-current = rows[names.index(st.session_state.dashboard_lead)]
+index = names.index(st.session_state.dashboard_lead)
+current = rows[index]
 lead, s, r = current.lead, current.lead.score, current.ready
 headcount = _parse_headcount(lead.company.size)
 
-with st.container(border=True):
+with st.container(border=True, key=f"panel_card_{index}"):
     with st.container(horizontal=True, vertical_alignment="center"):
+        st.image(ui.logo(lead.name), width=40)
         st.subheader(lead.name)
         ui.verdict_badge(s.verdict)
-        st.badge(f"Fit {s.fit}/100", icon=":material/speed:", color="gray")
-        st.badge(lead.stage.capitalize(), icon=":material/flag:", color="blue")
+        st.badge(f"Fit {s.fit}/100", color="gray")
+        st.badge(lead.stage.capitalize(), color="gray")
         if lead.name in store.suppressed():
             st.badge("Do not contact", icon=":material/shield:", color="red")
+        st.space("stretch")
+        if lead.url:
+            st.link_button("Website", lead.url, icon=":material/open_in_new:")
     st.write(s.summary)
     with st.container(horizontal=True):
         st.metric("Headcount", f"{headcount:,}" if headcount else "Unknown")
@@ -169,10 +176,9 @@ with st.container(border=True):
             st.caption("No email drafted yet.")
         else:
             with st.container(horizontal=True):
-                st.badge(f"Hook: {r.hook}" if r.hook else "No hook", icon=":material/bolt:",
-                         color="green" if r.hook else "gray")
-                st.badge(r.contact or "No contact", icon=":material/person:", color="green" if r.contact else "gray")
-                st.badge(f"Email: {r.status}", icon=":material/mail:", color="blue")
+                st.badge(f"Hook: {r.hook}" if r.hook else "No hook", color="green" if r.hook else "gray")
+                st.badge(r.contact or "No contact", color="green" if r.contact else "gray")
+                st.badge(f"Email: {r.status}", color="gray")
             if st.button("Open in Outreach", icon=":material/arrow_forward:"):
                 st.session_state.outreach_lead = lead.name
                 st.switch_page("app_pages/outreach.py")

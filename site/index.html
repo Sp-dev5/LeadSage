@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LeadSage</title>
+  <meta name="description" content="LeadSage scores companies against your ideal customer, finds the right person and drafts a first email where every line about them is quoted from their own site.">
+  <link rel="icon" href="assets/logo-icon.svg" type="image/svg+xml">
+  <style>
+    @font-face {
+      font-family: "Geist";
+      src: url("assets/geist.woff2") format("woff2");
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    :root {
+      --bg: #000000;
+      --panel: linear-gradient(180deg, rgba(205, 255, 246, 0.05) 0%, rgba(205, 255, 246, 0.015) 100%);
+      --line: rgba(205, 255, 246, 0.09);
+      --text: #EAF4F1;
+      --muted: #AEBDB8;
+      --faint: #8FA19B;
+      --mint: #9AF0DF;
+      --mint-soft: rgba(154, 240, 223, 0.1);
+      --glass: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      --on-mint: #062520;
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { color-scheme: dark; scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      background-image:
+        radial-gradient(1000px 520px at 50% -8%, rgba(160, 245, 228, 0.14), rgba(0, 0, 0, 0) 70%),
+        radial-gradient(700px 420px at 85% 0%, rgba(150, 205, 255, 0.06), rgba(0, 0, 0, 0) 70%);
+      color: var(--text);
+      font-family: "Geist", system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 0;
+    }
+
+    .pills {
+      display: flex;
+      gap: 2px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+    }
+
+    .pills a {
+      padding: 7px 16px;
+      border-radius: 999px;
+      font-size: 14px;
+      color: var(--muted);
+      transition: background-color 160ms ease, color 160ms ease;
+    }
+
+    .pills a:hover { background: var(--mint-soft); color: var(--text); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 20px;
+      border-radius: 999px;
+      font-size: 15px;
+      font-weight: 600;
+      transition: transform 120ms ease, background-color 160ms ease, border-color 160ms ease;
+    }
+
+    .btn:active { transform: scale(0.97); }
+
+    .btn-mint {
+      background: linear-gradient(180deg, #F4FFFC 0%, #CBFAEF 42%, #96EEDC 100%);
+      color: var(--on-mint);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 0 0 1px rgba(170, 250, 232, 0.35), 0 10px 30px -12px rgba(140, 240, 220, 0.55);
+    }
+
+    .btn-mint:hover { background: linear-gradient(180deg, #FFFFFF 0%, #DCFCF4 42%, #ABF3E4 100%); }
+
+    .btn-line { border: 1px solid rgba(205, 255, 246, 0.14); background: var(--panel); box-shadow: var(--glass); }
+
+    .btn-line:hover { border-color: var(--mint); }
+
+    .label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+
+    .label::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--mint);
+    }
+
+    .hero { padding: 72px 0 56px; }
+
+    h1 {
+      margin: 18px 0 20px;
+      max-width: 860px;
+      font-size: clamp(40px, 6vw, 72px);
+      font-weight: 500;
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+    }
+
+    h1 span, h2 span { color: var(--mint); }
+
+    .lead { max-width: 620px; margin: 0 0 32px; font-size: 18px; color: var(--muted); }
+
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
+    .frame {
+      margin-top: 64px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 8px);
+      background: var(--panel);
+      box-shadow: var(--glass), 0 40px 120px -40px rgba(160, 245, 228, 0.25);
+    }
+
+    .frame img { display: block; width: 100%; height: auto; border-radius: var(--radius); }
+
+    section { padding: 96px 0; }
+
+    h2 {
+      margin: 16px 0 16px;
+      max-width: 760px;
+      font-size: clamp(30px, 4vw, 46px);
+      font-weight: 500;
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+    }
+
+    .sub { max-width: 640px; margin: 0; color: var(--muted); font-size: 17px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      margin-top: 48px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--glass);
+      backdrop-filter: blur(16px);
+      overflow: hidden;
+    }
+
+    .grid.three { grid-template-columns: repeat(3, 1fr); }
+
+    .cell { padding: 28px; border-left: 1px solid var(--line); }
+
+    .cell:first-child { border-left: 0; }
+
+    .cell h3 { margin: 0 0 10px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+
+    .cell p { margin: 0; color: var(--muted); font-size: 15px; }
+
+    .cell .tag { display: block; margin-bottom: 18px; font-size: 13px; color: var(--mint); }
+
+    .proof {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 48px;
+      align-items: center;
+    }
+
+    .proof ul { margin: 28px 0 0; padding: 0; list-style: none; }
+
+    .proof li {
+      padding: 14px 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .proof li strong { color: var(--text); font-weight: 600; }
+
+    .email {
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      font-size: 15px;
+    }
+
+    .email .meta {
+      display: flex;
+      justify-content: space-between;
+      padding-bottom: 16px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+      color: var(--faint);
+      font-size: 13px;
+    }
+
+    .email p { margin: 0 0 14px; }
+
+    .cited { padding: 2px 6px; margin: 0 -6px; border-radius: 6px; background: var(--mint-soft); }
+
+    .source {
+      margin: -4px 0 16px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .source b { color: var(--mint); font-weight: 600; }
+
+    .cta {
+      padding: 64px 48px;
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 8px);
+      background: var(--panel);
+      background-image: radial-gradient(700px 300px at 50% 0%, rgba(160, 245, 228, 0.12), rgba(0, 0, 0, 0) 70%), var(--panel);
+      text-align: center;
+    }
+
+    .cta h2, .cta .sub { margin-left: auto; margin-right: auto; }
+
+    .cta .actions { justify-content: center; margin-top: 32px; }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 40px 0 56px;
+      color: var(--faint);
+      font-size: 14px;
+    }
+
+    footer a:hover { color: var(--text); }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .hero > * { animation: rise 640ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+    .hero > :nth-child(2) { animation-delay: 70ms; }
+    .hero > :nth-child(3) { animation-delay: 140ms; }
+    .hero > :nth-child(4) { animation-delay: 210ms; }
+    .hero > :nth-child(5) { animation-delay: 300ms; }
+
+    .js .reveal { opacity: 0; transform: translateY(20px); transition: opacity 600ms ease, transform 600ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+    .js .reveal.in { opacity: 1; transform: translateY(0); }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .hero > * { animation: none; }
+      .js .reveal { opacity: 1; transform: none; transition: none; }
+      .btn:active { transform: none; }
+    }
+
+    @media (max-width: 860px) {
+      .wrap { padding: 0 16px; }
+      .pills { display: none; }
+      .hero { padding: 40px 0 32px; }
+      section { padding: 64px 0; }
+      .grid, .grid.three, .proof { grid-template-columns: 1fr; }
+      .cell { border-left: 0; border-top: 1px solid var(--line); }
+      .cell:first-child { border-top: 0; }
+      .cta { padding: 40px 20px; }
+      footer { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <a href="#"><img src="assets/logo.svg" alt="LeadSage" width="150" height="29"></a>
+      <div class="pills">
+        <a href="#how">How it works</a>
+        <a href="#proof">Proof</a>
+        <a href="#control">Control</a>
+      </div>
+      <a class="btn btn-mint" href="http://localhost:8501/">Open the app</a>
+    </nav>
+
+    <header class="hero">
+      <span class="label">Lead research and first emails for B2B sales teams</span>
+      <h1>Know who to write to,<br><span>and why.</span></h1>
+      <p class="lead">LeadSage scores companies against your ideal customer, finds the right person on their own website and drafts a first email where every line about them is quoted from their site, with the source and the date. You read it. You send it.</p>
+      <div class="actions">
+        <a class="btn btn-mint" href="http://localhost:8501/">Open the app</a>
+        <a class="btn btn-line" href="#how">See how it works</a>
+      </div>
+      <div class="frame">
+        <img src="assets/app-home.png" alt="The LeadSage app: drafts ready to review, lead counts, verdicts and the pipeline from scored to sent" width="1440" height="900">
+      </div>
+    </header>
+
+    <section id="how" class="reveal">
+      <span class="label">How it works</span>
+      <h2>From a list of companies to an email <span>you can stand behind</span></h2>
+      <p class="sub">Give it company names and websites. It does the reading, you make the calls.</p>
+      <div class="grid">
+        <div class="cell">
+          <span class="tag">Score</span>
+          <h3>Fit, with reasons</h3>
+          <p>Each company is read from its own website and scored against your ideal customer. Every score shows what it was based on.</p>
+        </div>
+        <div class="cell">
+          <span class="tag">Find</span>
+          <h3>The right person</h3>
+          <p>It reads the company's team and leadership pages for the person who runs sales. No guessed addresses, no LinkedIn scraping.</p>
+        </div>
+        <div class="cell">
+          <span class="tag">Draft</span>
+          <h3>A reason to write now</h3>
+          <p>The first email opens with something timely, like open sales roles or recent news, and every line about the company is checked against their site.</p>
+        </div>
+        <div class="cell">
+          <span class="tag">Follow up</span>
+          <h3>Three times, then stop</h3>
+          <p>Up to three follow-ups, 3, 7 and 14 days after the first email. A reply ends the sequence.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="proof" class="reveal">
+      <div class="proof">
+        <div>
+          <span class="label">Proof</span>
+          <h2>Every line about them <span>has a source</span></h2>
+          <p class="sub">Before a sentence about the company reaches the draft, LeadSage looks for the words it is based on in the company's own text. If they are not there, the sentence is cut.</p>
+          <ul>
+            <li><strong>Quoted, not paraphrased.</strong> The quote has to appear on their page as written.</li>
+            <li><strong>Names and numbers checked.</strong> A place, a figure or a job title in the sentence has to be in their text too.</li>
+            <li><strong>Dated.</strong> Each line keeps the page it came from and the day it was read.</li>
+          </ul>
+        </div>
+        <div class="email">
+          <div class="meta"><span>First email · Northwind Payroll</span><span>Draft</span></div>
+          <p>Hi Priya,</p>
+          <p><span class="cited">You opened an office in Singapore last month and are hiring two account executives there.</span></p>
+          <div class="source">Quoted from <b>northwind.example/news</b>: "Northwind opens Singapore office, hiring account executives" · read 14 Oct 2026</div>
+          <p>New reps usually spend their first weeks researching accounts. We research and qualify prospects and time the first message, so they start on warm conversations.</p>
+          <p>How are you planning to get the new team ramped on prospecting?</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="control" class="reveal">
+      <span class="label">Control</span>
+      <h2>Nothing goes out <span>without you</span></h2>
+      <div class="grid three">
+        <div class="cell">
+          <h3>You send every email</h3>
+          <p>The app never sends mail. You approve each draft, send it from your own mailbox and mark it sent.</p>
+        </div>
+        <div class="cell">
+          <h3>Runs on your machine</h3>
+          <p>Scoring and contact finding use a local model. Drafting can use a free cloud model or stay local.</p>
+        </div>
+        <div class="cell">
+          <h3>Opt-out built in</h3>
+          <p>Every email ends with an opt-out line, and a do-not-contact list keeps a company out, even after rescoring.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="cta">
+        <span class="label">Try it</span>
+        <h2>See it on <span>your own leads</span></h2>
+        <p class="sub">Open the app, add a list of companies and score them.</p>
+        <div class="actions">
+          <a class="btn btn-mint" href="http://localhost:8501/">Open the app</a>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <img src="assets/logo.svg" alt="LeadSage" width="120" height="23">
+      <a href="https://github.com/Sp-dev5/LeadSage">Source on GitHub</a>
+    </footer>
+  </div>
+
+  <script>
+    document.documentElement.classList.add("js");
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      }
+    }, { threshold: 0.12 });
+    document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+  </script>
+</body>
+</html>

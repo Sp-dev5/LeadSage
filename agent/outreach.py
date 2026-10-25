@@ -113,11 +113,13 @@ the smallest one that gets a reply.
 Write these fields:
 - subject: two to five words, specific to them, plain, no hype, never "quick question".
 - claims: one or two short sentences about something specific their company does or is \
-doing. If there is a HOOK, the first claim is about it. Otherwise prefer a detail about \
-how they sell, who their customers are, or that they are hiring for sales, over product \
-features: it is what links them to us. Write to the reader \
-in the second person ("Your platform lets reps see what \
-they will earn before a deal closes."). For each, first copy a quote of under 15 words \
+doing. If there is a HOOK, the first claim is about it. A second claim is optional: write \
+one only if it is about how they sell, who their customers are or that they hire for sales, \
+never about a product feature. One claim is enough. Without a HOOK, prefer a detail about \
+how they sell, who their customers are, or that they are hiring for sales: it is what links \
+them to us. Write to the reader in the second person, saying "you" and "your", never "the \
+company" or their company's name as the subject ("Your platform lets reps see what they will \
+earn before a deal closes."). For each, first copy a quote of under 15 words \
 from COMPANY DETAILS, OPEN ROLES or RECENT NEWS, character for character, from one place in the text \
 (never join pieces, never add the company name), then write the sentence: a plain restatement of what the \
 quote says, in your own words. Don't copy their slogans. Don't add conclusions, opinions \
@@ -128,9 +130,11 @@ the company's own words count: never quote WHAT WE SELL or RESEARCH.
 team, linked to the detail in the claims. Describe what our product does in the words of \
 WHAT WE SELL and promise nothing else: no features, integrations, pilots, demos, trials \
 or results, and don't say it sends messages unless WHAT WE SELL says so. Their own product is never the pitch: don't describe it back to them, and \
-never criticise it. State no new facts about their company here.
+never criticise it. Never credit our product with a result their customers got from their \
+product. State no new facts about their company here.
 - ask: one short, low-pressure question that invites a reply and follows from what you \
-wrote. Make it specific to this company; never reuse a stock question.
+wrote. Make it specific to this company; never reuse a stock question. State no new facts \
+about their company here: never describe how they sell from WHAT WE SELL or RESEARCH.
 
 Style:
 - Full, natural sentences that read as if a person wrote them.
@@ -388,7 +392,8 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
             citations, rejected = again_citations, again_rejected
     core = _body(contact, citations, out)
     body = f"{core}\n\n{_footer(cfg)}"
-    ours = f"{_company_source(lead)} {icp.buyer_persona} {icp.pain_solved} {icp.notes}"
+    ours = " ".join([_company_source(lead), *(e[0] for e in extra), contact.title if contact else "",
+                     icp.buyer_persona, icp.pain_solved, icp.notes])
     loose = unsupported_specifics(f"{out.pitch.strip()} {out.ask.strip()}", ours, allowed)
     first = next((e for e in earlier if e.step == 0), None)
     subject = f"Re: {first.subject}" if step > 0 and first else out.subject.strip()

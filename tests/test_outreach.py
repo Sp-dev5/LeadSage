@@ -403,6 +403,17 @@ def test_closest_match_is_flagged_on_the_draft(model_writes, tmp_path):
     assert not any("closest" in f for f in outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path).flags)
 
 
+def test_pitch_using_words_from_the_news_or_the_contacts_title_is_not_flagged(model_writes, tmp_path):
+    model_writes["email"] = email_out(claim("Acme launches payroll for Singapore", "You launched payroll in Singapore.")
+                                      ).model_copy(update={"pitch": "Teams like Sophos in Asia time outreach better.",
+                                                           "ask": "Is that useful?"})
+    contact = contacts.Contact(name="Priya Rao", title="GM, Sales - Greater Asia", matches_buyer="yes",
+                               source="s", fetched_at="t")
+    news = NEWS.model_copy(update={"headline": "Acme launches payroll with Sophos for Singapore"})
+    flags = outreach.draft_email(NO_ROLES, 0, make_icp(), CFG, contact, [], tmp_path, news=news).flags
+    assert not any("found in neither" in f for f in flags)
+
+
 def test_email_records_which_model_wrote_it(model_writes, tmp_path):
     model_writes["email"] = email_out(claim("payroll software", "You build payroll software."))
     assert outreach.draft_email(LEAD, 0, make_icp(), CFG, PRIYA, [], tmp_path).model == "fake-model"
