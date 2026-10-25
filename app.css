@@ -211,6 +211,27 @@ button:active {
   transform: scale(0.97);
 }
 
+@media (max-width: 640px) {
+  .st-key-topbar_review {
+    display: none;
+  }
+  .st-key-topbar {
+    padding-bottom: 1rem;
+  }
+  .st-key-navpills {
+    max-width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+  }
+  .st-key-navpills > * {
+    flex: 0 0 auto;
+  }
+  h1 {
+    font-size: 38px !important;
+  }
+}
+
 @keyframes ls-fade {
   from { opacity: 0; }
   to { opacity: 1; }
