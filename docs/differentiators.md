@@ -23,20 +23,20 @@ Why timing is the edge, not "explainable scoring":
 - In sales, **timing beats everything**. The same email lands a reply today and gets ignored a week later. A perfect lead at the wrong moment is a dead lead.
 
 ### What counts as a buying signal
-- **New job posting** — hiring for the exact role the product supports or replaces.
-- **Funding announced** — fresh budget; the clearest buy-now moment in B2B.
-- **Leadership change** — a new VP re-evaluates tools in their first 90 days.
-- **Tech-stack change** — adopted or dropped a tool that sits next to ours.
-- **Product / expansion** — a launch or new market means new operational pain.
-- **Engagement** — opened, clicked, or replied; intent to act on now.
+- **New job posting**: hiring for the exact role the product supports or replaces.
+- **Funding announced**: fresh budget; the clearest buy-now moment in B2B.
+- **Leadership change**: a new VP re-evaluates tools in their first 90 days.
+- **Tech-stack change**: adopted or dropped a tool that sits next to ours.
+- **Product / expansion**: a launch or new market means new operational pain.
+- **Engagement**: opened, clicked, or replied; intent to act on now.
 
 Each signal is scored for **recency + relevance**: a signal from today outranks a higher base score from a cold lead.
 
 ### How it flows: watch then verify then surface
-1. **Watch** — lightweight checks against real sources (search, news, job boards) on a schedule, autonomously.
-2. **Verify** — a detected event is confirmed against its source before it counts. No source, no signal. (The trust layer.)
-3. **Score** — the verified signal is weighted for recency + relevance and merged into the lead's score.
-4. **Surface** — if it clears the bar, the lead jumps the queue as an "Act now" card, reason and source attached.
+1. **Watch**: lightweight checks against real sources (search, news, job boards) on a schedule, autonomously.
+2. **Verify**: a detected event is confirmed against its source before it counts. No source, no signal. (The trust layer.)
+3. **Score**: the verified signal is weighted for recency + relevance and merged into the lead's score.
+4. **Surface**: if it clears the bar, the lead jumps the queue as an "Act now" card, reason and source attached.
 
 It's **RAG** (grounded in real sources) and **agentic** (keeps watching on its own).
 
@@ -44,8 +44,8 @@ It's **RAG** (grounded in real sources) and **agentic** (keeps watching on its o
 
 Timing only matters if the system is one a real client could switch on:
 
-- **Verified before surfaced** — no signal reaches you without a real source. The agent won't invent a reason to act.
-- **Human approves the send** — nothing goes out on its own. Auto-send is not built; if it is added, it would only apply above a score you set.
-- **Audit log** — today each email keeps the source and date behind every line about the company. A full log of every signal, score and action is planned.
-- **Privacy by default** — minimal personal data (a name and title taken from the company's own site), every email carries an opt-out line, a do-not-contact list keeps a company from being drafted for, and deleting a lead wipes its data and saved pages. The app does not send mail, so it cannot enforce unsubscribes itself.
-- **Honest scoring** — the score explains itself today and is built to tune on reps' real decisions as they use it. No invented ground truth claimed.
+- **Verified before surfaced**: no signal reaches you without a real source. The agent won't invent a reason to act.
+- **Human approves the send**: nothing goes out on its own. Auto-send is not built; if it is added, it would only apply above a score you set.
+- **Audit log**: today each email keeps the source and date behind every line about the company. A full log of every signal, score and action is planned.
+- **Privacy by default**: minimal personal data (a name and title taken from the company's own site), every email carries an opt-out line, a do-not-contact list keeps a company from being drafted for, and deleting a lead wipes its data and saved pages. The app does not send mail, so it cannot enforce unsubscribes itself.
+- **Honest scoring**: the score explains itself today and is built to tune on reps' real decisions as they use it. No invented ground truth claimed.

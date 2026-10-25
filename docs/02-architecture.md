@@ -1,4 +1,4 @@
-# LeadSage — Architecture & Technical Plan
+# LeadSage: Architecture & Technical Plan
 
 > **Status: this is the original plan, not what is built.** Today the app is Streamlit with a local SQLite store, local Ollama models for scoring and contact finding, and an optional free Groq model for email drafting. There is no Next.js, FastAPI, LangGraph, Postgres, Claude, HubSpot, discovery API or email sending. See the README for what exists. The loop below is still the direction.
 
@@ -51,7 +51,7 @@ One LangGraph graph per lead batch. Nodes:
 | `research` | Builds a company + person brief | web search, page fetch | brief with cited sources, trigger events |
 | `qualify` | Scores fit criterion-by-criterion vs ICP | RAG (ICP + disqualifiers) | fit score, rationale, verdict |
 | `draft` | Writes step-1 email | RAG (case studies, value props) | subject, body, cited proof points |
-| `human_review` | **Interrupt** until rep approves/edits | — | approved draft |
+| `human_review` | **Interrupt** until rep approves/edits | none | approved draft |
 | `enqueue_sequence` | Schedules 3 steps | scheduler | sequence record |
 
 Why LangGraph: native checkpointing and `interrupt` for human-in-the-loop, conditional edges for disqualify/retry, and the run trace can be rendered in the UI. Plain Python with a state enum is an acceptable fallback if the team doesn't know LangGraph; don't learn a framework under deadline if nobody has used it.
@@ -64,10 +64,10 @@ Every tool call is written to an `agent_events` table (lead, node, tool, input s
 - **Pipeline:** upload (PDF/MD/URL) → chunk (~500 tokens, overlap) → embed → `kb_chunks` in pgvector with metadata (doc, section, type = case_study / value_prop / objection / pricing).
 - **Embeddings:** Anthropic has no embedding endpoint. Options: Voyage AI (hosted, simple) or a local `bge-small` / `e5` via sentence-transformers (free, no key). Pick one on day 0.
 - **Where it changes outputs (this is the point):**
-  1. `derive_icp` — ICP drafted from the seller's own material.
-  2. `qualify` — disqualifiers and fit criteria pulled from KB.
-  3. `draft` — retrieve the case study most similar to the prospect's industry/pain; email cites it; UI shows which chunk was used.
-  4. (stretch) reply handling — objection → retrieved rebuttal.
+  1. `derive_icp`: ICP drafted from the seller's own material.
+  2. `qualify`: disqualifiers and fit criteria pulled from KB.
+  3. `draft`: retrieve the case study most similar to the prospect's industry/pain; email cites it; UI shows which chunk was used.
+  4. (stretch) reply handling: objection → retrieved rebuttal.
 
 ### 2.3 Data sources (the real risk)
 
@@ -77,7 +77,7 @@ Every tool call is written to an `agent_events` table (lead, node, tool, input s
 | People / titles | Apollo people search | LLM extracts leadership from company "About/Team" pages | Never scrape LinkedIn. Store LinkedIn URLs only if the provider returns them. |
 | Emails | Hunter.io (free tier, small quota) | Pattern guess (first.last@domain) flagged "unverified" | Demo-scale only. |
 | Research | Tavily / Exa / Serper search API + fetch of company site | Cached research JSON for demo leads | Cap ~5 pages per lead. |
-| Intent signals (P2) | News search, careers page, funding mentions | — | Feed into intent score. |
+| Intent signals (P2) | News search, careers page, funding mentions | none | Feed into intent score. |
 
 Wrap each behind a `Provider` interface so the seeded fallback is a one-line switch. This also makes the "agency could swap in a client's data source" story true.
 
@@ -137,10 +137,10 @@ priority = w_fit·Fit + w_intent·Intent + w_eng·Engagement      (defaults 0.45
 | Agents | LangGraph | Plain Python state machine | HITL interrupts + trace for free. |
 | LLM | Claude (`claude-sonnet-5-5` for agent reasoning/drafting, `claude-haiku-4-5-20251001` for bulk extraction/classification) | Whatever credits organisers provide | Check credits and rate limits first. |
 | DB + vectors | Postgres + pgvector (Supabase) | SQLite + Chroma | One database for relational + vectors; Supabase also gives auth. |
-| Embeddings | Voyage AI or local bge-small | — | See 2.2. |
+| Embeddings | Voyage AI or local bge-small | none | See 2.2. |
 | Search | Tavily or Exa | Serper | Built for agent research. |
 | Email | Gmail API (test inbox) | Resend / Mailtrap | Gmail also gives reply detection. |
-| CRM | HubSpot free | — | Real API, free, quick token setup. |
+| CRM | HubSpot free | none | Real API, free, quick token setup. |
 | Deploy | Vercel (web) + Render/Railway (API) | Docker compose locally | A live URL makes it easy to show. |
 
 Decision to make on day 0: **Python backend vs TypeScript end to end.** Recommendation is Python unless most of the team is TS-only.
