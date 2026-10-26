@@ -14,21 +14,21 @@
       {% for field, label in fields.items() %}
       <label>{{ label }} <textarea name="{{ field }}" rows="{{ 5 if field == 'notes' else 3 }}" data-field="{{ field }}">{{ raw.get(field, '') }}</textarea></label>
       <div class="suggrow"><button class="linkish" type="button" data-suggest="{{ field }}">Suggest a fuller description</button><span class="small faint" data-status="{{ field }}" aria-live="polite"></span></div>
-      <div class="sugg" data-sugg="{{ field }}" hidden><h3 style="margin-bottom:8px">Suggestion from the local model</h3><p></p>
+      <div class="sugg" data-sugg="{{ field }}" hidden><h3 class="mb-8">Suggestion from the local model</h3><p></p>
         <div class="row-btns"><button class="b" type="button" data-use="{{ field }}">Use this</button><button class="b ghost" type="button" data-dismiss="{{ field }}">Dismiss</button></div></div>
       {% if field == 'buyer_persona' %}<div class="titles" data-titles="{{ field }}" hidden><span class="small faint">Other titles for this role. Click one to add it to your text.</span><div></div></div>{% endif %}
       {% endfor %}
-      <div class="cols" style="border:0;gap:16px">
+      <div class="cols flat-gap-16">
         <label>Smallest company, employees <input type="number" name="company_size_min" min="1" value="{{ raw.company_size_min }}"></label>
         <label>Largest company, employees <input type="number" name="company_size_max" min="1" value="{{ raw.company_size_max }}"></label>
       </div>
       <label>Target countries</label>
-      <div class="chips" data-chips style="margin:-6px 0 6px">
+      <div class="chips m-n6-0-6" data-chips>
         {% for c in raw.geography_countries %}<span>{{ c }}<button type="button" aria-label="Remove {{ c }}">×</button><input type="hidden" name="countries" value="{{ c }}"></span>{% endfor %}
         <input type="text" list="country-list" placeholder="Add a country" aria-label="Add a country">
       </div>
       <datalist id="country-list">{% for c in countries %}<option value="{{ c }}">{% endfor %}</datalist>
-      <p class="small faint" style="margin:0 0 18px">Sets the "only my ideal-customer region" filter on the Leads page. Never scored.</p>
+      <p class="small faint m-0-0-18">Sets the "only my ideal-customer region" filter on the Leads page. Never scored.</p>
       <button class="b" type="submit">Save</button>
     </form>
   </div>
@@ -36,28 +36,28 @@
     <header><div><h2>Scoring</h2><h3>Plain numbers saved in icp.json. The model never sees them.</h3></div></header>
     <form method="post" action="/icp/scoring" id="scoring-form"><input type="hidden" name="csrf" value="{{ csrf }}">
       <table class="edit">
-        <tr><th>Criterion</th><th class="r">Weight</th><th class="r">Share</th><th style="width:30%"></th></tr>
+        <tr><th>Criterion</th><th class="r">Weight</th><th class="r">Share</th><th class="wd-30p"></th></tr>
         {% for name, w, pct in weights %}
         <tr><td>{{ name | capitalize }}</td>
           <td class="r"><input type="number" name="weight:{{ name }}" value="{{ w }}" min="0" step="0.5" required data-weight aria-label="Weight for {{ name }}"></td>
           <td class="r num"><span data-share>{{ pct }}</span>%</td>
-          <td><div class="track" style="margin:0"><i data-bar style="width:{{ pct }}%"></i></div></td></tr>
+          <td><div class="track m-0"><i data-bar class="w-{{ pct }}"></i></div></td></tr>
         {% endfor %}
       </table>
-      <table class="edit" style="margin-top:26px">
+      <table class="edit mt-26">
         <tr><th>Cut-off</th><th class="r">Value</th></tr>
         {% for key, label, whole, lo, hi, step, value in setting_fields %}
         <tr><td class="small">{{ label }}</td>
           <td class="r"><input type="number" name="{{ key }}" value="{{ value }}" min="{{ lo }}"{% if hi is not none %} max="{{ hi }}"{% endif %} step="{{ step }}" required aria-label="{{ label }}"></td></tr>
         {% endfor %}
       </table>
-      <p class="small faint" style="margin:14px 0 16px">Changing a number changes the verdict of every lead, so rescore after saving.</p>
+      <p class="small faint m-14-0-16">Changing a number changes the verdict of every lead, so rescore after saving.</p>
       <button class="b" type="submit">Save scoring</button>
     </form>
   </div>
 </section>
 
-<section class="pane" style="border-top:0">
+<section class="pane no-top-rule">
   <header><div><h2>Rules</h2><h3>Applied after the facts are checked</h3></div></header>
   <form method="post" action="/icp/rules" id="rules-form" data-facts="{{ facts | tojson | forceescape }}" data-labels="{{ labels | tojson | forceescape }}"><input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="scroll"><table class="edit" id="rules-table">
@@ -72,7 +72,7 @@
       </tr>
       {% endfor %}
     </table></div>
-    <div class="row-btns" style="margin-top:16px">
+    <div class="row-btns mt-16">
       <button class="b ghost" type="button" id="add-rule">Add a rule</button>
       <button class="b" type="submit">Save rules</button>
       <span class="small faint">A rule sends a lead to Review or Disqualify when the fact has that value. Rescore after saving.</span>
@@ -80,12 +80,12 @@
   </form>
 </section>
 
-<section class="pane" style="border-top:0">
+<section class="pane no-top-rule">
   <header><div><h2>Industry, gates and sales roles</h2><h3>How the code scores industry, and which jobs count as sales hiring</h3></div></header>
   <form method="post" action="/icp/match" id="match-form"><input type="hidden" name="csrf" value="{{ csrf }}">
-    <div class="cols" style="border:0;gap:40px;align-items:start">
+    <div class="cols flat-gap-40">
       <div>
-        <p class="small muted" style="margin:0 0 10px">Industry score. The first row that matches what the company sells and who it sells to wins. Any matches everything.</p>
+        <p class="small muted m-0-0-10">Industry score. The first row that matches what the company sells and who it sells to wins. Any matches everything.</p>
         <div class="scroll"><table class="edit" id="industry-table">
           <tr><th>They sell</th><th>To</th><th class="r">Score 0-5</th><th></th></tr>
           {% for r in raw.industry_map %}
@@ -97,9 +97,9 @@
           </tr>
           {% endfor %}
         </table></div>
-        <div class="row-btns" style="margin:12px 0 18px"><button class="b ghost" type="button" id="add-industry">Add a row</button></div>
-        <label>No row matches: score <input type="number" name="industry_default" value="{{ raw.industry_default }}" min="0" max="5" step="1" required style="width:104px"></label>
-        <p class="small muted" style="margin:18px 0 8px">Gates. A gate criterion scoring at or below "gate fails at" caps the fit.</p>
+        <div class="row-btns m-12-0-18"><button class="b ghost" type="button" id="add-industry">Add a row</button></div>
+        <label>No row matches: score <input type="number" name="industry_default" value="{{ raw.industry_default }}" min="0" max="5" step="1" required class="wd-104"></label>
+        <p class="small muted m-18-0-8">Gates. A gate criterion scoring at or below "gate fails at" caps the fit.</p>
         {% for c in criteria %}<label class="check"><input type="checkbox" name="gate" value="{{ c }}"{% if c in raw.gates %} checked{% endif %}> {{ c | capitalize }}</label>{% endfor %}
       </div>
       <div>
@@ -107,7 +107,7 @@
         <label>Sales job titles, one per line (matched word for word) <textarea name="sales_titles" rows="10" required>{{ raw.sales_roles.titles | join('\n') }}</textarea></label>
       </div>
     </div>
-    <div class="row-btns" style="margin-top:6px"><button class="b" type="submit">Save</button><span class="small faint">Rescore after saving.</span></div>
+    <div class="row-btns mt-6"><button class="b" type="submit">Save</button><span class="small faint">Rescore after saving.</span></div>
   </form>
 </section>
 {% endblock %}

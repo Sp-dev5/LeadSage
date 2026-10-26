@@ -248,6 +248,14 @@ def test_scoring_refuses_a_missing_or_wrong_number(client, tmp_path, monkeypatch
     assert path.read_text(encoding="utf-8") == before
 
 
+def test_no_page_has_inline_styles_and_the_policy_forbids_them(client):
+    seed()
+    for url in ["/", "/leads?group=All&lead=Acme", "/outreach?lead=Acme", "/icp", "/login"]:
+        r = client.get(url)
+        assert ' style="' not in r.text, url
+        assert "'unsafe-inline'" not in r.headers["content-security-policy"], url
+
+
 def test_a_post_without_the_page_token_is_refused(client):
     seed()
     assert client.post("/outreach/act", data={"lead": "Acme", "do": "approve", "step": 0}, csrf=False).status_code == 403

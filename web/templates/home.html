@@ -18,19 +18,19 @@
   </div>
 </section>
 
-<section class="stats" style="--n:4">
+<section class="stats stats-4">
   <div class="stat"><small>Leads scored</small><b>{{ h.scored }}</b>
     <span class="sub">{{ h.by_group['Qualify'] }} qualify · {{ h.by_group['Disqualify'] }} disqualify</span>
-    <div class="track"><i style="width:100%"></i></div></div>
+    <div class="track"><i class="wd-100p"></i></div></div>
   <div class="stat"><small>Worth contacting</small><b>{{ h.worth }}</b>
     <span class="sub">{{ share(h.worth, h.scored) }}% of scored</span>
-    <div class="track"><i style="width:{{ share(h.worth, h.scored) }}%"></i></div></div>
+    <div class="track"><i class="w-{{ share(h.worth, h.scored) }}"></i></div></div>
   <div class="stat"><small>Need a contact</small><b>{{ h.needs_contact }}</b>
     <span class="sub">drafted, no one to send to yet</span>
-    <div class="track"><i style="width:{{ share(h.needs_contact, h.drafted) }}%"></i></div></div>
+    <div class="track"><i class="w-{{ share(h.needs_contact, h.drafted) }}"></i></div></div>
   <div class="stat"><small>Sent</small><b>{{ h.sent }}</b>
     <span class="sub">{{ h.approved }} approved · {{ h.replied }} replied</span>
-    <div class="track"><i class="hl" style="width:{{ share(h.sent, h.worth) }}%"></i></div></div>
+    <div class="track"><i class="hl w-{{ share(h.sent, h.worth) }}"></i></div></div>
 </section>
 
 <section class="cols wide">
@@ -38,35 +38,35 @@
     <header><div><h2>Verdicts</h2><h3>{{ h.scored }} companies, scored against your ideal customer</h3></div>
       <a class="b ghost" href="/leads?group=All">All leads</a></header>
     <table>
-      <tr><th>Verdict</th><th class="r">Leads</th><th style="width:38%"></th><th class="r">Share</th></tr>
+      <tr><th>Verdict</th><th class="r">Leads</th><th class="wd-38p"></th><th class="r">Share</th></tr>
       {% set meaning = {'Qualify': 'Strong match, nothing in the way', 'Strong fit': 'Fit ' ~ qualify_at ~ '+, held back by one rule', 'Review': 'Worth a look, reason given', 'Disqualify': 'Not a fit, reason given'} %}
       {% for name, n, pct in h.verdicts %}
       <tr class="row" data-href="/leads?group={{ name | urlencode }}">
         <td><a class="name" href="/leads?group={{ name | urlencode }}">{{ name }}</a><span class="sublabel hide-sm">{{ meaning[name] }}</span></td>
         <td class="r num">{{ n }}</td>
-        <td><div class="track" style="margin:0"><i class="{{ 'hl' if loop.first }}" style="width:{{ pct }}%"></i></div></td>
+        <td><div class="track m-0"><i class="{{ 'hl' if loop.first }} w-{{ pct }}"></i></div></td>
         <td class="r num muted">{{ pct }}%</td></tr>
       {% endfor %}
     </table>
-    <header style="margin-top:34px"><div><h2>Quote check</h2><h3>Lines about companies in drafted emails</h3></div></header>
+    <header class="mt-34"><div><h2>Quote check</h2><h3>Lines about companies in drafted emails</h3></div></header>
     {% set lines = h.kept + h.cut %}
     <table>
-      <tr><th>Line</th><th class="r">Count</th><th style="width:38%"></th><th class="r">Share</th></tr>
+      <tr><th>Line</th><th class="r">Count</th><th class="wd-38p"></th><th class="r">Share</th></tr>
       <tr><td>Kept<span class="sublabel hide-sm">Quote found on their site or job posts, source shown</span></td><td class="r num">{{ h.kept }}</td>
-        <td><div class="track" style="margin:0"><i class="hl" style="width:{{ share(h.kept, lines) }}%"></i></div></td>
+        <td><div class="track m-0"><i class="hl w-{{ share(h.kept, lines) }}"></i></div></td>
         <td class="r num muted">{{ share(h.kept, lines) }}%</td></tr>
       <tr><td>Cut<span class="sublabel hide-sm">No matching quote, removed before you saw it</span></td><td class="r num">{{ h.cut }}</td>
-        <td><div class="track" style="margin:0"><i class="pen" style="width:{{ share(h.cut, lines) }}%"></i></div></td>
+        <td><div class="track m-0"><i class="pen w-{{ share(h.cut, lines) }}"></i></div></td>
         <td class="r num muted">{{ share(h.cut, lines) }}%</td></tr>
     </table>
   </div>
   <div class="pane">
     <header><div><h2>Scored to sent</h2><h3>Where each lead stands</h3></div></header>
     <table>
-      <tr><th>Step</th><th class="r">Leads</th><th style="width:38%"></th><th class="r">Of scored</th></tr>
+      <tr><th>Step</th><th class="r">Leads</th><th class="wd-38p"></th><th class="r">Of scored</th></tr>
       {% for step, n, pct in h.funnel %}
       <tr><td>{{ step }}</td><td class="r num">{{ n }}</td>
-        <td><div class="track" style="margin:0"><i class="{{ 'hl' if loop.last }}" style="width:{{ pct }}%"></i></div></td>
+        <td><div class="track m-0"><i class="{{ 'hl' if loop.last }} w-{{ pct }}"></i></div></td>
         <td class="r num muted">{{ pct }}%</td></tr>
       {% endfor %}
     </table>

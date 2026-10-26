@@ -35,7 +35,7 @@
         <label class="check"><input type="checkbox" name="skip_scored" value="1" checked> Skip companies already scored</label>
         <button class="b wide" type="submit" {{ 'disabled' if job or not files }}>Research and score</button>
       </form>
-      <p class="faint small" style="margin:12px 0 0">About 20 seconds a company on the local model. You can leave this page; the progress shows at the top.</p>
+      <p class="faint small m-12-0-0">About 20 seconds a company on the local model. You can leave this page; the progress shows at the top.</p>
     </section>
   </aside>
 
@@ -139,7 +139,7 @@
       </div>
     </section>
     {% else %}
-    <p class="note" style="border-top:1px solid var(--rule);border-bottom:0">Pick a company to see why it scored that way.</p>
+    <p class="note top-rule">Pick a company to see why it scored that way.</p>
     {% endif %}
     {% endif %}
   </div>
