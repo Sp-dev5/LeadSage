@@ -12,6 +12,20 @@ from web import app as web_app
 from web import views
 
 
+class PageClient(TestClient):
+    """Posts like a browser on one of the app's pages: with the page's CSRF token."""
+
+    def token(self) -> str:
+        return re.search(r'name="csrf" content="([^"]+)"', self.get("/login").text).group(1)
+
+    def post(self, url, *args, data=None, json=None, headers=None, csrf=True, **kwargs):
+        if csrf and json is not None:
+            headers = {**(headers or {}), "X-CSRF-Token": self.token()}
+        elif csrf:
+            data = {**(data or {}), "csrf": self.token()}
+        return super().post(url, *args, data=data, json=json, headers=headers, **kwargs)
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     db = tmp_path / "leads.db"
@@ -20,7 +34,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "PASSWORD", "")
     monkeypatch.setattr(web_app, "forget_lead", lambda lead, db: outreach.forget_lead(
         lead, db, tmp_path / "pages", tmp_path / "logos"))
-    return TestClient(web_app.app)
+    web_app.failed_logins.clear()
+    return PageClient(web_app.app)
 
 
 def seed(emails=True):
@@ -231,6 +246,34 @@ def test_scoring_refuses_a_missing_or_wrong_number(client, tmp_path, monkeypatch
     del data["fail_cap"]
     assert "Not saved" in client.post("/icp/scoring", data=data, follow_redirects=True).text
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_a_post_without_the_page_token_is_refused(client):
+    seed()
+    assert client.post("/outreach/act", data={"lead": "Acme", "do": "approve", "step": 0}, csrf=False).status_code == 403
+    assert client.post("/outreach/act", data={"lead": "Acme", "do": "approve", "step": 0, "csrf": "forged"},
+                       csrf=False).status_code == 403
+    assert client.post("/icp/suggest", json={"field": "notes", "context": {}}, csrf=False).status_code == 403
+
+
+def test_login_locks_after_five_wrong_tries(client, monkeypatch):
+    monkeypatch.setattr(web_app, "PASSWORD", "open sesame")
+    for _ in range(web_app.MAX_TRIES):
+        assert "Wrong password" in client.post("/login", data={"password": "nope"}).text
+    locked = client.post("/login", data={"password": "open sesame"})
+    assert locked.status_code == 429 and "Too many wrong tries" in locked.text
+    assert client.get("/", follow_redirects=False).status_code == 303
+
+
+def test_a_failed_action_shows_no_internal_detail(client, monkeypatch):
+    seed()
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("secret path C:/internal/db")
+
+    monkeypatch.setattr(web_app, "draft_step", broken)
+    r = client.post("/outreach/act", data={"lead": "Acme", "do": "draft", "step": 0}, follow_redirects=True)
+    assert "details are in the app" in r.text and "C:/internal" not in r.text
 
 
 def test_rules_save_add_and_remove(client, tmp_path, monkeypatch):

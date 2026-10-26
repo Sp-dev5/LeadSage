@@ -6,6 +6,7 @@
 <title>Log in · LeadSage</title>
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/app.css">
+<meta name="csrf" content="{{ csrf }}">
 </head>
 <body>
 <main class="nb login">
@@ -13,12 +14,13 @@
   <div class="pane">
     {% if not password_set %}
     <h2>No password set</h2>
-    <p class="muted">Add <span class="mono">LEADSAGE_PASSWORD=...</span> to the .env file and restart the app. Until then it opens without one.</p>
+    <p class="muted">Add <span class="mono">LEADSAGE_PASSWORD=...</span> and a long random <span class="mono">LEADSAGE_SECRET=...</span> to the .env file and restart the app. Until then it opens without one.</p>
     <a class="b" href="/">Open the app</a>
     {% else %}
-    <form method="post" action="/login">
+    <form method="post" action="/login"><input type="hidden" name="csrf" value="{{ csrf }}">
       <h2 style="margin-bottom:18px">Log in</h2>
       <label>Team password <input type="password" name="password" autocomplete="current-password" autofocus required></label>
+      {% if locked %}<p class="annot" style="margin:-4px 0 16px"><b>Too many wrong tries.</b> Wait 15 minutes, then try again.</p>{% endif %}
       {% if wrong %}<p class="annot" style="margin:-4px 0 16px"><b>Wrong password.</b> Try again.</p>{% endif %}
       <button class="b wide" type="submit">Log in</button>
     </form>

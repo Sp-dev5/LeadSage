@@ -11,15 +11,17 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 import secrets
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
 import pycountry
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -41,6 +43,14 @@ from web import jobs, views
 load_dotenv()
 HERE = Path(__file__).resolve().parent
 PASSWORD = os.getenv("LEADSAGE_PASSWORD", "")
+SECRET = os.getenv("LEADSAGE_SECRET", "")
+HTTPS = os.getenv("LEADSAGE_HTTPS", "") == "1"
+MAX_TRIES = 5
+LOCK_SECONDS = 15 * 60
+log = logging.getLogger("leadsage")
+if PASSWORD and not SECRET:
+    raise RuntimeError("LEADSAGE_PASSWORD is set but LEADSAGE_SECRET is not. Add a long random LEADSAGE_SECRET to .env "
+                       "so logins survive a restart and the session cookie cannot be forged.")
 OPEN_PATHS = ("/login", "/static/")
 STOP_STAGES = {"replied": "Replied", "meeting": "Meeting booked", "lost": "Lost"}
 PAGE_SIZE = 10
@@ -50,7 +60,27 @@ TEXT_FIELDS = {
     "notes": "What you sell and buying signals",
 }
 
-app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+failed_logins: dict[str, list[float]] = {}
+
+
+def csrf_token(request: Request) -> str:
+    if "csrf" not in request.session:
+        request.session["csrf"] = secrets.token_urlsafe(32)
+    return request.session["csrf"]
+
+
+async def check_csrf(request: Request):
+    """Every POST carries the token from this session's pages, as a form field or a header,
+    so another site can't post a form in the user's name."""
+    if request.method != "POST":
+        return
+    sent = request.headers.get("x-csrf-token") or (await request.form()).get("csrf") or ""
+    want = request.session.get("csrf", "")
+    if not want or not hmac.compare_digest(str(sent).encode(), want.encode()):
+        raise HTTPException(403, "This page expired. Go back, reload it and try again.")
+
+
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, dependencies=[Depends(check_csrf)])
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters.update(plain=views.plain, domain=views.domain, bare=views.bare, day=views.day, stamp=views.stamp, letter=views.letter)
@@ -65,8 +95,8 @@ async def need_login(request: Request, call_next):
     return await call_next(request)
 
 
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("LEADSAGE_SECRET") or secrets.token_hex(32),
-                   same_site="strict", https_only=False, max_age=14 * 24 * 3600)
+app.add_middleware(SessionMiddleware, secret_key=SECRET or secrets.token_hex(32),
+                   same_site="strict", https_only=HTTPS, max_age=14 * 24 * 3600)
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": "; ".join([
@@ -96,7 +126,7 @@ async def security_headers(request: Request, call_next):
 
 def page(request: Request, name: str, **context) -> HTMLResponse:
     context |= {"flash": request.session.pop("flash", None), "job": jobs.running(), "now": datetime.now(),
-                "password_set": bool(PASSWORD)}
+                "password_set": bool(PASSWORD), "csrf": csrf_token(request)}
     return templates.TemplateResponse(request, name, context)
 
 
@@ -113,9 +143,19 @@ def login_page(request: Request):
 
 @app.post("/login")
 def login(request: Request, password: str = Form("")):
+    who, moment = request.client.host if request.client else "", time.monotonic()
+    tries = [t for t in failed_logins.get(who, []) if moment - t < LOCK_SECONDS]
+    if len(tries) >= MAX_TRIES:
+        failed_logins[who] = tries
+        response = page(request, "login.html", wrong=False, locked=True)
+        response.status_code = 429
+        return response
     if PASSWORD and hmac.compare_digest(password.encode(), PASSWORD.encode()):
+        failed_logins.pop(who, None)
+        request.session.clear()
         request.session["in"] = True
         return RedirectResponse("/", status_code=303)
+    failed_logins[who] = [*tries, moment]
     return page(request, "login.html", wrong=True)
 
 
@@ -352,8 +392,9 @@ def outreach_act(request: Request, lead: str = Form(...), do: str = Form(...), s
     except ValueError as e:
         return back(request, _lead_url(lead, step if do in ("draft", "edit", "approve", "sent") else None),
                     str(e), "error")
-    except Exception as e:
-        return back(request, _lead_url(lead), f"That did not work: {str(e)[:160]}", "error")
+    except Exception:
+        log.exception("outreach action %s failed for %s", do, lead)
+        return back(request, _lead_url(lead), "That did not work. The details are in the app's log.", "error")
     return back(request, _lead_url(lead), "Unknown action.", "error")
 
 
@@ -485,8 +526,9 @@ async def icp_suggest(request: Request):
             return {"text": text, "titles": titles}
         text = await run_in_threadpool(suggest, field, context.get(field, ""), texts)
         return {"text": text}
-    except Exception as e:
-        return JSONResponse({"error": f"The local model did not answer ({str(e)[:120]}). Is ollama serve running?"},
+    except Exception:
+        log.exception("suggestion for %s failed", field)
+        return JSONResponse({"error": "The local model did not answer. Is ollama serve running?"},
                             status_code=502)
 
 

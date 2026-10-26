@@ -25,12 +25,12 @@
     <section>
       <h3>Draft first emails</h3>
       <p class="small muted" style="margin:0 0 14px">{{ undrafted | length }} leads ({{ cfg.draft_verdicts | join(', ') }}) have no email yet. Finding the contact and reading their news takes about a minute each.</p>
-      <form method="post" action="/outreach/draft-all" data-busy="Starting">
+      <form method="post" action="/outreach/draft-all" data-busy="Starting"><input type="hidden" name="csrf" value="{{ csrf }}">
         <button class="b wide" type="submit" {{ 'disabled' if job or not undrafted }}>Find contacts and draft</button></form>
     </section>
     <section id="settings">
       <details {{ 'open' if setup }}><summary>Sender and follow-ups</summary><div>
-        <form method="post" action="/outreach/settings">
+        <form method="post" action="/outreach/settings"><input type="hidden" name="csrf" value="{{ csrf }}">
           <label>Sign emails as <input type="text" name="sender_name" value="{{ cfg.sender_name }}"></label>
           <label>Company <input type="text" name="sender_company" value="{{ cfg.sender_company }}"></label>
           <label>Business address <input type="text" name="sender_address" value="{{ cfg.sender_address }}" placeholder="Shown under your signature"></label>
@@ -47,7 +47,7 @@
         {% if not suppressed %}<p class="small muted">Empty. Add a company from its Privacy panel when it asks not to be contacted.</p>{% endif %}
         <ul class="plain">{% for company, (reason, added) in suppressed.items() %}
           <li><b>{{ company }}</b><br><span class="small muted">{{ reason or 'No reason given' }} · added {{ added | day }}</span>
-            <form method="post" action="/outreach/unsuppress" style="margin-top:6px"><input type="hidden" name="company" value="{{ company }}"><button class="linkish" style="margin:0" type="submit">Remove from the list</button></form></li>
+            <form method="post" action="/outreach/unsuppress" style="margin-top:6px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="company" value="{{ company }}"><button class="linkish" style="margin:0" type="submit">Remove from the list</button></form></li>
         {% endfor %}</ul>
       </div></details>
     </section>
@@ -115,7 +115,7 @@
           <div class="stepbox">
             {% if e is none %}
               <p class="muted" style="margin-top:0">{{ s.when or 'Not drafted yet.' }}</p>
-              <form method="post" action="/outreach/act" data-busy="Drafting">
+              <form method="post" action="/outreach/act" data-busy="Drafting"><input type="hidden" name="csrf" value="{{ csrf }}">
                 <input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="draft"><input type="hidden" name="step" value="{{ s.n }}">
                 <button class="b" type="submit" {{ 'disabled' if not s.can_draft or job }}>Draft it</button>
                 {% if not s.can_draft and not d.stopped %}<span class="small faint" style="margin-left:10px">Send the email before it first.</span>{% endif %}
@@ -136,23 +136,23 @@
 
               <div class="row-btns" style="margin-top:14px">
                 {% if e.status == 'draft' %}
-                <form method="post" action="/outreach/act"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="approve"><input type="hidden" name="step" value="{{ s.n }}">
+                <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="approve"><input type="hidden" name="step" value="{{ s.n }}">
                   <button class="b" type="submit" {{ 'disabled' if s.problems }}>Approve</button></form>
                 <button class="b ghost" type="button" data-toggle="edit-{{ s.n }}">Edit the wording</button>
                 {% endif %}
                 {% if e.status == 'approved' %}
-                <form method="post" action="/outreach/act"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="sent"><input type="hidden" name="step" value="{{ s.n }}">
+                <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="sent"><input type="hidden" name="step" value="{{ s.n }}">
                   <button class="b" type="submit">I sent it</button></form>
                 {% endif %}
                 {% if s.can_draft and e.status != 'sent' %}
-                <form method="post" action="/outreach/act" data-busy="Drafting"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="draft"><input type="hidden" name="step" value="{{ s.n }}">
+                <form method="post" action="/outreach/act" data-busy="Drafting"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="draft"><input type="hidden" name="step" value="{{ s.n }}">
                   <button class="b ghost" type="submit" {{ 'disabled' if job }}>Write it again</button></form>
                 {% endif %}
               </div>
               {% if e.status == 'draft' and s.problems %}<p class="annot"><b>Can't approve yet:</b> {{ s.problems | join('; ') }}.</p>{% endif %}
 
               {% if e.status == 'draft' %}
-              <form method="post" action="/outreach/act" id="edit-{{ s.n }}" class="letter" style="margin-top:14px" hidden>
+              <form method="post" action="/outreach/act" id="edit-{{ s.n }}" class="letter" style="margin-top:14px" hidden><input type="hidden" name="csrf" value="{{ csrf }}">
                 <input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="edit"><input type="hidden" name="step" value="{{ s.n }}">
                 <label>Subject <input type="text" name="subject" value="{{ e.subject }}"></label>
                 <label>Body <textarea name="body" rows="14">{{ e.body }}</textarea></label>
@@ -184,7 +184,7 @@
           <header><div><h2>Who to write to</h2></div></header>
           {% if d.search is none %}
             <p class="muted small">Not searched yet. Drafting the first email searches the website first.</p>
-            <form method="post" action="/outreach/act" data-busy="Reading their pages"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="search">
+            <form method="post" action="/outreach/act" data-busy="Reading their pages"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="search">
               <button class="b ghost" type="submit">Search the website for people</button></form>
           {% else %}
             {% set c = d.search.contact %}
@@ -196,20 +196,20 @@
               <div class="flag" style="margin-top:0"><b>No contact</b>No one matching your buyer is named on their website. Pick someone below or type a contact in.</div>
             {% endif %}
             {% if d.others %}
-            <form method="post" action="/outreach/act" style="margin-top:16px"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="pick">
+            <form method="post" action="/outreach/act" style="margin-top:16px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="pick">
               <label>Other people named on their site
                 <select name="person">{% for p in d.others %}<option value="{{ loop.index0 }}">{{ p.name }}, {{ p.title }}</option>{% endfor %}</select></label>
               <button class="b ghost" type="submit">Write to them instead</button></form>
             {% endif %}
             <details><summary>Type a contact in, or see what was searched</summary><div>
-              <form method="post" action="/outreach/act"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="type">
+              <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="type">
                 <label>Name <input type="text" name="name"></label><label>Title <input type="text" name="title"></label>
                 <button class="b ghost" type="submit">Use this contact</button></form>
               <ul class="plain small" style="margin-top:14px">
                 {% for p in d.search.pages_tried %}<li class="muted"><span class="faint mono">read</span> {{ p }}</li>{% endfor %}
                 {% for r in d.search.rejected %}<li class="muted"><span class="faint mono">rejected, not on the page</span> {{ r }}</li>{% endfor %}
               </ul>
-              <form method="post" action="/outreach/act" data-busy="Reading their pages" style="margin-top:12px"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="search">
+              <form method="post" action="/outreach/act" data-busy="Reading their pages" style="margin-top:12px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="search">
                 <button class="b ghost" type="submit">Search the website again</button></form>
             </div></details>
           {% endif %}
@@ -230,18 +230,18 @@
           {% endif %}
 
           <header style="margin-top:30px"><div><h2>Stage and privacy</h2></div></header>
-          <form method="post" action="/outreach/act" class="row-btns"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="stage">
+          <form method="post" action="/outreach/act" class="row-btns"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="stage">
             {% for stage, label in stop_stages.items() %}<button class="b ghost" name="stage" value="{{ stage }}" type="submit" {{ 'disabled' if lead.stage == stage }}>{{ label }}</button>{% endfor %}</form>
           <p class="small faint" style="margin:8px 0 0">A reply, a meeting or a loss stops the follow-ups.</p>
           <details><summary>Set any stage, do not contact, delete</summary><div>
-            <form method="post" action="/outreach/act"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="stage">
+            <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="stage">
               <label>Stage <select name="stage">{% for st in stages %}<option value="{{ st }}" {{ 'selected' if st == lead.stage }}>{{ st | capitalize }}</option>{% endfor %}</select></label>
               <button class="b ghost" type="submit">Set stage</button></form>
-            <form method="post" action="/outreach/act" style="margin-top:18px"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="suppress">
+            <form method="post" action="/outreach/act" style="margin-top:18px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="suppress">
               <label>Do not contact: reason (optional) <input type="text" name="reason"></label>
               <button class="b ghost" type="submit" {{ 'disabled' if lead.name in suppressed }}>Add to the do-not-contact list</button>
               <p class="small faint">Stops every email and keeps this company out of future drafts, even if it is scored again.</p></form>
-            <form method="post" action="/outreach/act" style="margin-top:18px"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="delete">
+            <form method="post" action="/outreach/act" style="margin-top:18px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="delete">
               <label class="check"><input type="checkbox" name="sure" value="1" required> I understand this cannot be undone</label>
               <button class="b pen" type="submit">Delete this lead and its data</button>
               <p class="small faint">Removes the score, contacts, news, emails and saved pages. The do-not-contact list is kept.</p></form>

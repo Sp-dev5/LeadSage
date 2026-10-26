@@ -10,7 +10,7 @@
 <section class="cols wide">
   <div class="pane">
     <header><div><h2>Profile</h2><h3>What the scorer reads</h3></div></header>
-    <form method="post" action="/icp" id="icp-form">
+    <form method="post" action="/icp" id="icp-form"><input type="hidden" name="csrf" value="{{ csrf }}">
       {% for field, label in fields.items() %}
       <label>{{ label }} <textarea name="{{ field }}" rows="{{ 5 if field == 'notes' else 3 }}" data-field="{{ field }}">{{ raw.get(field, '') }}</textarea></label>
       <div class="suggrow"><button class="linkish" type="button" data-suggest="{{ field }}">Suggest a fuller description</button><span class="small faint" data-status="{{ field }}" aria-live="polite"></span></div>
@@ -34,7 +34,7 @@
   </div>
   <div class="pane">
     <header><div><h2>Scoring</h2><h3>Plain numbers saved in icp.json. The model never sees them.</h3></div></header>
-    <form method="post" action="/icp/scoring" id="scoring-form">
+    <form method="post" action="/icp/scoring" id="scoring-form"><input type="hidden" name="csrf" value="{{ csrf }}">
       <table class="edit">
         <tr><th>Criterion</th><th class="r">Weight</th><th class="r">Share</th><th style="width:30%"></th></tr>
         {% for name, w, pct in weights %}
@@ -59,7 +59,7 @@
 
 <section class="pane" style="border-top:0">
   <header><div><h2>Rules</h2><h3>Applied after the facts are checked</h3></div></header>
-  <form method="post" action="/icp/rules" id="rules-form" data-facts="{{ facts | tojson | forceescape }}" data-labels="{{ labels | tojson | forceescape }}">
+  <form method="post" action="/icp/rules" id="rules-form" data-facts="{{ facts | tojson | forceescape }}" data-labels="{{ labels | tojson | forceescape }}"><input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="scroll"><table class="edit" id="rules-table">
       <tr><th>If fact</th><th>Is</th><th>Then</th><th>Why</th><th></th></tr>
       {% for r in raw.fact_rules %}
@@ -82,7 +82,7 @@
 
 <section class="pane" style="border-top:0">
   <header><div><h2>Industry, gates and sales roles</h2><h3>How the code scores industry, and which jobs count as sales hiring</h3></div></header>
-  <form method="post" action="/icp/match" id="match-form">
+  <form method="post" action="/icp/match" id="match-form"><input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="cols" style="border:0;gap:40px;align-items:start">
       <div>
         <p class="small muted" style="margin:0 0 10px">Industry score. The first row that matches what the company sells and who it sells to wins. Any matches everything.</p>
