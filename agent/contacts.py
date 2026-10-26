@@ -15,6 +15,7 @@ contact in.
 from __future__ import annotations
 
 from collections.abc import Callable
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,10 @@ from agent.fetch import Page, fetch_full_text, load_or_fetch, slug
 from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import ICP, quote_in
 from agent.signals import exact_match
+
+PARALLEL_PAGES = 3
+STAND_IN = re.compile(r"\b(assistant|to the|office of)\b", re.IGNORECASE)
+ELSEWHERE = re.compile(r"(?:@|\bat\s)\s*(.+)$", re.IGNORECASE)
 
 PAGES = Path(__file__).resolve().parent.parent / "data" / "pages"
 TYPED = "typed by rep"
@@ -82,8 +87,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def people_on_page(page: Page, icp: ICP) -> tuple[list[Contact], list[str]]:
-    """People the model finds on one page. A name or title not on the page is rejected."""
+def works_elsewhere(title: str, company: str) -> bool:
+    """A title that names another employer ("CDO @ Mastercard", "VP Data at Workday"): a customer
+    quoted on the company's site, not someone who works there."""
+    m = ELSEWHERE.search(title)
+    return bool(m and company and not m.group(1).strip().lower().startswith(company.strip().lower()))
+
+
+def holds_title(person: Contact, title: str) -> bool:
+    """The person has `title` themselves, not as someone's assistant ("Executive Assistant to the CEO")."""
+    return exact_match(person.title, [title]) and not STAND_IN.search(person.title)
+
+
+def people_on_page(page: Page, icp: ICP, company: str = "") -> tuple[list[Contact], list[str]]:
+    """People the model finds on one page. A name or title not on the page is rejected, and so is
+    anyone whose title names another employer."""
     seen = generate_structured(
         system=PEOPLE_PROMPT.format(persona=icp.buyer_persona),
         user_prompt=f"PAGE {page.url}\n{page.text}",
@@ -92,11 +110,13 @@ def people_on_page(page: Page, icp: ICP) -> tuple[list[Contact], list[str]]:
     )
     kept, rejected = [], []
     for p in seen.people:
-        if quote_in(p.name, page.text) and quote_in(p.title, page.text):
+        if not (quote_in(p.name, page.text) and quote_in(p.title, page.text)):
+            rejected.append(f"{p.name!r} ({p.title!r}): not on {page.url}")
+        elif works_elsewhere(p.title, company):
+            rejected.append(f"{p.name!r} ({p.title!r}): works at another company")
+        else:
             kept.append(Contact(name=p.name.strip(), title=p.title.strip(), matches_buyer=p.matches_buyer,
                                 source=page.url, fetched_at=page.fetched_at))
-        else:
-            rejected.append(f"{p.name!r} ({p.title!r}): not on {page.url}")
     return kept, rejected
 
 
@@ -109,13 +129,13 @@ def find_contact(name: str, url: str, icp: ICP, contact_pages: list[str], pages:
         return search
     urls = [urljoin(url, path) for path in contact_pages]
     files = [pages / f"{slug(name)}-{slug(path)}-full.json" for path in contact_pages]
-    with ThreadPoolExecutor(max_workers=min(6, len(urls))) as pool:
+    with ThreadPoolExecutor(max_workers=min(PARALLEL_PAGES, len(urls))) as pool:
         fetched = list(pool.map(lambda uf: load_or_fetch(uf[0], uf[1], fetch), zip(urls, files)))
     for page_url, page in zip(urls, fetched):
         search.pages_tried.append(page_url if page.ok else f"{page_url} ({page.error})")
         if not page.ok:
             continue
-        found, rejected = people_on_page(page, icp)
+        found, rejected = people_on_page(page, icp, name)
         known = {(p.name.lower(), p.title.lower()) for p in search.people}
         search.people += [p for p in found if (p.name.lower(), p.title.lower()) not in known]
         search.rejected += rejected
@@ -135,7 +155,7 @@ def startup_fallback(search: ContactSearch, headcount: int | None, max_headcount
     if search.contact or headcount is None or headcount > max_headcount:
         return search
     for title in titles:
-        if top := next((p for p in search.people if exact_match(p.title, [title])), None):
+        if top := next((p for p in search.people if holds_title(p, title)), None):
             return search.model_copy(update={"contact": top, "chosen_by": "startup_ceo"})
     return search
 
@@ -147,7 +167,7 @@ def closest_match(search: ContactSearch, titles: list[str]) -> ContactSearch:
     if search.contact:
         return search
     for title in titles:
-        if top := next((p for p in search.people if exact_match(p.title, [title])), None):
+        if top := next((p for p in search.people if holds_title(p, title)), None):
             return search.model_copy(update={"contact": top, "chosen_by": "closest"})
     return search
 

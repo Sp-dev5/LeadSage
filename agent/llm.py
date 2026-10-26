@@ -6,8 +6,9 @@ generate_structured, which asks a local open-source model running in Ollama.
 Swapping the model only touches this file.
 
 Needs `ollama serve` running. Optional OLLAMA_MODEL (default qwen3.5:9b),
-OLLAMA_SECOND_MODEL (default qwen3.5:4b, the second opinion) and OLLAMA_HOST (default http://127.0.0.1:11434),
-from the environment or .env.
+OLLAMA_SECOND_MODEL (default qwen3.5:4b, the second opinion), OLLAMA_SUGGEST_MODEL (default:
+the main model, so typing never makes Ollama swap models), OLLAMA_FALLBACK_MODEL (default: the
+other of the main and second models, asked once when a model crashes or answers badly) and OLLAMA_HOST (default http://127.0.0.1:11434), from the environment or .env.
 
 Writing that a person will read (email drafts) goes through generate_writing: with
 GROQ_API_KEY set it asks a larger model on Groq's free tier (GROQ_MODEL, default
@@ -20,15 +21,17 @@ and our own pitch.
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import time
 from functools import lru_cache
 from typing import NamedTuple, TypeVar
 
+import httpx
 import ollama
 import requests
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 load_dotenv()
 
@@ -45,6 +48,8 @@ GROQ_TEMPERATURE = 0.5
 GROQ_REASONING_EFFORT = "medium"
 
 T = TypeVar("T", bound=BaseModel)
+
+log = logging.getLogger(__name__)
 
 
 class Written(NamedTuple):
@@ -64,6 +69,17 @@ def second_model_name() -> str:
     return os.environ.get("OLLAMA_SECOND_MODEL", OLLAMA_DEFAULT_SECOND_MODEL)
 
 
+def fallback_model_name(model: str) -> str:
+    """The model asked when `model` fails: the other of the main and second models."""
+    if chosen := os.environ.get("OLLAMA_FALLBACK_MODEL"):
+        return chosen
+    return model_name() if model == second_model_name() else second_model_name()
+
+
+def suggest_model_name() -> str:
+    return os.environ.get("OLLAMA_SUGGEST_MODEL") or model_name()
+
+
 @lru_cache(maxsize=1)
 def _ollama_client(host: str) -> ollama.Client:
     return ollama.Client(host=host, timeout=OLLAMA_TIMEOUT)
@@ -74,19 +90,18 @@ JUDGE_TEMPERATURE = 0.0
 WRITE_TEMPERATURE = 0.4
 
 
-def generate_structured(system: str, user_prompt: str, schema: type[T], model: str | None = None,
-                        temperature: float = JUDGE_TEMPERATURE) -> T:
-    """Ask the model a question and get back clean, validated data (not prose).
+class OllamaUnreachable(RuntimeError):
+    """Ollama isn't running or can't be reached; another model wouldn't help."""
 
-    `schema` is a Pydantic model describing the shape we want back. Ollama is told
-    to return JSON matching it, and we hand back a validated instance. `model`
-    defaults to the main model. Reading facts and judging a lead run at temperature 0, so the
-    same text gives the same answer; writing keeps some variety so "write it again" differs.
-    """
+
+FALLBACK_ERRORS = (ollama.ResponseError, httpx.TimeoutException, ValidationError, RuntimeError)
+
+
+def _ask_ollama(system: str, user_prompt: str, schema: type[T], model: str, temperature: float) -> T:
     host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
     try:
         response = _ollama_client(host).chat(
-            model=model or model_name(),
+            model=model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
@@ -96,11 +111,40 @@ def generate_structured(system: str, user_prompt: str, schema: type[T], model: s
             think=False,
         )
     except ConnectionError as e:
-        raise RuntimeError(f"Could not reach Ollama at {host}. Is `ollama serve` running? ({e})") from e
+        raise OllamaUnreachable(f"Could not reach Ollama at {host}. Is `ollama serve` running? ({e})") from e
     raw = (response.message.content or "").strip()
     if not raw:
         raise RuntimeError("Model returned no usable output.")
     return schema.model_validate_json(raw)
+
+
+def generate_structured(system: str, user_prompt: str, schema: type[T], model: str | None = None,
+                        temperature: float = JUDGE_TEMPERATURE, used: list[str] | None = None) -> T:
+    """Ask the model a question and get back clean, validated data (not prose).
+
+    `schema` is a Pydantic model describing the shape we want back. Ollama is told
+    to return JSON matching it, and we hand back a validated instance. `model`
+    defaults to the main model. Reading facts and judging a lead run at temperature 0, so the
+    same text gives the same answer; writing keeps some variety so "write it again" differs.
+
+    If the model crashes, times out or answers with broken JSON, the question goes once to
+    the fallback model. Ollama being down is not retried. The model that answered is
+    appended to `used`, so a caller can say which one it was.
+    """
+    first = model or model_name()
+    try:
+        result, answered = _ask_ollama(system, user_prompt, schema, first, temperature), first
+    except OllamaUnreachable:
+        raise
+    except FALLBACK_ERRORS as e:
+        second = fallback_model_name(first)
+        if second == first:
+            raise
+        log.warning("%s failed (%s); asking %s instead", first, str(e)[:120], second)
+        result, answered = _ask_ollama(system, user_prompt, schema, second, temperature), second
+    if used is not None:
+        used.append(answered)
+    return result
 
 
 def cloud_model_id() -> str:

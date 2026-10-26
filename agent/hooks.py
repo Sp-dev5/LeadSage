@@ -29,6 +29,8 @@ from agent.fetch import Page, fetch_full_text, load_or_fetch, slug
 from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import quote_in
 
+PARALLEL_PAGES = 3
+
 PAGES = Path(__file__).resolve().parent.parent / "data" / "pages"
 CACHE_SECONDS = 24 * 3600
 PAGES_TO_READ = 2
@@ -149,7 +151,7 @@ def find_news(name: str, url: str, paths: list[str], max_age_days: int, pages: P
     today = today or date.today()
     urls = [urljoin(url, p) for p in paths]
     files = [pages / f"{slug(name)}-news-{slug(p)}-full.json" for p in paths]
-    with ThreadPoolExecutor(max_workers=min(6, len(urls))) as pool:
+    with ThreadPoolExecutor(max_workers=min(PARALLEL_PAGES, len(urls))) as pool:
         fetched = list(pool.map(lambda uf: _page(uf[0], uf[1], fetch), zip(urls, files)))
     readable = []
     for page_url, page in zip(urls, fetched):

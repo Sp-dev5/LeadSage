@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from agent import store
 from agent.contacts import Contact, ContactSearch, closest_match, find_contact, startup_fallback
-from agent.fetch import Page, slug
+from agent.fetch import Page, site_links, slug
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
 from agent.llm import generate_writing
 from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, quote_in
@@ -38,6 +38,8 @@ from agent.store import Citation, Email, StoredLead
 DATA = Path(__file__).resolve().parent.parent / "data"
 OUTREACH_PATH = DATA / "outreach.json"
 PAGES = DATA / "pages"
+CONTACT_LINK_WORDS = ("about", "team", "leadership", "people", "founders", "who-we-are")
+NEWS_LINK_WORDS = ("news", "press", "newsroom", "media", "announcements")
 
 
 class Example(BaseModel):
@@ -117,7 +119,9 @@ doing. If there is a HOOK, the first claim is about it. A second claim is option
 one only if it is about how they sell, who their customers are or that they hire for sales, \
 never about a product feature. One claim is enough. Without a HOOK, prefer a detail about \
 how they sell, who their customers are, or that they are hiring for sales: it is what links \
-them to us. Write to the reader in the second person, saying "you" and "your", never "the \
+them to us. Never tell them what their own product does, how many people use it or who trusts \
+it: they know that, and it reads like their own website read back to them. If nothing else \
+is in the text, say who their customers are. Write to the reader in the second person, saying "you" and "your", never "the \
 company" or their company's name as the subject ("Your platform lets reps see what they will \
 earn before a deal closes."). For each, first copy a quote of under 15 words \
 from COMPANY DETAILS, OPEN ROLES or RECENT NEWS, character for character, from one place in the text \
@@ -128,12 +132,15 @@ Use only details that are in the quote: no other names, places, numbers or dates
 the company's own words count: never quote WHAT WE SELL or RESEARCH.
 - pitch: one or two sentences about OUR product, and what it would change for their sales \
 team, linked to the detail in the claims. Describe what our product does in the words of \
-WHAT WE SELL and promise nothing else: no features, integrations, pilots, demos, trials \
+WHAT WE SELL and promise nothing else. Say what it does, never the label: don't write "AI" or "AI agent" or "agent", write "we research \
+the companies, check how well they fit and choose when to write" in your own plain words. Make it about the change for their reps, tied to the claim (a hire means new reps with no list; a launch means a busy quarter): no features, integrations, pilots, demos, trials \
 or results, and don't say it sends messages unless WHAT WE SELL says so. Their own product is never the pitch: don't describe it back to them, and \
 never criticise it. Never credit our product with a result their customers got from their \
 product. State no new facts about their company here.
 - ask: one short, low-pressure question that invites a reply and follows from what you \
-wrote. Make it specific to this company; never reuse a stock question. State no new facts \
+wrote. It is a question they can answer in a line about their own team or plans, never a request for a \
+meeting or call and never "would you be open to" or "interested in exploring". Make it specific \
+to this company; never reuse a stock question. State no new facts \
 about their company here: never describe how they sell from WHAT WE SELL or RESEARCH.
 
 Style:
@@ -482,6 +489,16 @@ def saved_contact(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PAT
     return _with_fallbacks(search, lead, cfg).contact if search else None
 
 
+def with_site_links(url: str, words: tuple[str, ...], paths: list[str]) -> list[str]:
+    """The pages the homepage itself links to (about, team, news...) first, then the usual
+    guesses, without repeats. Real links beat guessed paths, which often don't exist."""
+    out: list[str] = []
+    for path in (site_links(url, words) if url else []) + paths:
+        if path.rstrip("/").lower() not in (p.rstrip("/").lower() for p in out):
+            out.append(path)
+    return out
+
+
 def contact_for(lead: StoredLead, icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH,
                 refresh: bool = False) -> ContactSearch:
     """The saved contact search for a lead, or a new one from its website, with the fallbacks
@@ -489,7 +506,7 @@ def contact_for(lead: StoredLead, icp: ICP, cfg: OutreachConfig, db: Path = stor
     search = None if refresh else store.load_contacts(lead.name, db)
     fresh = search is None
     if fresh:
-        search = find_contact(lead.name, lead.url, icp, cfg.contact_pages)
+        search = find_contact(lead.name, lead.url, icp, with_site_links(lead.url, CONTACT_LINK_WORDS, cfg.contact_pages))
     chosen = _with_fallbacks(search, lead, cfg)
     if fresh or chosen is not search:
         store.save_contacts(lead.name, chosen, db)
@@ -505,7 +522,8 @@ def news_for(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH, re
         if age > timedelta(days=1):
             search = None
     if search is None:
-        search = find_news(lead.name, lead.url, cfg.news_pages, cfg.news_max_age_days)
+        search = find_news(lead.name, lead.url, with_site_links(lead.url, NEWS_LINK_WORDS, cfg.news_pages),
+                           cfg.news_max_age_days)
         store.save_news(lead.name, search, db)
     return search
 

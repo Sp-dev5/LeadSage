@@ -334,9 +334,11 @@ def fake_model(monkeypatch):
 
     asked, answers, temps = Asked(), {}, {}
 
-    def fake(system, user_prompt, schema, model=None, temperature=None):
+    def fake(system, user_prompt, schema, model=None, temperature=None, used=None):
         asked.append(schema)
         temps[schema] = temperature
+        if used is not None:
+            used.append(answers.get("answered_by", model or sl.model_name()))
         return answers[schema]
 
     monkeypatch.setattr(sl, "generate_structured", fake)
@@ -527,3 +529,15 @@ def test_non_profit_or_government_goes_to_review_not_disqualify(fake_model):
 def test_facts_prompt_counts_freelancers_as_businesses_and_asks_about_non_profits():
     assert "Freelancers, sole proprietors and creators" in sl.FACTS_PROMPT
     assert "non_profit_or_government" in sl.FACTS_PROMPT
+
+
+def test_a_lead_scored_by_the_fallback_model_says_so_and_stays_at_review(fake_model):
+    asked, answers = fake_model
+    answers[sl.CompanyFacts] = facts()
+    answers[sl.FitScores] = ratings((5, "Sells a CRM"), (5, "Sells a CRM"))
+    assert sl.score_lead(make_icp(), COMPANY).verdict == "qualify"
+    answers["answered_by"] = "stand-in:1b"
+    result = sl.score_lead(make_icp(), COMPANY)
+    assert result.model == f"stand-in:1b (fallback: {sl.model_name()} failed)"
+    assert any("stand-in:1b" in f for f in result.review_flags)
+    assert result.verdict != "qualify"

@@ -69,6 +69,102 @@
     });
   });
 
+  var scoring = document.getElementById("scoring-form");
+  if (scoring) {
+    var weightInputs = scoring.querySelectorAll("[data-weight]");
+    var shares = scoring.querySelectorAll("[data-share]");
+    var bars = scoring.querySelectorAll("[data-bar]");
+    var paintShares = function () {
+      var values = Array.prototype.map.call(weightInputs, function (i) { return Math.max(parseFloat(i.value) || 0, 0); });
+      var total = values.reduce(function (a, b) { return a + b; }, 0) || 1;
+      values.forEach(function (v, n) {
+        var pct = Math.round(100 * v / total);
+        shares[n].textContent = pct;
+        bars[n].style.width = pct + "%";
+      });
+    };
+    weightInputs.forEach(function (i) { i.addEventListener("input", paintShares); });
+  }
+
+  var rules = document.getElementById("rules-form");
+  if (rules) {
+    var facts = JSON.parse(rules.dataset.facts);
+    var table = document.getElementById("rules-table");
+    var fill = function (select, options, chosen) {
+      select.textContent = "";
+      options.forEach(function (o) {
+        var opt = document.createElement("option");
+        opt.value = o;
+        opt.textContent = o;
+        if (o === chosen) { opt.selected = true; }
+        select.appendChild(opt);
+      });
+    };
+    var cell = function (child) {
+      var td = document.createElement("td");
+      td.appendChild(child);
+      return td;
+    };
+    var pick = function (name, label) {
+      var select = document.createElement("select");
+      select.name = name;
+      select.setAttribute("aria-label", label);
+      return select;
+    };
+    var newRule = function () {
+      var tr = document.createElement("tr");
+      tr.setAttribute("data-rule", "");
+      var fact = pick("rule_fact", "Fact");
+      var value = pick("rule_value", "Value");
+      var action = pick("rule_action", "Then");
+      var why = document.createElement("input");
+      why.type = "text";
+      why.name = "rule_label";
+      why.required = true;
+      why.setAttribute("aria-label", "Why");
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "b ghost";
+      remove.setAttribute("data-remove-rule", "");
+      remove.textContent = "Remove";
+      fill(fact, Object.keys(facts), Object.keys(facts)[0]);
+      fill(value, facts[fact.value], null);
+      fill(action, ["review", "disqualify"], "review");
+      Array.prototype.forEach.call(action.options, function (o) { o.textContent = o.value.charAt(0).toUpperCase() + o.value.slice(1); });
+      var end = cell(remove);
+      end.className = "r";
+      [cell(fact), cell(value), cell(action), cell(why), end].forEach(function (td) { tr.appendChild(td); });
+      table.appendChild(tr);
+      why.focus();
+    };
+    rules.addEventListener("change", function (e) {
+      if (e.target.name === "rule_fact") {
+        fill(e.target.closest("tr").querySelector("[name=rule_value]"), facts[e.target.value], null);
+      }
+    });
+    rules.addEventListener("click", function (e) {
+      if (e.target.matches("[data-remove-rule]")) { e.target.closest("tr").remove(); }
+    });
+    document.getElementById("add-rule").addEventListener("click", newRule);
+  }
+
+  var match = document.getElementById("match-form");
+  if (match) {
+    var industry = document.getElementById("industry-table");
+    match.addEventListener("click", function (e) {
+      if (e.target.matches("[data-remove-row]")) { e.target.closest("tr").remove(); }
+    });
+    document.getElementById("add-industry").addEventListener("click", function () {
+      var rows = industry.querySelectorAll("tr[data-ind]");
+      if (!rows.length) { return; }
+      var row = rows[rows.length - 1].cloneNode(true);
+      row.querySelectorAll("select").forEach(function (s) { s.value = ""; });
+      row.querySelector("input").value = "0";
+      industry.appendChild(row);
+      row.querySelector("select").focus();
+    });
+  }
+
   var icp = document.getElementById("icp-form");
   if (icp) {
     var area = function (field) { return icp.querySelector("textarea[data-field='" + field + "']"); };

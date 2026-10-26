@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from agent.llm import WRITE_TEMPERATURE, generate_structured
+from agent.llm import WRITE_TEMPERATURE, generate_structured, suggest_model_name
 
 FIELDS = {
     "buyer_persona": (
@@ -91,12 +91,13 @@ def clean_titles(titles: list[str], draft: str) -> list[str]:
 def suggest(field: str, draft: str, context: dict[str, str]) -> str:
     """A fuller wording for `field` from the rep's `draft`, with the other fields as context."""
     result = generate_structured(system=SYSTEM, user_prompt=_prompt(field, draft, context), schema=Suggestion,
-                                 temperature=WRITE_TEMPERATURE)
+                                 model=suggest_model_name(), temperature=WRITE_TEMPERATURE)
     return _plain(result.text)
 
 
 def suggest_buyer(draft: str, context: dict[str, str]) -> tuple[str, list[str]]:
     """The buyer-persona wording plus other titles for the same role, from one model call."""
     result = generate_structured(system=SYSTEM + TITLES_RULES, user_prompt=_prompt("buyer_persona", draft, context),
-                                 schema=BuyerSuggestion, temperature=WRITE_TEMPERATURE)
+                                 schema=BuyerSuggestion, model=suggest_model_name(),
+                                 temperature=WRITE_TEMPERATURE)
     return _plain(result.text), clean_titles(result.titles, draft)
