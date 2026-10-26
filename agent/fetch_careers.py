@@ -62,7 +62,8 @@ def main() -> None:
     if not lead_file.exists():
         print(f"{lead_file.name} not found in data/. Create it with two columns: name,careers_url")
         sys.exit(1)
-    rows = list(csv.DictReader(lead_file.open(encoding="utf-8", newline="")))
+    with lead_file.open(encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
     if rows and not {"name", "careers_url"} <= rows[0].keys():
         print(f"{lead_file.name} needs the columns name,careers_url (found: {', '.join(rows[0])})")
         sys.exit(1)

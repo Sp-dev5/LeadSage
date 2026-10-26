@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from agent import store
+from agent import contacts, outreach, store
 from agent.store import Citation, Email
 from tests.test_outreach import CFG, COMPANY, SCORE
 from web import app as web_app
@@ -16,6 +16,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(views, "DB", db)
     monkeypatch.setattr(web_app, "load_outreach", lambda: CFG)
     monkeypatch.setattr(web_app, "PASSWORD", "")
+    monkeypatch.setattr(web_app, "forget_lead", lambda lead, db: outreach.forget_lead(
+        lead, db, tmp_path / "pages", tmp_path / "logos"))
     return TestClient(web_app.app)
 
 
@@ -257,3 +259,45 @@ def test_industry_save_refuses_bad_values(client, tmp_path, monkeypatch):
         r = client.post("/icp/match", data=base | change, follow_redirects=True)
         assert "Not saved" in r.text, change
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_opening_a_lead_never_writes_to_the_store(client):
+    seed()
+    ceo = contacts.Contact(name="Zed Khan", title="CEO", matches_buyer="no", source="https://acme.example/team",
+                           fetched_at="2026-10-24T00:00:00+00:00")
+    store.save_contacts("Acme", contacts.ContactSearch(people=[ceo], searched_at="t"), views.DB)
+    before = store.load_contacts("Acme", views.DB)
+    page = client.get("/outreach?lead=Acme").text
+    assert "Zed Khan" in page
+    assert store.load_contacts("Acme", views.DB) == before
+    assert before.contact is None
+
+
+def test_saving_the_ideal_customer_leaves_no_temporary_file(client, tmp_path, monkeypatch):
+    target = tmp_path / "icp.json"
+    target.write_text(web_app.ICP_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(web_app, "ICP_PATH", target)
+    r = client.post("/icp", data={"buyer_persona": "Head of Sales", "pain_solved": "p", "notes": "n",
+                                  "company_size_min": 10, "company_size_max": 500, "countries": ["India"]},
+                    follow_redirects=True)
+    assert "Saved." in r.text
+    assert '"buyer_persona": "Head of Sales"' in target.read_text(encoding="utf-8")
+    assert sorted(p.name for p in tmp_path.iterdir() if p.suffix == ".tmp") == []
+
+
+def test_sender_settings_keep_the_saved_limits_when_the_form_leaves_them_out(client, tmp_path, monkeypatch):
+    saved = []
+    monkeypatch.setattr(web_app, "save_outreach", saved.append)
+    r = client.post("/outreach/settings", data={"sender_name": "Sam", "sender_company": "LeadSage",
+                                                "sender_address": "1 Test Street", "opt_out_line": "Reply stop.",
+                                                "draft_verdicts": ["qualify"], "follow_up_days": "3, 7"},
+                    follow_redirects=True)
+    assert "saved" in r.text
+    assert (saved[0].max_words, saved[0].startup_max_headcount) == (CFG.max_words, CFG.startup_max_headcount)
+    assert saved[0].follow_up_days == [3, 7]
+
+
+@pytest.mark.parametrize("query, shown", [("min_fit=40", 1), ("min_fit=abc", 1), ("min_fit=95", 0)])
+def test_the_minimum_fit_filter_ignores_a_bad_value(client, query, shown):
+    seed(emails=False)
+    assert client.get(f"/leads.csv?group=All&{query}").text.count("Acme") == shown

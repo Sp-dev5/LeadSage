@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from agent import logos, store
-from agent.outreach import OutreachConfig, saved_contact
+from agent.outreach import OutreachConfig, with_fallbacks
 from agent.readiness import Readiness, funnel, held_back_by, readiness
 from agent.score_lead import _parse_headcount
 
@@ -39,10 +39,12 @@ class LeadRow(NamedTuple):
 
 
 def lead_rows(leads: list[store.StoredLead], cfg: OutreachConfig) -> list[LeadRow]:
+    all_emails, searches = store.load_all_emails(), store.load_all_contacts()
     rows = []
     for lead in leads:
-        emails = store.load_emails(lead.name)
-        contact = saved_contact(lead, cfg)
+        emails = all_emails.get(lead.name, [])
+        search = searches.get(lead.name)
+        contact = with_fallbacks(search, lead, cfg).contact if search else None
         rows.append(LeadRow(lead, emails, readiness(lead, emails, contact.name if contact else "", cfg)))
     return rows
 

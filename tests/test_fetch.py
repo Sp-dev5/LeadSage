@@ -31,6 +31,13 @@ class FakeResponse:
         if location:
             self.headers["Location"] = location
         self.url = url
+        self.closed = False
+
+    def iter_content(self, size):
+        yield self.content
+
+    def close(self):
+        self.closed = True
 
 
 @pytest.fixture
@@ -277,3 +284,141 @@ def test_site_links_needs_a_whole_word_not_part_of_a_product_name(monkeypatch, r
     assert fetch.site_links("https://acme.test/", ("about", "leadership", "management", "who-we-are")) == [
         "/solutions/expense-management", "/about-us", "/company/leadership-team", "/who-we-are"]
     assert fetch.site_links("https://acme.test/", ("about", "team")) == ["/about-us", "/company/leadership-team"]
+
+
+def resolve_to(monkeypatch, table: dict[str, list[str]]):
+    monkeypatch.setattr(fetch, "_resolve", lambda host: table.get(host, ["93.184.216.34"]))
+
+
+@pytest.mark.parametrize("address", [
+    "127.0.0.1", "10.0.0.5", "192.168.1.20", "172.16.0.9", "169.254.169.254",
+    "100.64.0.1", "0.0.0.0", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1"])
+def test_internal_addresses_are_never_downloaded(monkeypatch, address):
+    resolve_to(monkeypatch, {"intranet.test": [address]})
+    calls = fake_get(monkeypatch, FakeResponse(html_page(BODY)))
+    page = fetch.fetch_page("https://intranet.test/")
+    assert not page.ok and page.error == "internal address"
+    assert calls == []
+
+
+def test_a_host_with_one_internal_address_among_public_ones_is_refused(monkeypatch):
+    resolve_to(monkeypatch, {"mixed.test": ["93.184.216.34", "10.0.0.5"]})
+    calls = fake_get(monkeypatch, FakeResponse(html_page(BODY)))
+    assert fetch.fetch_page("https://mixed.test/").error == "internal address"
+    assert calls == []
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8000/", "http://169.254.169.254/latest/meta-data/", "http://[::1]/"])
+def test_ip_addresses_in_the_url_are_refused(monkeypatch, url):
+    monkeypatch.undo()
+    calls = fake_get(monkeypatch, FakeResponse(html_page(BODY)))
+    page = fetch.fetch_page(url)
+    assert not page.ok and page.error == "internal address"
+    assert calls == []
+
+
+def test_localhost_is_refused(monkeypatch):
+    monkeypatch.undo()
+    calls = fake_get(monkeypatch, FakeResponse(html_page(BODY)))
+    assert fetch.fetch_page("http://localhost/").error == "internal address"
+    assert calls == []
+
+
+def test_redirect_to_an_internal_address_is_not_followed(monkeypatch, robots_allow):
+    resolve_to(monkeypatch, {"metadata.test": ["169.254.169.254"]})
+    calls = fake_get(monkeypatch, responses=[
+        redirect("http://metadata.test/latest/meta-data/"), FakeResponse(html_page(BODY))])
+    page = fetch.fetch_page("https://acme.test/")
+    assert not page.ok and page.error == "redirect to an internal address"
+    assert calls == ["https://acme.test/"]
+
+
+def test_robots_redirect_to_an_internal_address_is_not_followed(monkeypatch):
+    resolve_to(monkeypatch, {"metadata.test": ["169.254.169.254"]})
+    calls = fake_get(monkeypatch, responses=[redirect("http://metadata.test/robots.txt")])
+    with pytest.raises(fetch._Refused):
+        fetch._allowed_by_robots("https://acme.test/")
+    assert calls == ["https://acme.test/robots.txt"]
+
+
+def test_robots_redirect_to_a_public_host_is_followed(monkeypatch):
+    allow = FakeResponse(b"", content_type="text/plain")
+    allow.text = "User-agent: *\nDisallow: /private"
+    calls = fake_get(monkeypatch, responses=[redirect("https://www.acme.test/robots.txt"), allow])
+    assert fetch._allowed_by_robots("https://acme.test/about")
+    assert calls == ["https://acme.test/robots.txt", "https://www.acme.test/robots.txt"]
+
+
+def test_a_host_that_does_not_resolve_still_reports_a_dead_site(monkeypatch, robots_allow):
+    monkeypatch.setattr(fetch, "_resolve", lambda host: [])
+    fake_get(monkeypatch, raises=requests.ConnectionError("no such domain"))
+    assert "could not connect" in fetch.fetch_page("https://no-such-company.test/").error
+
+
+class Streamed(FakeResponse):
+    """A response that hands out its body in pieces, and counts how many were taken."""
+
+    def __init__(self, pieces, **kw):
+        super().__init__(b"", **kw)
+        self.pieces, self.taken = pieces, 0
+
+    def iter_content(self, size):
+        for piece in self.pieces:
+            self.taken += 1
+            yield piece
+
+
+def test_a_page_declared_too_large_is_refused_without_reading_it(monkeypatch, robots_allow):
+    big = Streamed([b"x" * 10], content_type="text/html")
+    big.headers["Content-Length"] = str(fetch.MAX_PAGE_BYTES + 1)
+    fake_get(monkeypatch, big)
+    page = fetch.fetch_page("https://acme.test/")
+    assert not page.ok and page.error == "page too large"
+    assert big.taken == 0 and big.closed
+
+
+def test_a_page_that_grows_past_the_limit_is_cut_off_while_reading(monkeypatch, robots_allow):
+    monkeypatch.setattr(fetch, "MAX_PAGE_BYTES", 100)
+    endless = Streamed(iter(lambda: b"x" * 60, None), content_type="text/html")
+    fake_get(monkeypatch, endless)
+    page = fetch.fetch_page("https://acme.test/")
+    assert not page.ok and page.error == "page too large"
+    assert endless.taken == 2 and endless.closed
+
+
+def test_a_page_that_drips_in_too_slowly_is_cut_off(monkeypatch, robots_allow):
+    clock = iter([0, 1, fetch.MAX_DOWNLOAD_SECONDS + 5])
+    monkeypatch.setattr(fetch.time, "monotonic", lambda: next(clock))
+    slow = Streamed([b"a", b"b", b"c"], content_type="text/html")
+    fake_get(monkeypatch, slow)
+    page = fetch.fetch_page("https://acme.test/")
+    assert not page.ok and page.error == "page took too long to download"
+
+
+def test_an_image_over_the_logo_limit_is_refused_before_it_is_read(monkeypatch, robots_allow):
+    big = Streamed([b"x"], content_type="image/png")
+    big.headers["Content-Length"] = str(fetch.MAX_IMAGE_BYTES + 1)
+    fake_get(monkeypatch, big)
+    assert fetch.fetch_image("https://acme.test/logo.png") is None
+    assert big.taken == 0
+
+
+def test_a_small_image_is_returned(monkeypatch, robots_allow):
+    fake_get(monkeypatch, FakeResponse(b"\x89PNG", content_type="image/png"))
+    assert fetch.fetch_image("https://acme.test/logo.png") == (b"\x89PNG", "image/png")
+
+
+def test_a_huge_robots_file_is_refused(monkeypatch):
+    big = Streamed([b"x"], content_type="text/plain")
+    big.headers["Content-Length"] = str(fetch.MAX_ROBOTS_BYTES + 1)
+    fake_get(monkeypatch, big)
+    page = fetch.fetch_page("https://acme.test/")
+    assert not page.ok and page.error == "robots.txt too large"
+
+
+def test_redirect_responses_are_closed_so_connections_are_not_leaked(monkeypatch, robots_allow):
+    hop = redirect("https://acme.test/home")
+    fake_get(monkeypatch, responses=[hop, FakeResponse(html_page(BODY))])
+    assert fetch.fetch_page("https://acme.test/").ok
+    assert hop.closed

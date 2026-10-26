@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from agent import hooks, outreach, store
+from agent import fetch, hooks, outreach, store
 from agent.fetch import Page
 from agent.score_lead import Company, LeadScore
 from tests.test_outreach import CFG
@@ -130,7 +130,7 @@ def test_news_search_is_saved_and_reused_for_a_day(tmp_path, monkeypatch):
     def find(name, url, paths, max_age_days):
         calls.append(name)
         return hooks.NewsSearch(items=[news("Acme raises 10 million", "funding", "2026-10-20")],
-                                searched_at=hooks._now())
+                                searched_at=fetch.now())
 
     monkeypatch.setattr(outreach, "find_news", find)
     first = outreach.news_for(lead, CFG, db)
@@ -145,6 +145,6 @@ def test_a_news_search_older_than_a_day_is_redone(tmp_path, monkeypatch):
     lead = make_lead(db)
     store.save_news("Acme", hooks.NewsSearch(searched_at="2026-01-01T00:00:00+00:00"), db)
     calls = []
-    monkeypatch.setattr(outreach, "find_news", lambda *a: calls.append(a) or hooks.NewsSearch(searched_at=hooks._now()))
+    monkeypatch.setattr(outreach, "find_news", lambda *a: calls.append(a) or hooks.NewsSearch(searched_at=fetch.now()))
     outreach.news_for(lead, CFG, db)
     assert len(calls) == 1

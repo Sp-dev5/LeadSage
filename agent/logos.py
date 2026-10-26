@@ -48,7 +48,7 @@ def icon_urls(html: str, base: str) -> list[str]:
 
 
 def logo_path(name: str, logos: Path = LOGOS) -> Path | None:
-    return next(iter(sorted(logos.glob(f"{slug(name)}.*"))), None) if logos.exists() else None
+    return min(logos.glob(f"{slug(name)}.*"), default=None)
 
 
 def fetch_logo(name: str, url: str, logos: Path = LOGOS) -> Path | None:

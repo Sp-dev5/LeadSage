@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent import evaluate
+from agent import pipeline
 from agent.fetch import Page
 
 TYPED = "Acme builds billing software for logistics companies."
@@ -31,27 +31,27 @@ def fetch_calls(monkeypatch):
         calls.append(url)
         return calls.result or page()
 
-    monkeypatch.setattr(evaluate, "fetch_page", fake)
+    monkeypatch.setattr(pipeline, "fetch_page", fake)
     return calls
 
 
 def test_no_url_uses_typed_and_never_fetches(tmp_path, fetch_calls):
-    assert evaluate._lead_description(row(url=""), "fetched", tmp_path) == (TYPED, "typed")
+    assert pipeline.lead_text(row(url=""), "fetched", tmp_path) == (TYPED, "typed")
     assert fetch_calls == []
 
 
 def test_typed_mode_never_fetches(tmp_path, fetch_calls):
-    assert evaluate._lead_description(row(), "typed", tmp_path) == (TYPED, "typed")
+    assert pipeline.lead_text(row(), "typed", tmp_path) == (TYPED, "typed")
     assert fetch_calls == []
 
 
 def test_csv_without_url_column_uses_typed(tmp_path, fetch_calls):
     no_url = {"name": "Acme Co.", "description": TYPED}
-    assert evaluate._lead_description(no_url, "fetched", tmp_path) == (TYPED, "typed")
+    assert pipeline.lead_text(no_url, "fetched", tmp_path) == (TYPED, "typed")
 
 
 def test_fetch_ok_uses_page_and_caches_it(tmp_path, fetch_calls):
-    assert evaluate._lead_description(row(), "fetched", tmp_path) == (FETCHED, "fetched")
+    assert pipeline.lead_text(row(), "fetched", tmp_path) == (FETCHED, "fetched")
     assert fetch_calls == ["https://acme.test/"]
     cached = tmp_path / "acme-co.json"
     assert Page.model_validate_json(cached.read_text(encoding="utf-8")).text == FETCHED
@@ -59,18 +59,18 @@ def test_fetch_ok_uses_page_and_caches_it(tmp_path, fetch_calls):
 
 def test_cached_page_is_reused(tmp_path, fetch_calls):
     (tmp_path / "acme-co.json").write_text(page().model_dump_json(), encoding="utf-8")
-    assert evaluate._lead_description(row(), "fetched", tmp_path) == (FETCHED, "fetched")
+    assert pipeline.lead_text(row(), "fetched", tmp_path) == (FETCHED, "fetched")
     assert fetch_calls == []
 
 
 def test_refetch_ignores_cache(tmp_path, fetch_calls):
     stale = page().model_copy(update={"text": "old text"})
     (tmp_path / "acme-co.json").write_text(stale.model_dump_json(), encoding="utf-8")
-    assert evaluate._lead_description(row(), "fetched", tmp_path, refetch=True) == (FETCHED, "fetched")
+    assert pipeline.lead_text(row(), "fetched", tmp_path, refetch=True) == (FETCHED, "fetched")
     assert fetch_calls == ["https://acme.test/"]
 
 
 def test_fetch_failure_falls_back_to_typed_and_is_not_cached(tmp_path, fetch_calls):
     fetch_calls.result = page(ok=False)
-    assert evaluate._lead_description(row(), "fetched", tmp_path) == (TYPED, "typed (fetch failed)")
+    assert pipeline.lead_text(row(), "fetched", tmp_path) == (TYPED, "typed (fetch failed)")
     assert not (tmp_path / "acme-co.json").exists()

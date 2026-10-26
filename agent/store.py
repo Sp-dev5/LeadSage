@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
 
 from agent.contacts import ContactSearch
+from agent.fetch import now
 from agent.hooks import NewsSearch
 from agent.score_lead import Company, LeadScore
 
@@ -99,13 +99,13 @@ class Email(BaseModel):
     edited: bool = False
 
 
-def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 def _connect(path: Path) -> sqlite3.Connection:
+    """Open the store. secure_delete makes SQLite overwrite deleted or replaced rows with zeros;
+    without it the old text stays in the file until the space is reused, so a deleted company
+    could still be read back from data/leadsage.db."""
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA secure_delete = ON")
     conn.executescript(SCHEMA)
     return conn
 
@@ -225,6 +225,13 @@ def load_contacts(lead: str, path: Path = DB_PATH) -> ContactSearch | None:
     return ContactSearch.model_validate_json(r["search"]) if r else None
 
 
+def load_all_contacts(path: Path = DB_PATH) -> dict[str, ContactSearch]:
+    """Every saved contact search in one query: company name -> its search."""
+    with closing(_connect(path)) as conn:
+        rows = conn.execute("SELECT lead, search FROM contacts").fetchall()
+    return {r["lead"]: ContactSearch.model_validate_json(r["search"]) for r in rows}
+
+
 def save_news(lead: str, search: NewsSearch, path: Path = DB_PATH) -> None:
     with closing(_connect(path)) as conn, conn:
         conn.execute("INSERT INTO news (lead, search) VALUES (?, ?) "
@@ -250,12 +257,23 @@ def _put_email(conn: sqlite3.Connection, lead: str, email: Email) -> None:
 
 
 def _email(conn: sqlite3.Connection, lead: str, step: int) -> Email | None:
-    return next((e for e in _emails(conn, lead) if e.step == step), None)
+    r = conn.execute("SELECT email FROM emails WHERE lead = ? AND step = ?", (lead, step)).fetchone()
+    return Email.model_validate_json(r["email"]) if r else None
 
 
 def load_emails(lead: str, path: Path = DB_PATH) -> list[Email]:
     with closing(_connect(path)) as conn:
         return _emails(conn, lead)
+
+
+def load_all_emails(path: Path = DB_PATH) -> dict[str, list[Email]]:
+    """Every lead's emails in step order, in one query: company name -> its emails."""
+    with closing(_connect(path)) as conn:
+        rows = conn.execute("SELECT lead, email FROM emails ORDER BY lead, step").fetchall()
+    grouped: dict[str, list[Email]] = {}
+    for r in rows:
+        grouped.setdefault(r["lead"], []).append(Email.model_validate_json(r["email"]))
+    return grouped
 
 
 def save_email(lead: str, email: Email, path: Path = DB_PATH) -> None:

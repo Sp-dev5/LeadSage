@@ -6,6 +6,7 @@ import streamlit as st
 from pydantic import ValidationError
 
 import app_ui as ui
+from agent.files import write_text_atomic
 from agent.icp_assist import suggest
 from agent.score_lead import ICP, ICP_PATH
 
@@ -73,7 +74,7 @@ if saved:
         except ValidationError as e:
             st.error(f"Not saved: {e.errors()[0]['msg']}", icon=":material/error:")
         else:
-            ICP_PATH.write_text(json.dumps(new, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            write_text_atomic(ICP_PATH, json.dumps(new, indent=2, ensure_ascii=False) + "\n")
             st.success("Saved. Rescore the leads to apply it.", icon=":material/check_circle:")
 
 s = raw["settings"]
