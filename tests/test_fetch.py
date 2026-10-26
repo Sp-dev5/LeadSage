@@ -422,3 +422,13 @@ def test_redirect_responses_are_closed_so_connections_are_not_leaked(monkeypatch
     fake_get(monkeypatch, responses=[hop, FakeResponse(html_page(BODY))])
     assert fetch.fetch_page("https://acme.test/").ok
     assert hop.closed
+
+
+def test_site_links_skips_product_pages_that_only_start_with_people_or_team(monkeypatch, robots_allow):
+    body = """<a href="/people-finance">Finance</a><a href="/people-os">HR</a><a href="/team-playbook">Play</a>
+    <a href="/our-team">Our team</a><a href="/about/people">People</a><a href="/company/leadership-team">Lead</a>"""
+    page = FakeResponse(body.encode(), url="https://acme.test/")
+    page.text = body
+    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: page)
+    assert fetch.site_links("https://acme.test/", ("team", "people", "leadership")) == [
+        "/our-team", "/about/people", "/company/leadership-team"]
