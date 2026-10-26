@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}LeadSage{% endblock %}</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="preload" href="/static/fonts/instrument-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/app.css">
+<script>try { if (localStorage.getItem("motion") === "on") document.documentElement.setAttribute("data-motion", "on"); } catch (e) {}</script>
+</head>
+<body>
+<div class="drift" aria-hidden="true"><i style="--x:1vw;--t:46s;--d:-8s;--w:56px"></i><i class="p" style="--x:3.4vw;--t:58s;--d:-31s;--w:34px"></i><i style="--x:0.7vw;--t:40s;--d:-19s;--w:70px"></i><i style="--x:4.4vw;--t:52s;--d:-44s;--w:26px"></i><i class="p" style="--x:2.2vw;--t:62s;--d:-3s;--w:16px"></i><i style="--x:3.8vw;--t:44s;--d:-26s;--w:48px"></i><i style="--x:96vw;--t:50s;--d:-14s;--w:60px"></i><i class="p" style="--x:94.8vw;--t:42s;--d:-37s;--w:16px"></i><i style="--x:97.6vw;--t:60s;--d:-22s;--w:40px"></i><i style="--x:95.4vw;--t:48s;--d:-5s;--w:72px"></i><i class="p" style="--x:98.4vw;--t:56s;--d:-48s;--w:16px"></i><i style="--x:95vw;--t:38s;--d:-29s;--w:30px"></i></div>
+<div class="nb">
+  <header class="top">
+    <a class="mark" href="/" aria-label="LeadSage home"><i>L</i><span>LeadSage</span></a>
+    <nav class="nav" aria-label="Pages">
+      <a href="/" class="{{ 'on' if nav == 'home' }}">Home</a>
+      <a href="/leads" class="{{ 'on' if nav == 'leads' }}">Leads</a>
+      <a href="/outreach" class="{{ 'on' if nav == 'outreach' }}">Outreach</a>
+      <a href="/icp" class="{{ 'on' if nav == 'icp' }}">Ideal customer</a>
+    </nav>
+    <div class="act">
+      {% if password_set %}<form method="post" action="/logout"><button class="out" type="submit">Log out</button></form>{% endif %}
+      <a class="go" href="/outreach?queue=Ready+to+review">Review drafts &rarr;</a>
+    </div>
+  </header>
+
+  {% if flash %}<div class="flash {{ flash[0] }}" role="status"><b>{{ 'Done' if flash[0] == 'ok' else 'Problem' }}</b><span>{{ flash[1] }}</span></div>{% endif %}
+
+  {% if job %}
+  <section class="job" data-job="{{ job.id }}">
+    <header><h3><span data-job-title>{{ job.title }}</span><span class="dots" data-job-dots></span></h3>
+      <span class="pill" data-job-state>Running</span></header>
+    <pre data-job-log>{{ job.lines | join('\n') }}</pre>
+  </section>
+  {% endif %}
+
+  {% block body %}{% endblock %}
+</div>
+<footer class="foot">
+  <span>Nothing is sent from this app. You send from your own mailbox.</span>
+  <button type="button" class="motion-toggle" id="motion" hidden>Play animations</button>
+  <span>{{ now.strftime('%d %b %Y') }}</span>
+</footer>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

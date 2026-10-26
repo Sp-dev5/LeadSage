@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Ideal customer · LeadSage{% endblock %}
+{% block body %}
+<section class="pagehead">
+  <div class="t"><p class="kick">Setup · saved in data/icp.json</p>
+    <h1>Ideal customer</h1>
+    <p class="lede">Who you sell to. Every lead is scored against this profile. After a change, rescore the leads to apply it.</p></div>
+</section>
+
+<section class="cols wide">
+  <div class="pane">
+    <header><div><h2>Profile</h2><h3>What the scorer reads</h3></div></header>
+    <form method="post" action="/icp" id="icp-form">
+      {% for field, label in fields.items() %}
+      <label>{{ label }} <textarea name="{{ field }}" rows="{{ 5 if field == 'notes' else 3 }}" data-field="{{ field }}">{{ raw.get(field, '') }}</textarea></label>
+      <div class="suggrow"><button class="linkish" type="button" data-suggest="{{ field }}">Suggest a fuller description</button><span class="small faint" data-status="{{ field }}" aria-live="polite"></span></div>
+      <div class="sugg" data-sugg="{{ field }}" hidden><h3 style="margin-bottom:8px">Suggestion from the local model</h3><p></p>
+        <div class="row-btns"><button class="b" type="button" data-use="{{ field }}">Use this</button><button class="b ghost" type="button" data-dismiss="{{ field }}">Dismiss</button></div></div>
+      {% if field == 'buyer_persona' %}<div class="titles" data-titles="{{ field }}" hidden><span class="small faint">Other titles for this role. Click one to add it to your text.</span><div></div></div>{% endif %}
+      {% endfor %}
+      <div class="cols" style="border:0;gap:16px">
+        <label>Smallest company, employees <input type="number" name="company_size_min" min="1" value="{{ raw.company_size_min }}"></label>
+        <label>Largest company, employees <input type="number" name="company_size_max" min="1" value="{{ raw.company_size_max }}"></label>
+      </div>
+      <label>Target countries</label>
+      <div class="chips" data-chips style="margin:-6px 0 6px">
+        {% for c in raw.geography_countries %}<span>{{ c }}<button type="button" aria-label="Remove {{ c }}">×</button><input type="hidden" name="countries" value="{{ c }}"></span>{% endfor %}
+        <input type="text" list="country-list" placeholder="Add a country" aria-label="Add a country">
+      </div>
+      <datalist id="country-list">{% for c in countries %}<option value="{{ c }}">{% endfor %}</datalist>
+      <p class="small faint" style="margin:0 0 18px">Sets the "only my ideal-customer region" filter on the Leads page. Never scored.</p>
+      <button class="b" type="submit">Save</button>
+    </form>
+  </div>
+  <div class="pane">
+    <header><div><h2>Scoring</h2><h3>Plain numbers in icp.json. The model never sees them.</h3></div></header>
+    <table>
+      <tr><th>Criterion</th><th class="r">Weight</th><th style="width:45%"></th></tr>
+      {% for name, w, pct, rel in weights %}
+      <tr><td>{{ name | capitalize }}</td><td class="r num">{{ pct }}%</td><td><div class="track" style="margin:0"><i style="width:{{ rel }}%"></i></div></td></tr>
+      {% endfor %}
+    </table>
+    <table style="margin-top:26px">
+      <tr><th>Cut-off</th><th class="r">Value</th></tr>
+      {% for label, value in cutoffs %}<tr><td class="small">{{ label }}</td><td class="r num">{{ value }}</td></tr>{% endfor %}
+    </table>
+  </div>
+</section>
+
+<section class="pane" style="border-top:0">
+  <header><div><h2>Rules</h2><h3>Applied after the facts are checked</h3></div></header>
+  <div class="scroll"><table>
+    <tr><th>If</th><th>Then</th><th>Why</th></tr>
+    {% for r in raw.fact_rules %}<tr><td class="mono small">{{ r.fact }} = {{ r.value }}</td>
+      <td>{% if r.action == 'disqualify' %}<span class="tag cut">Disqualify</span>{% else %}<span class="pill">{{ r.action | capitalize }}</span>{% endif %}</td>
+      <td class="small muted">{{ r.label }}</td></tr>{% endfor %}
+  </table></div>
+</section>
+{% endblock %}
