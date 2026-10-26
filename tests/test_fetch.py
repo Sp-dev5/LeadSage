@@ -1,4 +1,4 @@
-"""Fetcher tests. No real network: requests.get and the robots check are faked."""
+"""Fetcher tests. No real network: the HTTP get and the robots check are faked."""
 
 from urllib.parse import urlsplit
 
@@ -66,7 +66,7 @@ def fake_get(monkeypatch, response=None, raises=None, responses=None):
             raise raises
         return queue.pop(0) if queue is not None else response
 
-    monkeypatch.setattr(fetch.requests, "get", get)
+    monkeypatch.setattr(fetch, "_http_get", get)
     return calls
 
 
@@ -247,7 +247,7 @@ HOME_LINKS = b"""<html><body><nav>
 def test_site_links_keeps_same_site_pages_that_name_the_words(monkeypatch, robots_allow):
     page = FakeResponse(HOME_LINKS, url="https://acme.test/")
     page.text = HOME_LINKS.decode()
-    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: page)
+    monkeypatch.setattr(fetch, "_http_get", lambda *a, **k: page)
     assert fetch.site_links("https://acme.test/", ("about", "team")) == ["/company/about-us", "/our-team"]
     assert fetch.site_links("https://acme.test/", ("news", "press", "newsroom")) == ["/newsroom"]
 
@@ -261,14 +261,14 @@ def test_a_rate_limited_page_is_tried_once_more_after_a_wait(monkeypatch, robots
     replies = [FakeResponse(status_code=429), FakeResponse(html_page(BODY))]
     replies[0].headers["Retry-After"] = "120"
     waits = []
-    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: replies.pop(0))
+    monkeypatch.setattr(fetch, "_http_get", lambda *a, **k: replies.pop(0))
     monkeypatch.setattr(fetch.time, "sleep", waits.append)
     assert fetch.fetch_page("https://acme.test/about").ok
     assert waits == [fetch.RATE_LIMIT_WAIT]
 
 
 def test_a_page_still_rate_limited_after_the_wait_is_reported(monkeypatch, robots_allow):
-    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: FakeResponse(status_code=429))
+    monkeypatch.setattr(fetch, "_http_get", lambda *a, **k: FakeResponse(status_code=429))
     monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
     page = fetch.fetch_page("https://acme.test/about")
     assert not page.ok and page.error == "HTTP 429"
@@ -280,7 +280,7 @@ def test_site_links_needs_a_whole_word_not_part_of_a_product_name(monkeypatch, r
     <a href="/blog/2025/teams-we-love">Deep</a><a href="/who-we-are">Who</a>"""
     page = FakeResponse(body.encode(), url="https://acme.test/")
     page.text = body
-    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: page)
+    monkeypatch.setattr(fetch, "_http_get", lambda *a, **k: page)
     assert fetch.site_links("https://acme.test/", ("about", "leadership", "management", "who-we-are")) == [
         "/solutions/expense-management", "/about-us", "/company/leadership-team", "/who-we-are"]
     assert fetch.site_links("https://acme.test/", ("about", "team")) == ["/about-us", "/company/leadership-team"]
@@ -429,6 +429,29 @@ def test_site_links_skips_product_pages_that_only_start_with_people_or_team(monk
     <a href="/our-team">Our team</a><a href="/about/people">People</a><a href="/company/leadership-team">Lead</a>"""
     page = FakeResponse(body.encode(), url="https://acme.test/")
     page.text = body
-    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: page)
+    monkeypatch.setattr(fetch, "_http_get", lambda *a, **k: page)
     assert fetch.site_links("https://acme.test/", ("team", "people", "leadership")) == [
         "/our-team", "/about/people", "/company/leadership-team"]
+
+
+def test_a_name_that_turns_internal_at_connect_time_is_refused(monkeypatch):
+    answers = iter([["93.184.216.34"], ["169.254.169.254"]])
+    monkeypatch.setattr(fetch, "_resolve", lambda host: next(answers))
+    fetch._require_public("http://rebind.test/", "internal address")
+    with pytest.raises(fetch._Refused, match="internal address"):
+        fetch.PUBLIC_WEB.get("http://rebind.test/latest/meta-data/", timeout=1)
+
+
+def test_the_connection_goes_to_the_address_that_was_checked(monkeypatch):
+    dialled = []
+    monkeypatch.setattr(fetch, "_resolve", lambda host: ["93.184.216.34"])
+    monkeypatch.setattr(fetch, "create_connection", lambda address, *a, **k: dialled.append(address) or "socket")
+    assert fetch._connect_public("acme.test", 443, 5, None, None) == "socket"
+    assert dialled == [("93.184.216.34", 443)]
+
+
+def test_a_mixed_answer_is_refused_before_dialling(monkeypatch):
+    monkeypatch.setattr(fetch, "_resolve", lambda host: ["93.184.216.34", "127.0.0.1"])
+    monkeypatch.setattr(fetch, "create_connection", lambda *a, **k: pytest.fail("dialled"))
+    with pytest.raises(fetch._Refused):
+        fetch._connect_public("acme.test", 80, 5, None, None)

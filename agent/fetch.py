@@ -28,6 +28,10 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.connection import HTTPConnection, HTTPSConnection
+from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
+from urllib3.util.connection import create_connection
 import trafilatura
 from protego import Protego
 from pydantic import BaseModel
@@ -98,6 +102,62 @@ def _require_public(url: str, reason: str) -> None:
         raise _Refused(reason)
 
 
+def _connect_public(host: str, port: int, timeout, source_address, socket_options):
+    """Open the socket to an address checked here, at connect time. The name is looked up once
+    and only a public address is dialled, so a DNS server that answers "public" for the first
+    check and "internal" a moment later (DNS rebinding) can't steer the request inside."""
+    addresses = _resolve(host)
+    if not addresses:
+        raise _Refused("host does not resolve")
+    if not all(_is_public(address) for address in addresses):
+        raise _Refused("internal address")
+    error: OSError | None = None
+    for address in addresses:
+        try:
+            return create_connection((address, port), timeout, source_address=source_address,
+                                     socket_options=socket_options)
+        except OSError as e:
+            error = e
+    raise error
+
+
+class _PublicHTTPConnection(HTTPConnection):
+    def _new_conn(self):
+        return _connect_public(self._dns_host, self.port, self.timeout, self.source_address, self.socket_options)
+
+
+class _PublicHTTPSConnection(HTTPSConnection):
+    def _new_conn(self):
+        return _connect_public(self._dns_host, self.port, self.timeout, self.source_address, self.socket_options)
+
+
+class _PublicHTTPPool(HTTPConnectionPool):
+    ConnectionCls = _PublicHTTPConnection
+
+
+class _PublicHTTPSPool(HTTPSConnectionPool):
+    ConnectionCls = _PublicHTTPSConnection
+
+
+class _PublicOnly(HTTPAdapter):
+    """Every connection the fetcher opens goes to an address checked at that moment. The name
+    stays the one the site gave, so HTTPS still checks the certificate against it."""
+
+    def init_poolmanager(self, *args, **kwargs):
+        super().init_poolmanager(*args, **kwargs)
+        self.poolmanager.pool_classes_by_scheme = {"http": _PublicHTTPPool, "https": _PublicHTTPSPool}
+
+
+PUBLIC_WEB = requests.Session()
+PUBLIC_WEB.trust_env = False
+PUBLIC_WEB.mount("http://", _PublicOnly())
+PUBLIC_WEB.mount("https://", _PublicOnly())
+
+
+def _http_get(url: str, **kwargs) -> requests.Response:
+    return PUBLIC_WEB.get(url, **kwargs)
+
+
 def _read_capped(resp: requests.Response, max_bytes: int, what: str = "page") -> None:
     """Read a streamed response into `resp`, refusing one that is declared or turns out bigger than
     `max_bytes`, or that takes longer than MAX_DOWNLOAD_SECONDS, so one hostile site can't fill the
@@ -131,7 +191,7 @@ def _allowed_by_robots(url: str) -> bool:
     parts = urlsplit(url)
     robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
     for _ in range(MAX_REDIRECTS + 1):
-        resp = requests.get(robots_url, headers={"User-Agent": USER_AGENT},
+        resp = _http_get(robots_url, headers={"User-Agent": USER_AGENT},
                             timeout=TIMEOUT, allow_redirects=False, stream=True)
         location = resp.headers.get("Location")
         if resp.status_code not in REDIRECT_CODES or not location:
@@ -173,7 +233,7 @@ def _get(url: str, max_bytes: int | None = None) -> tuple[requests.Response, str
     redirects = 0
     waited = False
     while True:
-        resp = requests.get(current, headers={"User-Agent": USER_AGENT},
+        resp = _http_get(current, headers={"User-Agent": USER_AGENT},
                             timeout=TIMEOUT, allow_redirects=False, stream=True)
         if resp.status_code == 429 and not waited:
             waited = True
