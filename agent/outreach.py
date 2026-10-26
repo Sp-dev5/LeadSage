@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from agent import store
 from agent.contacts import Contact, ContactSearch, closest_match, find_contact, startup_fallback
-from agent.fetch import Page, slug
+from agent.fetch import Page, site_links, slug
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
 from agent.llm import generate_writing
 from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, quote_in
@@ -38,6 +38,8 @@ from agent.store import Citation, Email, StoredLead
 DATA = Path(__file__).resolve().parent.parent / "data"
 OUTREACH_PATH = DATA / "outreach.json"
 PAGES = DATA / "pages"
+CONTACT_LINK_WORDS = ("about", "team", "leadership", "people", "founders", "management", "who-we-are")
+NEWS_LINK_WORDS = ("news", "press", "newsroom", "media", "announcements")
 
 
 class Example(BaseModel):
@@ -482,6 +484,16 @@ def saved_contact(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PAT
     return _with_fallbacks(search, lead, cfg).contact if search else None
 
 
+def with_site_links(url: str, words: tuple[str, ...], paths: list[str]) -> list[str]:
+    """The pages the homepage itself links to (about, team, news...) first, then the usual
+    guesses, without repeats. Real links beat guessed paths, which often don't exist."""
+    out: list[str] = []
+    for path in (site_links(url, words) if url else []) + paths:
+        if path.rstrip("/").lower() not in (p.rstrip("/").lower() for p in out):
+            out.append(path)
+    return out
+
+
 def contact_for(lead: StoredLead, icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH,
                 refresh: bool = False) -> ContactSearch:
     """The saved contact search for a lead, or a new one from its website, with the fallbacks
@@ -489,7 +501,7 @@ def contact_for(lead: StoredLead, icp: ICP, cfg: OutreachConfig, db: Path = stor
     search = None if refresh else store.load_contacts(lead.name, db)
     fresh = search is None
     if fresh:
-        search = find_contact(lead.name, lead.url, icp, cfg.contact_pages)
+        search = find_contact(lead.name, lead.url, icp, with_site_links(lead.url, CONTACT_LINK_WORDS, cfg.contact_pages))
     chosen = _with_fallbacks(search, lead, cfg)
     if fresh or chosen is not search:
         store.save_contacts(lead.name, chosen, db)
@@ -505,7 +517,8 @@ def news_for(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH, re
         if age > timedelta(days=1):
             search = None
     if search is None:
-        search = find_news(lead.name, lead.url, cfg.news_pages, cfg.news_max_age_days)
+        search = find_news(lead.name, lead.url, with_site_links(lead.url, NEWS_LINK_WORDS, cfg.news_pages),
+                           cfg.news_max_age_days)
         store.save_news(lead.name, search, db)
     return search
 

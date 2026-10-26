@@ -120,3 +120,73 @@ def test_strict_schema_closes_every_object_including_nested_ones():
     assert strict["additionalProperties"] is False and strict["required"] == ["subject", "claims"]
     assert strict["$defs"]["Inner"]["additionalProperties"] is False
     assert "additionalProperties" not in Draft.model_json_schema()
+
+
+class Fact(BaseModel):
+    value: str
+
+
+class OllamaReply:
+    def __init__(self, content):
+        self.message = type("M", (), {"content": content})()
+
+
+@pytest.fixture
+def ollama_calls(monkeypatch):
+    """Fake Ollama: `plan` maps a model to what it does (an exception or reply text); `calls` lists models asked."""
+    calls, plan = [], {}
+
+    class Client:
+        def chat(self, model, **kw):
+            calls.append(model)
+            outcome = plan[model]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return OllamaReply(outcome)
+
+    monkeypatch.setattr(llm, "_ollama_client", lambda host: Client())
+    for name in ("OLLAMA_MODEL", "OLLAMA_SECOND_MODEL", "OLLAMA_FALLBACK_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    return calls, plan
+
+
+def test_a_crashed_model_falls_back_once_and_says_which_answered(ollama_calls):
+    calls, plan = ollama_calls
+    plan["qwen3.5:9b"] = llm.ollama.ResponseError("CUDA error", 500)
+    plan["qwen3.5:4b"] = '{"value": "yes"}'
+    used = []
+    assert llm.generate_structured("s", "u", Fact, used=used).value == "yes"
+    assert calls == ["qwen3.5:9b", "qwen3.5:4b"] and used == ["qwen3.5:4b"]
+
+
+def test_broken_json_falls_back_and_the_second_model_falls_back_to_the_main(ollama_calls):
+    calls, plan = ollama_calls
+    plan["qwen3.5:4b"] = "not json"
+    plan["qwen3.5:9b"] = '{"value": "no"}'
+    assert llm.generate_structured("s", "u", Fact, model="qwen3.5:4b").value == "no"
+    assert calls == ["qwen3.5:4b", "qwen3.5:9b"]
+
+
+def test_a_working_model_is_asked_once(ollama_calls):
+    calls, plan = ollama_calls
+    plan["qwen3.5:9b"] = '{"value": "yes"}'
+    used = []
+    llm.generate_structured("s", "u", Fact, used=used)
+    assert calls == ["qwen3.5:9b"] and used == ["qwen3.5:9b"]
+
+
+def test_ollama_down_is_not_retried_with_another_model(ollama_calls):
+    calls, plan = ollama_calls
+    plan["qwen3.5:9b"] = ConnectionError("refused")
+    with pytest.raises(llm.OllamaUnreachable):
+        llm.generate_structured("s", "u", Fact)
+    assert calls == ["qwen3.5:9b"]
+
+
+def test_when_both_models_fail_the_error_comes_through(ollama_calls):
+    calls, plan = ollama_calls
+    plan["qwen3.5:9b"] = llm.ollama.ResponseError("crash", 500)
+    plan["qwen3.5:4b"] = llm.ollama.ResponseError("crash too", 500)
+    with pytest.raises(llm.ollama.ResponseError):
+        llm.generate_structured("s", "u", Fact)
+    assert calls == ["qwen3.5:9b", "qwen3.5:4b"]

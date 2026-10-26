@@ -38,18 +38,11 @@
     .nb { max-width: 1320px; margin: 20px auto 0; border: 2px solid var(--rule); background-color: var(--page);
       background-image: radial-gradient(rgba(239, 229, 204, .11) 1.2px, transparent 1.3px); background-size: 24px 24px; }
     .drift { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
-    .drift::before { content: ""; position: absolute; inset: -48px; background-image: radial-gradient(rgba(239, 229, 204, .10) 1px, transparent 1.1px); background-size: 24px 24px; animation: grid 36s linear infinite; }
-    .drift i { position: absolute; left: var(--x); top: 0; width: var(--w); height: 14px; background: var(--hl); opacity: 0; animation: rise var(--t) linear var(--d) infinite; will-change: transform, opacity; }
-    .drift i.p { height: var(--w); background: none; }
-    .drift i.p::before, .drift i.p::after { content: ""; position: absolute; background: var(--hl); }
-    .drift i.p::before { left: 0; right: 0; top: calc(50% - 1px); height: 2px; }
-    .drift i.p::after { top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
-    @keyframes grid { to { transform: translate(24px, 24px); } }
-    @keyframes rise { 0% { transform: translateY(105vh); opacity: 0; } 8% { opacity: .2; } 85% { opacity: .2; } 100% { transform: translateY(-14vh); opacity: 0; } }
-    @media (max-width: 900px) { .drift i { display: none; } }
+    .drift::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgba(239, 229, 204, .07) 1px, transparent 1.1px); background-size: 24px 24px; }
+    .drift i { position: absolute; width: 64vmax; height: 64vmax; border-radius: 50%; background: radial-gradient(closest-side, rgba(169, 189, 147, var(--a)), rgba(169, 189, 147, 0)); animation: glow var(--t) ease-in-out var(--d) infinite alternate; will-change: transform; }
+    @keyframes glow { from { transform: translate(0, 0) scale(1); } to { transform: translate(var(--dx), var(--dy)) scale(1.12); } }
     @media (prefers-reduced-motion: reduce) {
-      html:not([data-motion="on"]) .drift::before { animation: none; }
-      html:not([data-motion="on"]) .drift i { display: none; }
+      html:not([data-motion="on"]) .drift i { animation: none; }
     }
 
     .band { border-bottom: 2px solid var(--rule); }
@@ -270,7 +263,7 @@
   </style>
 </head>
 <body>
-<div class="drift" aria-hidden="true"><i style="--x:1vw;--t:46s;--d:-8s;--w:56px"></i><i class="p" style="--x:3.4vw;--t:58s;--d:-31s;--w:34px"></i><i style="--x:0.7vw;--t:40s;--d:-19s;--w:70px"></i><i style="--x:4.4vw;--t:52s;--d:-44s;--w:26px"></i><i class="p" style="--x:2.2vw;--t:62s;--d:-3s;--w:16px"></i><i style="--x:3.8vw;--t:44s;--d:-26s;--w:48px"></i><i style="--x:96vw;--t:50s;--d:-14s;--w:60px"></i><i class="p" style="--x:94.8vw;--t:42s;--d:-37s;--w:16px"></i><i style="--x:97.6vw;--t:60s;--d:-22s;--w:40px"></i><i style="--x:95.4vw;--t:48s;--d:-5s;--w:72px"></i><i class="p" style="--x:98.4vw;--t:56s;--d:-48s;--w:16px"></i><i style="--x:95vw;--t:38s;--d:-29s;--w:30px"></i></div>
+<div class="drift" aria-hidden="true"><i style="left:-34vmax;top:-22vmax;--a:.16;--t:34s;--d:0s;--dx:10vw;--dy:16vh"></i><i style="right:-36vmax;top:28vh;--a:.13;--t:42s;--d:-14s;--dx:-9vw;--dy:-12vh"></i><i style="left:-30vmax;bottom:-38vmax;--a:.11;--t:50s;--d:-25s;--dx:12vw;--dy:-10vh"></i></div>
   <div class="nb">
     <header class="top" id="top">
       <a class="mark" href="#top" aria-label="LeadSage home"><i>L</i><span>LeadSage</span></a>

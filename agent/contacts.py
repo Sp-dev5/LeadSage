@@ -28,6 +28,8 @@ from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import ICP, quote_in
 from agent.signals import exact_match
 
+PARALLEL_PAGES = 3
+
 PAGES = Path(__file__).resolve().parent.parent / "data" / "pages"
 TYPED = "typed by rep"
 
@@ -109,7 +111,7 @@ def find_contact(name: str, url: str, icp: ICP, contact_pages: list[str], pages:
         return search
     urls = [urljoin(url, path) for path in contact_pages]
     files = [pages / f"{slug(name)}-{slug(path)}-full.json" for path in contact_pages]
-    with ThreadPoolExecutor(max_workers=min(6, len(urls))) as pool:
+    with ThreadPoolExecutor(max_workers=min(PARALLEL_PAGES, len(urls))) as pool:
         fetched = list(pool.map(lambda uf: load_or_fetch(uf[0], uf[1], fetch), zip(urls, files)))
     for page_url, page in zip(urls, fetched):
         search.pages_tried.append(page_url if page.ok else f"{page_url} ({page.error})")

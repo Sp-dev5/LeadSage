@@ -228,3 +228,40 @@ def test_html_fetch_keeps_links_and_markup(monkeypatch, robots_allow):
     fake_get(monkeypatch, response)
     page = fetch.fetch_html("https://acme.test/")
     assert page.ok and "<nav>" in page.text
+
+
+HOME_LINKS = b"""<html><body><nav>
+<a href="/company/about-us">About</a><a href="https://www.acme.test/our-team/">Team</a>
+<a href="/pricing">Pricing</a><a href="https://other.test/about">Elsewhere</a>
+<a href="/press-kit.pdf">Press kit</a><a href="/newsroom">News</a><a href="/company/about-us/">Again</a>
+<a href="mailto:hi@acme.test">Mail</a></nav></body></html>"""
+
+
+def test_site_links_keeps_same_site_pages_that_name_the_words(monkeypatch, robots_allow):
+    page = FakeResponse(HOME_LINKS, url="https://acme.test/")
+    page.text = HOME_LINKS.decode()
+    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: page)
+    assert fetch.site_links("https://acme.test/", ("about", "team")) == ["/company/about-us", "/our-team"]
+    assert fetch.site_links("https://acme.test/", ("news", "press")) == ["/newsroom"]
+
+
+def test_site_links_gives_nothing_when_the_homepage_cannot_be_read(monkeypatch):
+    monkeypatch.setattr(fetch, "_allowed_by_robots", lambda url: False)
+    assert fetch.site_links("https://acme.test/", ("about",)) == []
+
+
+def test_a_rate_limited_page_is_tried_once_more_after_a_wait(monkeypatch, robots_allow):
+    replies = [FakeResponse(status_code=429), FakeResponse(html_page(BODY))]
+    replies[0].headers["Retry-After"] = "120"
+    waits = []
+    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: replies.pop(0))
+    monkeypatch.setattr(fetch.time, "sleep", waits.append)
+    assert fetch.fetch_page("https://acme.test/about").ok
+    assert waits == [fetch.RATE_LIMIT_WAIT]
+
+
+def test_a_page_still_rate_limited_after_the_wait_is_reported(monkeypatch, robots_allow):
+    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: FakeResponse(status_code=429))
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    page = fetch.fetch_page("https://acme.test/about")
+    assert not page.ok and page.error == "HTTP 429"

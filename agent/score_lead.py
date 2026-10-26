@@ -34,6 +34,7 @@ COUNTRY_ALIASES = {"USA": "US", "US": "US", "UK": "GB", "UAE": "AE"}
 CITY_CLEAR_WIN = 3
 
 NO_TEXT_FLAG = "needs research: no text about the company"
+FALLBACK_FLAG = "scored by {stand_in} because {asked} failed: check it"
 
 YesNo = Literal["yes", "no", "unknown"]
 Customers = Literal["businesses", "consumers", "mixed", "unknown"]
@@ -682,6 +683,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
         )
     headcount = _parse_headcount(company.size)
     size_fail = _size_fail(icp, headcount)
+    used: list[str] = []
 
     raw_facts = generate_structured(
         system=FACTS_PROMPT,
@@ -689,6 +691,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
         schema=CompanyFacts,
         model=model,
         temperature=EXTRACT_TEMPERATURE,
+        used=used,
     )
     facts, rejected = _check_facts(raw_facts, company)
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
@@ -704,11 +707,16 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
             schema=FitScores,
             model=model,
             temperature=JUDGE_TEMPERATURE,
+            used=used,
         )
         rated, rejected_ratings = _check_ratings(q, company, unknown)
         rejected += rejected_ratings
         summary = q.summary
 
+    asked = model or model_name()
+    stand_in = next((m for m in used if m != asked), "")
+    if stand_in:
+        review_flags = review_flags + [FALLBACK_FLAG.format(asked=asked, stand_in=stand_in)]
     criteria = _merge_criteria(code_criteria, rated)
     hit = bool(disqualified)
     fit = _fit_from_criteria(criteria, hit or bool(size_fail), icp)
@@ -727,7 +735,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
         review_flags=review_flags,
         rejected_quotes=rejected,
         sales_roles=company.sales_roles,
-        model=model or model_name(),
+        model=f"{stand_in} (fallback: {asked} failed)" if stand_in else asked,
     )
 
 

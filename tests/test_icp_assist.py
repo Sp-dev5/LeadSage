@@ -58,3 +58,22 @@ def test_suggest_buyer_returns_text_and_cleaned_titles(monkeypatch):
     assert seen["schema"] is icp_assist.BuyerSuggestion
     assert "FIELD: buyer_persona" in seen["prompt"]
     assert "6 to 8 other job titles" in seen["system"]
+
+
+def test_suggestions_use_the_suggest_model_else_the_main_model(monkeypatch):
+    models = []
+
+    def fake(system, user_prompt, schema, **kw):
+        models.append(kw.get("model"))
+        return schema(text="A plain sentence.", **({"titles": ["CRO"]} if "titles" in schema.model_fields else {}))
+
+    monkeypatch.setattr(icp_assist, "generate_structured", fake)
+    monkeypatch.setenv("OLLAMA_SUGGEST_MODEL", "tiny:1b")
+    icp_assist.suggest("notes", "x", {})
+    icp_assist.suggest_buyer("x", {})
+    assert models == ["tiny:1b", "tiny:1b"]
+    monkeypatch.delenv("OLLAMA_SUGGEST_MODEL")
+    icp_assist.suggest("notes", "x", {})
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+    icp_assist.suggest("notes", "x", {})
+    assert models[-1] == "qwen3.5:9b"

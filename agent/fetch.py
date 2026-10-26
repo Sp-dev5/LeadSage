@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -33,6 +35,9 @@ FULL_MAX_CHARS = 9000
 MAX_REDIRECTS = 5
 REDIRECT_CODES = (301, 302, 303, 307, 308)
 PUBLIC_APIS = {"api.ashbyhq.com"}
+RATE_LIMIT_WAIT = 10
+MAX_SITE_LINKS = 6
+SKIP_LINK_ENDINGS = (".pdf", ".jpg", ".jpeg", ".png", ".svg", ".zip", ".xml")
 
 
 class Page(BaseModel):
@@ -92,9 +97,14 @@ def _get(url: str) -> tuple[requests.Response, str]:
 
     current = url
     redirects = 0
+    waited = False
     while True:
         resp = requests.get(current, headers={"User-Agent": USER_AGENT},
                             timeout=TIMEOUT, allow_redirects=False)
+        if resp.status_code == 429 and not waited:
+            waited = True
+            time.sleep(_wait_for(resp))
+            continue
         location = resp.headers.get("Location")
         if resp.status_code not in REDIRECT_CODES or not location:
             break
@@ -110,6 +120,51 @@ def _get(url: str) -> tuple[requests.Response, str]:
     if resp.status_code >= 400:
         raise _Refused(f"HTTP {resp.status_code}")
     return resp, current
+
+
+def _wait_for(resp: requests.Response) -> float:
+    """How long a site asked us to wait before trying again, capped so a batch keeps moving."""
+    try:
+        return min(float(resp.headers.get("Retry-After", RATE_LIMIT_WAIT)), RATE_LIMIT_WAIT)
+    except ValueError:
+        return RATE_LIMIT_WAIT
+
+
+class _Links(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            self.hrefs += [v for k, v in attrs if k == "href" and v]
+
+
+def _host(netloc: str) -> str:
+    return netloc.lower().removeprefix("www.")
+
+
+def site_links(url: str, words: tuple[str, ...], limit: int = MAX_SITE_LINKS) -> list[str]:
+    """Paths on the same site that the homepage links to and whose path names one of `words`
+    (for example "team" or "press"), in page order. Robots.txt applies. Never raises: a
+    homepage we can't read gives an empty list."""
+    try:
+        resp, final_url = _get(url)
+        parser = _Links()
+        parser.feed(resp.text)
+    except Exception:
+        return []
+    found: list[str] = []
+    for href in parser.hrefs:
+        parts = urlsplit(urljoin(final_url, href))
+        path = parts.path.rstrip("/").lower()
+        if parts.scheme not in ("http", "https") or _host(parts.netloc) != _host(urlsplit(final_url).netloc):
+            continue
+        if not path or path.endswith(SKIP_LINK_ENDINGS) or path in found:
+            continue
+        if any(w in part for part in path.split("/") for w in words):
+            found.append(path)
+    return found[:limit]
 
 
 def _reason(e: Exception) -> str:

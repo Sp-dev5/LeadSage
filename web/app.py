@@ -34,7 +34,7 @@ from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, 
                             save_outreach, sending_problems)
 from agent.pipeline import lead_files, read_leads, score_all, signal_rows
 from agent.readiness import QUEUES, group, in_queue, todo
-from agent.score_lead import ICP, ICP_PATH, load_icp
+from agent.score_lead import ALL_CRITERIA, FACT_VALUES, ICP, ICP_PATH, load_icp
 from web import jobs, views
 
 load_dotenv()
@@ -381,24 +381,45 @@ def _country_names(raw: dict) -> list[str]:
     return sorted({c.name for c in pycountry.countries} | set(raw["geography_countries"]))
 
 
+SETTING_FIELDS = [
+    ("qualify_at", "Qualify at fit", int, 0, 100, 1),
+    ("disqualify_below", "Disqualify below fit", int, 0, 100, 1),
+    ("fail_cap", "A failed gate caps fit at", int, 0, 100, 1),
+    ("gate_fail_max", "Gate fails at a score of", int, 0, 5, 1),
+    ("min_headcount", "Minimum headcount", int, 0, None, 1),
+    ("max_size_factor", "Hard fail above this many times the largest size", float, 1, None, 0.5),
+    ("size_tolerance", "Still scores 3 this far outside the size range (0.1 = 10%)", float, 0, 1, 0.05),
+    ("unknown_score", "Score when unknown", int, 0, 5, 1),
+    ("disagree_gap", "Models disagree at a fit gap of", int, 0, 100, 1),
+]
+
+
 @app.get("/icp", response_class=HTMLResponse)
 def icp_page(request: Request):
     raw = json.loads(ICP_PATH.read_text(encoding="utf-8"))
     s = raw["settings"]
     total = sum(s["weights"].values()) or 1
-    top = max(s["weights"].values()) or 1
     return page(request, "icp.html", nav="icp", raw=raw, fields=TEXT_FIELDS, countries=_country_names(raw),
-                weights=[(n, w, round(100 * w / total), round(100 * w / top)) for n, w in s["weights"].items()],
-                cutoffs=[
-                    ("Qualify at fit", s["qualify_at"]),
-                    ("Disqualify below fit", s["disqualify_below"]),
-                    ("A failed gate caps fit at", s["fail_cap"]),
-                    ("Gate fails at a score of", s["gate_fail_max"]),
-                    ("Minimum headcount", s["min_headcount"]),
-                    ("Hard fail above this many times the largest size", s["max_size_factor"]),
-                    ("Score when unknown", s["unknown_score"]),
-                    ("Models disagree at a fit gap of", s["disagree_gap"]),
-                ])
+                weights=[(n, w, round(100 * w / total)) for n, w in s["weights"].items()],
+                setting_fields=[(k, label, kind is int, lo, hi, step, s[k])
+                                for k, label, kind, lo, hi, step in SETTING_FIELDS],
+                facts={name: list(values) for name, values in FACT_VALUES.items()}, criteria=ALL_CRITERIA)
+
+
+def _first_error(e: ValidationError) -> str:
+    err = e.errors()[0]
+    where = ".".join(str(part) for part in err["loc"][1:] if not isinstance(part, int))
+    msg = err["msg"].removeprefix("Value error, ")
+    return f"{where}: {msg}" if where else msg
+
+
+def _save_icp(request: Request, new: dict, done: str):
+    try:
+        ICP.model_validate(new)
+    except ValidationError as e:
+        return back(request, "/icp", f"Not saved. {_first_error(e)}", "error")
+    ICP_PATH.write_text(json.dumps(new, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return back(request, "/icp", done)
 
 
 @app.post("/icp")
@@ -435,3 +456,47 @@ async def icp_suggest(request: Request):
     except Exception as e:
         return JSONResponse({"error": f"The local model did not answer ({str(e)[:120]}). Is ollama serve running?"},
                             status_code=502)
+
+
+@app.post("/icp/scoring")
+async def icp_scoring(request: Request):
+    form = await request.form()
+    raw = json.loads(ICP_PATH.read_text(encoding="utf-8"))
+    settings = dict(raw["settings"])
+    try:
+        for key, label, kind, *_ in SETTING_FIELDS:
+            settings[key] = kind(form[key]) if kind is float else int(form[key])
+        settings["weights"] = {name: float(form[f"weight:{name}"]) for name in raw["settings"]["weights"]}
+    except (KeyError, ValueError):
+        return back(request, "/icp", "Not saved. Every number needs a value, and the cut-offs are whole numbers.",
+                    "error")
+    return _save_icp(request, raw | {"settings": settings}, "Saved. Rescore the leads to apply it.")
+
+
+@app.post("/icp/rules")
+async def icp_rules(request: Request):
+    form = await request.form()
+    raw = json.loads(ICP_PATH.read_text(encoding="utf-8"))
+    rows = zip(form.getlist("rule_fact"), form.getlist("rule_value"), form.getlist("rule_label"),
+               form.getlist("rule_action"))
+    rules = [{"fact": f, "value": v, "label": label.strip(), "action": a} for f, v, label, a in rows]
+    if any(not r["label"] for r in rules):
+        return back(request, "/icp", "Not saved. Every rule needs a reason in the Why column.", "error")
+    return _save_icp(request, raw | {"fact_rules": rules}, "Saved. Rescore the leads to apply it.")
+
+
+@app.post("/icp/match")
+async def icp_match(request: Request):
+    form = await request.form()
+    raw = json.loads(ICP_PATH.read_text(encoding="utf-8"))
+    try:
+        rows = [{k: v for k, v in (("offering", o), ("customers", c)) if v} | {"score": int(s)}
+                for o, c, s in zip(form.getlist("ind_offering"), form.getlist("ind_customers"),
+                                   form.getlist("ind_score"))]
+        default = int(form["industry_default"])
+    except (KeyError, ValueError):
+        return back(request, "/icp", "Not saved. Every industry score needs a whole number from 0 to 5.", "error")
+    titles = [t.strip() for t in str(form.get("sales_titles", "")).splitlines() if t.strip()]
+    new = raw | {"industry_map": rows, "industry_default": default, "gates": form.getlist("gate"),
+                 "sales_roles": {"definition": str(form.get("sales_definition", "")).strip(), "titles": titles}}
+    return _save_icp(request, new, "Saved. Rescore the leads to apply it.")

@@ -715,3 +715,10 @@ def test_no_buyer_on_the_site_leaves_the_choice_to_the_rep(model_sees, tmp_path)
     search = contacts.find_contact("Acme", "https://acme.example", make_icp(), ["/team"], tmp_path,
                                    lambda url: TEAM_PAGE)
     assert search.contact is None and [p.name for p in search.people] == ["Arjun Mehta"]
+
+
+def test_homepage_links_come_before_the_guessed_paths_without_repeats(monkeypatch):
+    monkeypatch.setattr(outreach, "site_links", lambda url, words: ["/company/team", "/about"])
+    assert outreach.with_site_links("https://acme.example", ("team",), ["/about/", "/team"]) == [
+        "/company/team", "/about", "/team"]
+    assert outreach.with_site_links("", ("team",), ["/team"]) == ["/team"]
