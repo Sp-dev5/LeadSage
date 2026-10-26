@@ -424,7 +424,7 @@ SETTING_FIELDS = [
     ("gate_fail_max", "Gate fails at a score of", int, 0, 5, 1),
     ("min_headcount", "Minimum headcount", int, 0, None, 1),
     ("max_size_factor", "Hard fail above this many times the largest size", float, 1, None, 0.5),
-    ("size_tolerance", "Still scores 3 this far outside the size range (0.1 = 10%)", float, 0, 1, 0.05),
+    ("size_tolerance", "Size still scores 3 this far outside the range (0.1 = 10%)", float, 0, 1, 0.05),
     ("unknown_score", "Score when unknown", int, 0, 5, 1),
     ("disagree_gap", "Models disagree at a fit gap of", int, 0, 100, 1),
 ]
