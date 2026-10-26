@@ -43,6 +43,7 @@ HERE = Path(__file__).resolve().parent
 PASSWORD = os.getenv("LEADSAGE_PASSWORD", "")
 OPEN_PATHS = ("/login", "/static/")
 STOP_STAGES = {"replied": "Replied", "meeting": "Meeting booked", "lost": "Lost"}
+PAGE_SIZE = 10
 TEXT_FIELDS = {
     "buyer_persona": "Buyer persona",
     "pain_solved": "Problem you solve",
@@ -186,9 +187,9 @@ def logo(name: str):
     if path is None:
         letter = (name.strip()[:1] or "?").upper()
         svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
-               '<rect x="1" y="1" width="62" height="62" fill="#1E1B16" stroke="#7E7663" stroke-width="2"/>'
+               '<rect x="1" y="1" width="62" height="62" fill="#161917" stroke="#767D78" stroke-width="2"/>'
                '<text x="32" y="43" text-anchor="middle" font-family="Georgia, serif" font-size="32" '
-               f'fill="#E9E5DA">{letter if letter.isalnum() else "?"}</text></svg>')
+               f'fill="#ECEEEB">{letter if letter.isalnum() else "?"}</text></svg>')
         return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "max-age=3600"})
     mime = next((m for m, ext in logos.EXTENSIONS.items() if ext == path.suffix[1:]), "image/png")
     return Response(path.read_bytes(), media_type=mime, headers={"Cache-Control": "max-age=3600"})
@@ -205,7 +206,11 @@ def outreach_page(request: Request):
     in_play = _outreach_rows(icp, cfg)
     queue = request.query_params.get("queue", "All")
     queue = queue if queue in QUEUES else "All"
-    table = [r for r in in_play if in_queue(r.ready, queue)]
+    matching = [r for r in in_play if in_queue(r.ready, queue)]
+    pages = max(1, -(-len(matching) // PAGE_SIZE))
+    asked = request.query_params.get("page", "1")
+    at = min(max(int(asked) if asked.isdigit() else 1, 1), pages)
+    table = matching[(at - 1) * PAGE_SIZE:at * PAGE_SIZE]
     to_do = {r.lead.name: next_step(r.lead.stage, r.emails, cfg, now).text
              if r.ready.status in ("sent", "stopped") or r.lead.stage in store.STOPPED else todo(r.ready)
              for r in table}
@@ -223,6 +228,7 @@ def outreach_page(request: Request):
     if (name := request.query_params.get("lead")) and any(r.lead.name == name for r in in_play):
         detail = _detail(name, icp, cfg, now)
     return page(request, "outreach.html", nav="outreach", in_play=in_play, table=table, queue=queue, queues=QUEUES,
+                at=at, pages=pages, total=len(matching), first=(at - 1) * PAGE_SIZE + 1,
                 counts={q: sum(in_queue(r.ready, q) for r in in_play) for q in QUEUES}, to_do=to_do, stats=stats,
                 undrafted=undrafted, cfg=cfg, setup=sending_problems(cfg.opt_out_line, cfg),
                 suppressed=store.suppressed(views.DB), d=detail, stop_stages=STOP_STAGES, stages=store.STAGES,
