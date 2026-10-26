@@ -53,7 +53,7 @@ TEXT_FIELDS = {
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
-templates.env.filters.update(domain=views.domain, bare=views.bare, day=views.day, stamp=views.stamp, letter=views.letter)
+templates.env.filters.update(plain=views.plain, domain=views.domain, bare=views.bare, day=views.day, stamp=views.stamp, letter=views.letter)
 templates.env.globals.update(is_link=views.is_link, share=views.share)
 
 
@@ -424,7 +424,7 @@ SETTING_FIELDS = [
     ("gate_fail_max", "Gate fails at a score of", int, 0, 5, 1),
     ("min_headcount", "Minimum headcount", int, 0, None, 1),
     ("max_size_factor", "Hard fail above this many times the largest size", float, 1, None, 0.5),
-    ("size_tolerance", "Still scores 3 this far outside the size range (0.1 = 10%)", float, 0, 1, 0.05),
+    ("size_tolerance", "Size still scores 3 this far outside the range (0.1 = 10%)", float, 0, 1, 0.05),
     ("unknown_score", "Score when unknown", int, 0, 5, 1),
     ("disagree_gap", "Models disagree at a fit gap of", int, 0, 100, 1),
 ]
@@ -439,7 +439,8 @@ def icp_page(request: Request):
                 weights=[(n, w, round(100 * w / total)) for n, w in s["weights"].items()],
                 setting_fields=[(k, label, kind is int, lo, hi, step, s[k])
                                 for k, label, kind, lo, hi, step in SETTING_FIELDS],
-                facts={name: list(values) for name, values in FACT_VALUES.items()}, criteria=ALL_CRITERIA)
+                facts={name: list(values) for name, values in FACT_VALUES.items()}, criteria=ALL_CRITERIA,
+                labels={c: views.plain(c) for name, values in FACT_VALUES.items() for c in (name, *values)})
 
 
 def _first_error(e: ValidationError) -> str:

@@ -320,7 +320,7 @@ Rate these two criteria on a 0-5 scale (0 = no match, 5 = perfect match). \
 For each, first copy a short exact quote from the COMPANY DETAILS that supports the \
 score, then write the evidence, then the score.
 - buyer_persona_fit: does the company have, or need, the buyer we sell to?
-- pain_match: does the company likely have the problem we solve?
+- pain_match: does the company itself likely have the problem we solve, in how it runs \nits own business? A problem its product solves for its customers is not evidence: a \ncompany that sells crash monitoring fixes crashes for others, it does not have them.
 
 Only the company's own words count as evidence. Text under WHAT WE SELL describes us, \
 never the company: don't quote it.
@@ -329,7 +329,7 @@ These are often unstated. If the company details say nothing about them, score {
 leave the quote empty and write "not mentioned." Score 0 or 1 only when a quote shows \
 the company does not fit, for example no sales team, or a pain we don't solve.
 
-Then write a summary of one or two plain sentences a salesperson could read at a glance."""
+Then write a summary of one or two plain sentences a salesperson could read at a glance. \nThe summary is about the company: don't name or describe what we sell."""
 
 
 def _company_text(company: Company) -> str:
@@ -575,9 +575,10 @@ def locate(icp: ICP, location: str) -> Location:
         return Location(evidence=f"{loc}: country not recognised")
     country = pycountry.countries.get(alpha_2=code).name
     inside = code in region
+    place = loc if country.lower() in loc.lower() else f"{loc} ({country}, {how})"
     side = "in" if inside else "outside"
     return Location(country=country, in_region="yes" if inside else "no",
-                    evidence=f"{loc}: {country} ({how}), {side} the ICP region")
+                    evidence=f"{place}: {side} your ideal-customer region")
 
 
 def _check_ratings(q: FitScores, company: Company, unknown: int) -> tuple[list[CriterionScore], list[str]]:
@@ -759,8 +760,8 @@ def with_second_opinion(primary: LeadScore, second: LeadScore, settings: Setting
     result = primary.model_copy(update={"second_opinion": second})
     if _models_disagree(primary, second, settings):
         result.review_flags = [*primary.review_flags,
-                               f"models disagree: {primary.model} {primary.verdict} {primary.fit}, "
-                               f"{second.model} {second.verdict} {second.fit}"]
+                               f"second model disagrees: main {primary.verdict} {primary.fit}, "
+                               f"second {second.verdict} {second.fit}"]
         result.verdict = "review"
     return result
 
