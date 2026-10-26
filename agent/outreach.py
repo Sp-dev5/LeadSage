@@ -38,7 +38,7 @@ from agent.store import Citation, Email, StoredLead
 DATA = Path(__file__).resolve().parent.parent / "data"
 OUTREACH_PATH = DATA / "outreach.json"
 PAGES = DATA / "pages"
-CONTACT_LINK_WORDS = ("about", "team", "leadership", "people", "founders", "management", "who-we-are")
+CONTACT_LINK_WORDS = ("about", "team", "leadership", "people", "founders", "who-we-are")
 NEWS_LINK_WORDS = ("news", "press", "newsroom", "media", "announcements")
 
 

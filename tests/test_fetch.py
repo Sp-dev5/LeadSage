@@ -242,7 +242,7 @@ def test_site_links_keeps_same_site_pages_that_name_the_words(monkeypatch, robot
     page.text = HOME_LINKS.decode()
     monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: page)
     assert fetch.site_links("https://acme.test/", ("about", "team")) == ["/company/about-us", "/our-team"]
-    assert fetch.site_links("https://acme.test/", ("news", "press")) == ["/newsroom"]
+    assert fetch.site_links("https://acme.test/", ("news", "press", "newsroom")) == ["/newsroom"]
 
 
 def test_site_links_gives_nothing_when_the_homepage_cannot_be_read(monkeypatch):
@@ -265,3 +265,15 @@ def test_a_page_still_rate_limited_after_the_wait_is_reported(monkeypatch, robot
     monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
     page = fetch.fetch_page("https://acme.test/about")
     assert not page.ok and page.error == "HTTP 429"
+
+
+def test_site_links_needs_a_whole_word_not_part_of_a_product_name(monkeypatch, robots_allow):
+    body = """<a href="/solutions/expense-management">Expense management</a>
+    <a href="/about-us">About</a><a href="/company/leadership-team">Leaders</a>
+    <a href="/blog/2025/teams-we-love">Deep</a><a href="/who-we-are">Who</a>"""
+    page = FakeResponse(body.encode(), url="https://acme.test/")
+    page.text = body
+    monkeypatch.setattr(fetch.requests, "get", lambda *a, **k: page)
+    assert fetch.site_links("https://acme.test/", ("about", "leadership", "management", "who-we-are")) == [
+        "/solutions/expense-management", "/about-us", "/company/leadership-team", "/who-we-are"]
+    assert fetch.site_links("https://acme.test/", ("about", "team")) == ["/about-us", "/company/leadership-team"]

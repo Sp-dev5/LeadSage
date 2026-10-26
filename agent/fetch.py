@@ -37,6 +37,7 @@ REDIRECT_CODES = (301, 302, 303, 307, 308)
 PUBLIC_APIS = {"api.ashbyhq.com"}
 RATE_LIMIT_WAIT = 10
 MAX_SITE_LINKS = 6
+MAX_LINK_DEPTH = 2
 SKIP_LINK_ENDINGS = (".pdf", ".jpg", ".jpeg", ".png", ".svg", ".zip", ".xml")
 
 
@@ -145,8 +146,9 @@ def _host(netloc: str) -> str:
 
 
 def site_links(url: str, words: tuple[str, ...], limit: int = MAX_SITE_LINKS) -> list[str]:
-    """Paths on the same site that the homepage links to and whose path names one of `words`
-    (for example "team" or "press"), in page order. Robots.txt applies. Never raises: a
+    """Paths on the same site that the homepage links to and whose path has one of `words` as a
+    whole word (for example "team" or "press", not "management" inside "expense-management"),
+    at most two levels deep, in page order. Robots.txt applies. Never raises: a
     homepage we can't read gives an empty list."""
     try:
         resp, final_url = _get(url)
@@ -162,7 +164,9 @@ def site_links(url: str, words: tuple[str, ...], limit: int = MAX_SITE_LINKS) ->
             continue
         if not path or path.endswith(SKIP_LINK_ENDINGS) or path in found:
             continue
-        if any(w in part for part in path.split("/") for w in words):
+        segments = [s for s in path.split("/") if s]
+        tokens = set(re.split(r"[-_]", "-".join(segments)))
+        if len(segments) <= MAX_LINK_DEPTH and any(w in tokens or (("-" in w) and w in segments) for w in words):
             found.append(path)
     return found[:limit]
 

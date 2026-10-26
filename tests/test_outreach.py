@@ -722,3 +722,18 @@ def test_homepage_links_come_before_the_guessed_paths_without_repeats(monkeypatc
     assert outreach.with_site_links("https://acme.example", ("team",), ["/about/", "/team"]) == [
         "/company/team", "/about", "/team"]
     assert outreach.with_site_links("", ("team",), ["/team"]) == ["/team"]
+
+
+def test_a_customer_quoted_on_the_site_is_not_a_contact():
+    assert contacts.works_elsewhere("VP of Enterprise Data and Analytics @ Workday", "Atlan")
+    assert contacts.works_elsewhere("CDO at Mastercard", "Atlan")
+    assert not contacts.works_elsewhere("Head of Sales at Atlan", "Atlan")
+    assert not contacts.works_elsewhere("Chief Revenue Officer", "Atlan")
+
+
+def test_the_ceos_assistant_is_not_the_ceo():
+    def person(title):
+        return contacts.Contact(name="X", title=title, matches_buyer="no", source="s", fetched_at="t")
+    assert not contacts.holds_title(person("Executive Assistant to the CEO"), "ceo")
+    assert not contacts.holds_title(person("Office of the CEO"), "ceo")
+    assert contacts.holds_title(person("CEO and Co-founder"), "ceo")
