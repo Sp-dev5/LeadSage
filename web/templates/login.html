@@ -14,7 +14,7 @@
   <div class="pane">
     {% if not password_set %}
     <h2>No password set</h2>
-    <p class="muted">Add <span class="mono">LEADSAGE_PASSWORD=...</span> to the .env file and restart the app. Until then it opens without one.</p>
+    <p class="muted">Add <span class="mono">LEADSAGE_PASSWORD=...</span> and a long random <span class="mono">LEADSAGE_SECRET=...</span> to the .env file and restart the app. Until then it opens without one.</p>
     <a class="b" href="/">Open the app</a>
     {% else %}
     <form method="post" action="/login"><input type="hidden" name="csrf" value="{{ csrf }}">
