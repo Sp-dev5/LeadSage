@@ -12,7 +12,7 @@
 {% if setup %}<div class="warnbar"><b>Approve is locked</b>{{ setup | join('; ') }}.</div>{% endif %}
 
 {% if in_play %}
-<section class="stats" style="--n:4">
+<section class="stats stats-4">
   <div class="stat"><small>Ready to review</small><b>{{ stats.ready }}</b><span class="sub">a hook and a named contact</span></div>
   <div class="stat"><small>Need a contact</small><b>{{ stats.contact }}</b><span class="sub">find or type one in</span></div>
   <div class="stat"><small>Need a hook</small><b>{{ stats.hook }}</b><span class="sub">add a reason to write now</span></div>
@@ -24,7 +24,7 @@
   <aside class="side">
     <section>
       <h3>Draft first emails</h3>
-      <p class="small muted" style="margin:0 0 14px">{{ undrafted | length }} leads ({{ cfg.draft_verdicts | join(', ') }}) have no email yet. Finding the contact and reading their news takes about a minute each.</p>
+      <p class="small muted m-0-0-14">{{ undrafted | length }} leads ({{ cfg.draft_verdicts | join(', ') }}) have no email yet. Finding the contact and reading their news takes about a minute each.</p>
       <form method="post" action="/outreach/draft-all" data-busy="Starting"><input type="hidden" name="csrf" value="{{ csrf }}">
         <button class="b wide" type="submit" {{ 'disabled' if job or not undrafted }}>Find contacts and draft</button></form>
     </section>
@@ -36,7 +36,7 @@
           <label>Business address <input type="text" name="sender_address" value="{{ cfg.sender_address }}" placeholder="Shown under your signature"></label>
           <label>Opt-out line <textarea name="opt_out_line" rows="3">{{ cfg.opt_out_line }}</textarea></label>
           <label>Draft emails for</label>
-          <div style="margin:-6px 0 14px">{% for v in ['qualify', 'review', 'disqualify'] %}<label class="check" style="margin:0 0 6px"><input type="checkbox" name="draft_verdicts" value="{{ v }}" {{ 'checked' if v in cfg.draft_verdicts }}> {{ v | capitalize }}</label>{% endfor %}</div>
+          <div class="m-n6-0-14">{% for v in ['qualify', 'review', 'disqualify'] %}<label class="check m-0-0-6"><input type="checkbox" name="draft_verdicts" value="{{ v }}" {{ 'checked' if v in cfg.draft_verdicts }}> {{ v | capitalize }}</label>{% endfor %}</div>
           <label>Follow-ups, days after the first <input type="text" name="follow_up_days" value="{{ cfg.follow_up_days | join(', ') }}"></label>
           <label>Longest email, words <input type="number" name="max_words" min="40" max="300" step="10" value="{{ cfg.max_words }}"></label>
           <label>Startup: write to the CEO at or below <input type="number" name="startup_max_headcount" min="1" max="10000" value="{{ cfg.startup_max_headcount }}"></label>
@@ -47,7 +47,7 @@
         {% if not suppressed %}<p class="small muted">Empty. Add a company from its Privacy panel when it asks not to be contacted.</p>{% endif %}
         <ul class="plain">{% for company, (reason, added) in suppressed.items() %}
           <li><b>{{ company }}</b><br><span class="small muted">{{ reason or 'No reason given' }} · added {{ added | day }}</span>
-            <form method="post" action="/outreach/unsuppress" style="margin-top:6px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="company" value="{{ company }}"><button class="linkish" style="margin:0" type="submit">Remove from the list</button></form></li>
+            <form method="post" action="/outreach/unsuppress" class="mt-6"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="company" value="{{ company }}"><button class="linkish m-0" type="submit">Remove from the list</button></form></li>
         {% endfor %}</ul>
       </div></details>
     </section>
@@ -114,19 +114,19 @@
           {% set e = s.email %}
           <div class="stepbox">
             {% if e is none %}
-              <p class="muted" style="margin-top:0">{{ s.when or 'Not drafted yet.' }}</p>
+              <p class="muted mt-0">{{ s.when or 'Not drafted yet.' }}</p>
               <form method="post" action="/outreach/act" data-busy="Drafting"><input type="hidden" name="csrf" value="{{ csrf }}">
                 <input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="draft"><input type="hidden" name="step" value="{{ s.n }}">
                 <button class="b" type="submit" {{ 'disabled' if not s.can_draft or job }}>Draft it</button>
-                {% if not s.can_draft and not d.stopped %}<span class="small faint" style="margin-left:10px">Send the email before it first.</span>{% endif %}
+                {% if not s.can_draft and not d.stopped %}<span class="small faint ml-10">Send the email before it first.</span>{% endif %}
               </form>
             {% else %}
-              <div class="row-btns" style="margin-bottom:14px">
+              <div class="row-btns mb-14">
                 <span class="pill {{ {'approved': 'ink', 'sent': 'hl', 'stopped': 'pen'}.get(e.status, '') }}">{{ e.status }}</span>
                 {% if e.edited %}<span class="pill">Edited by you</span>{% endif %}
                 <span class="small faint mono">{{ s.when }}{% if s.when %} · {% endif %}drafted {{ e.drafted_at | stamp }}{% if e.sent_at %} · sent {{ e.sent_at | day }}{% endif %}</span>
               </div>
-              {% for flag in e.flags %}<div class="flag soft" style="margin:0 0 12px"><b>Check</b>{{ flag }}</div>{% endfor %}
+              {% for flag in e.flags %}<div class="flag soft m-0-0-12"><b>Check</b>{{ flag }}</div>{% endfor %}
               <article class="letter">
                 <div class="to"><span>To: {{ d.search.contact.name ~ ', ' ~ d.search.contact.title if d.search and d.search.contact else 'no contact yet' }}</span>
                   {% if e.rejected %}<span class="cutn">{{ e.rejected | length }} {{ 'line' if e.rejected | length == 1 else 'lines' }} cut</span>{% endif %}</div>
@@ -134,7 +134,7 @@
                 {{ e | letter }}
               </article>
 
-              <div class="row-btns" style="margin-top:14px">
+              <div class="row-btns mt-14">
                 {% if e.status == 'draft' %}
                 <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="approve"><input type="hidden" name="step" value="{{ s.n }}">
                   <button class="b" type="submit" {{ 'disabled' if s.problems }}>Approve</button></form>
@@ -152,12 +152,12 @@
               {% if e.status == 'draft' and s.problems %}<p class="annot"><b>Can't approve yet:</b> {{ s.problems | join('; ') }}.</p>{% endif %}
 
               {% if e.status == 'draft' %}
-              <form method="post" action="/outreach/act" id="edit-{{ s.n }}" class="letter" style="margin-top:14px" hidden><input type="hidden" name="csrf" value="{{ csrf }}">
+              <form method="post" action="/outreach/act" id="edit-{{ s.n }}" class="letter mt-14" hidden><input type="hidden" name="csrf" value="{{ csrf }}">
                 <input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="edit"><input type="hidden" name="step" value="{{ s.n }}">
                 <label>Subject <input type="text" name="subject" value="{{ e.subject }}"></label>
                 <label>Body <textarea name="body" rows="14">{{ e.body }}</textarea></label>
                 <div class="row-btns"><button class="b" type="submit">Save my edits</button><button class="b ghost" type="button" data-toggle="edit-{{ s.n }}">Cancel</button></div>
-                <p class="small" style="color:var(--card-soft);margin:10px 0 0">Your edits are yours: lines you add are not quote-checked. Saving sends it back to draft.</p>
+                <p class="small card-note">Your edits are yours: lines you add are not quote-checked. Saving sends it back to draft.</p>
               </form>
               {% endif %}
 
@@ -189,14 +189,14 @@
           {% else %}
             {% set c = d.search.contact %}
             {% if c %}
-              <p style="margin:0 0 4px"><b>{{ c.name }}</b>, {{ c.title }}</p>
-              <p class="small muted" style="margin:0">{{ {'buyer': 'Matches your buyer', 'rep': 'Chosen by you', 'startup_ceo': 'Startup of ' ~ lead.company.size ~ ': no buyer named, so the chief executive', 'closest': 'Closest match on their site, not a sales leader: check it fits'}.get(d.search.chosen_by, 'Chosen') }} ·
+              <p class="m-0-0-4"><b>{{ c.name }}</b>, {{ c.title }}</p>
+              <p class="small muted m-0">{{ {'buyer': 'Matches your buyer', 'rep': 'Chosen by you', 'startup_ceo': 'Startup of ' ~ lead.company.size ~ ': no buyer named, so the chief executive', 'closest': 'Closest match on their site, not a sales leader: check it fits'}.get(d.search.chosen_by, 'Chosen') }} ·
                 {% if c.matches_buyer == 'typed' %}typed by you{% else %}<a href="{{ c.source }}" target="_blank" rel="noopener">source</a>, {{ c.fetched_at | day }}{% endif %}</p>
             {% else %}
-              <div class="flag" style="margin-top:0"><b>No contact</b>No one matching your buyer is named on their website. Pick someone below or type a contact in.</div>
+              <div class="flag mt-0"><b>No contact</b>No one matching your buyer is named on their website. Pick someone below or type a contact in.</div>
             {% endif %}
             {% if d.others %}
-            <form method="post" action="/outreach/act" style="margin-top:16px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="pick">
+            <form method="post" action="/outreach/act" class="mt-16"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="pick">
               <label>Other people named on their site
                 <select name="person">{% for p in d.others %}<option value="{{ loop.index0 }}">{{ p.name }}, {{ p.title }}</option>{% endfor %}</select></label>
               <button class="b ghost" type="submit">Write to them instead</button></form>
@@ -205,22 +205,22 @@
               <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="type">
                 <label>Name <input type="text" name="name"></label><label>Title <input type="text" name="title"></label>
                 <button class="b ghost" type="submit">Use this contact</button></form>
-              <ul class="plain small" style="margin-top:14px">
+              <ul class="plain small mt-14">
                 {% for p in d.search.pages_tried %}<li class="muted"><span class="faint mono">read</span> {{ p }}</li>{% endfor %}
                 {% for r in d.search.rejected %}<li class="muted"><span class="faint mono">rejected, not on the page</span> {{ r }}</li>{% endfor %}
               </ul>
-              <form method="post" action="/outreach/act" data-busy="Reading their pages" style="margin-top:12px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="search">
+              <form method="post" action="/outreach/act" data-busy="Reading their pages" class="mt-12"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="search">
                 <button class="b ghost" type="submit">Search the website again</button></form>
             </div></details>
           {% endif %}
 
-          <header style="margin-top:30px"><div><h2>Hook</h2><h3>The reason to write now</h3></div></header>
+          <header class="mt-30"><div><h2>Hook</h2><h3>The reason to write now</h3></div></header>
           {% if d.first and d.first.hook %}
-            <p style="margin:0"><span class="pill hl">{{ d.hook_label }}</span></p>
+            <p class="m-0"><span class="pill hl">{{ d.hook_label }}</span></p>
             <p class="small muted">{{ d.first.hook }}</p>
           {% elif d.first %}
-            <p class="small muted" style="margin:0">Nothing timely on their site or job boards. Add a reason to write now (news, funding, a new hire) when you edit the email.</p>
-          {% else %}<p class="small muted" style="margin:0">Found when the first email is drafted.</p>{% endif %}
+            <p class="small muted m-0">Nothing timely on their site or job boards. Add a reason to write now (news, funding, a new hire) when you edit the email.</p>
+          {% else %}<p class="small muted m-0">Found when the first email is drafted.</p>{% endif %}
           {% if d.news %}
           <details><summary>Recent news on their own site ({{ d.news.items | length }})</summary><div>
             <ul class="plain small">{% for item in d.news.items | sort(attribute='date', reverse=True) %}<li><span class="mono faint">{{ item.date_text }}</span> {{ item.kind }}: <a href="{{ item.source }}" target="_blank" rel="noopener">{{ item.headline }}</a></li>{% endfor %}
@@ -229,19 +229,19 @@
           </div></details>
           {% endif %}
 
-          <header style="margin-top:30px"><div><h2>Stage and privacy</h2></div></header>
+          <header class="mt-30"><div><h2>Stage and privacy</h2></div></header>
           <form method="post" action="/outreach/act" class="row-btns"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="stage">
             {% for stage, label in stop_stages.items() %}<button class="b ghost" name="stage" value="{{ stage }}" type="submit" {{ 'disabled' if lead.stage == stage }}>{{ label }}</button>{% endfor %}</form>
-          <p class="small faint" style="margin:8px 0 0">A reply, a meeting or a loss stops the follow-ups.</p>
+          <p class="small faint m-8-0-0">A reply, a meeting or a loss stops the follow-ups.</p>
           <details><summary>Set any stage, do not contact, delete</summary><div>
             <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="stage">
               <label>Stage <select name="stage">{% for st in stages %}<option value="{{ st }}" {{ 'selected' if st == lead.stage }}>{{ st | capitalize }}</option>{% endfor %}</select></label>
               <button class="b ghost" type="submit">Set stage</button></form>
-            <form method="post" action="/outreach/act" style="margin-top:18px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="suppress">
+            <form method="post" action="/outreach/act" class="mt-18"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="suppress">
               <label>Do not contact: reason (optional) <input type="text" name="reason"></label>
               <button class="b ghost" type="submit" {{ 'disabled' if lead.name in suppressed }}>Add to the do-not-contact list</button>
               <p class="small faint">Stops every email and keeps this company out of future drafts, even if it is scored again.</p></form>
-            <form method="post" action="/outreach/act" style="margin-top:18px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="delete">
+            <form method="post" action="/outreach/act" class="mt-18"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="delete">
               <label class="check"><input type="checkbox" name="sure" value="1" required> I understand this cannot be undone</label>
               <button class="b pen" type="submit">Delete this lead and its data</button>
               <p class="small faint">Removes the score, contacts, news, emails and saved pages. The do-not-contact list is kept.</p></form>
@@ -250,7 +250,7 @@
       </div>
     </section>
     {% else %}
-    <p class="note" style="border-top:1px solid var(--rule);border-bottom:0">Pick a company to read and approve its emails.</p>
+    <p class="note top-rule">Pick a company to read and approve its emails.</p>
     {% endif %}
     {% endif %}
   </div>

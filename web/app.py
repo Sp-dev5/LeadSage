@@ -100,7 +100,7 @@ app.add_middleware(SessionMiddleware, secret_key=SECRET or secrets.token_hex(32)
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": "; ".join([
-        "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self'",
+        "default-src 'self'", "script-src 'self'", "style-src 'self'", "img-src 'self'",
         "font-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'",
         "frame-ancestors 'none'"]),
     "X-Frame-Options": "DENY",
