@@ -14,7 +14,8 @@ from tests.test_scoring import make_icp
 
 CFG = outreach.OutreachConfig(sender_name="Sam", sender_company="LeadSage", draft_verdicts=["qualify", "review"],
                               follow_up_days=[3, 7, 14], max_words=120, contact_pages=["/about", "/team"],
-                              news_pages=["/news", "/blog"], news_max_age_days=90, startup_max_headcount=200,
+                              news_pages=["/news", "/blog"], news_max_age_days=90, fresh_days=14,
+                              startup_max_headcount=200,
                               startup_contact_titles=["ceo", "chief executive officer", "founder", "co-founder"],
                               closest_contact_titles=["chief operating officer", "ceo"],
                               sender_address="1 Test Street, Pune", opt_out_line='Reply "no thanks" to stop.',

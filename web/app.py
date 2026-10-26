@@ -38,6 +38,7 @@ from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, 
 from agent.pipeline import lead_files, read_leads, score_all, signal_rows
 from agent.readiness import QUEUES, group, hook_label, in_queue, todo
 from agent.score_lead import ALL_CRITERIA, FACT_VALUES, ICP, ICP_PATH, load_icp
+from agent.watch import watch_leads
 from web import jobs, views
 
 load_dotenv()
@@ -170,7 +171,7 @@ def home(request: Request):
     icp, cfg = load_icp(), load_outreach()
     rows = views.lead_rows(icp, cfg)
     return page(request, "home.html", nav="home", rows=rows, h=views.home(rows) if rows else None,
-                qualify_at=icp.settings.qualify_at)
+                qualify_at=icp.settings.qualify_at, fresh_days=cfg.fresh_days)
 
 
 def _whole(text: str | None) -> int:
@@ -187,6 +188,7 @@ def _filters(request: Request) -> views.LeadFilters:
         region_only=q.get("region") == "1",
         min_fit=_whole(q.get("min_fit")),
         hiring_only=q.get("hiring") == "1",
+        signals_only=q.get("signals") == "1",
     )
 
 
@@ -235,6 +237,18 @@ def score_leads(request: Request, file: str = Form(...), skip_scored: str = Form
         report("Done.")
 
     jobs.start(f"Scoring {len(todo_rows)} companies", work)
+    return back(request, "/leads")
+
+
+@app.post("/watch")
+def watch(request: Request):
+    icp, cfg = load_icp(), load_outreach()
+
+    def work(report):
+        report("Reading job boards and news pages again")
+        watch_leads(icp, cfg, db=views.DB, report=report)
+
+    jobs.start("Checking for new signals", work)
     return back(request, "/leads")
 
 

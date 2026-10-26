@@ -21,7 +21,7 @@ from agent import store
 from agent.fetch import fetch_page, load_or_fetch, slug
 from agent.llm import second_model_name
 from agent.logos import fetch_logo
-from agent.score_lead import ICP, Company, is_borderline, load_icp, score_lead, with_second_opinion
+from agent.score_lead import ICP, Company, LeadScore, is_borderline, load_icp, score_lead, with_second_opinion
 from agent.signals import DATA, PAGES, hiring_for, rows_by_name
 
 LEAD_COLUMNS = {"name", "industry", "size", "location", "url", "description"}
@@ -78,6 +78,29 @@ def research(row: dict, icp: ICP, signals: dict[str, dict]) -> tuple[Company, st
     return company, text_source
 
 
+def second_opinion(icp: ICP, company: Company, result: LeadScore, report: Callable[[str], None]) -> LeadScore:
+    """The main score after the second model's view. If the second model fails, the main score stands."""
+    try:
+        second = score_lead(icp, company, model=second_model_name())
+    except Exception as e:
+        report(f"{company.name}: second opinion failed ({str(e)[:90]}); main score kept")
+        return result
+    final = with_second_opinion(result, second, icp.settings)
+    report(f"{company.name}: second model {second.verdict} {second.fit} -> {final.verdict}")
+    return final
+
+
+def score_one(icp: ICP, company: Company, url: str, text_source: str, report: Callable[[str], None] = print,
+              db: Path = store.DB_PATH) -> LeadScore:
+    """Score one company, with the second model straight after when it is borderline, and save it.
+    For a single rescore; a batch goes through score_all so the GPU swaps models once."""
+    result = score_lead(icp, company)
+    if is_borderline(result, icp.settings):
+        result = second_opinion(icp, company, result, report)
+    store.save(company, result, url=url, text_source=text_source, path=db)
+    return result
+
+
 def score_all(rows: list[dict], icp: ICP, signals: dict[str, dict], report: Callable[[str], None] = print,
               db: Path = store.DB_PATH) -> None:
     """Research, score and save every lead, then give the borderline ones a second opinion.
@@ -105,14 +128,9 @@ def score_all(rows: list[dict], icp: ICP, signals: dict[str, dict], report: Call
     if scored:
         report(f"Second opinion ({second_model_name()}) on {len(scored)} borderline leads")
     for company, result, url, text_source in scored:
-        try:
-            second = score_lead(icp, company, model=second_model_name())
-        except Exception as e:
-            report(f"{company.name}: second opinion failed ({str(e)[:90]}); main score kept")
-            continue
-        final = with_second_opinion(result, second, icp.settings)
-        store.save(company, final, url=url, text_source=text_source, path=db)
-        report(f"{company.name}: second model {second.verdict} {second.fit} -> {final.verdict}")
+        final = second_opinion(icp, company, result, report)
+        if final is not result:
+            store.save(company, final, url=url, text_source=text_source, path=db)
 
 
 def main() -> None:

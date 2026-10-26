@@ -8,7 +8,7 @@ from __future__ import annotations
 import html
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
 from markupsafe import Markup
@@ -28,6 +28,7 @@ class LeadRow(NamedTuple):
     emails: list[store.Email]
     ready: Readiness
     group: str
+    signals: list[store.SignalEvent] = []
 
     @property
     def country(self) -> str:
@@ -44,14 +45,16 @@ class LeadRow(NamedTuple):
 
 def lead_rows(icp: ICP, cfg: OutreachConfig) -> list[LeadRow]:
     all_emails, searches = store.load_all_emails(DB), store.load_all_contacts(DB)
+    since = (datetime.now(timezone.utc) - timedelta(days=cfg.fresh_days)).isoformat(timespec="seconds")
+    fresh = store.fresh_events(since, DB)
     rows = []
     for lead in store.load_all(DB):
         emails = all_emails.get(lead.name, [])
         search = searches.get(lead.name)
         contact = with_fallbacks(search, lead, cfg).contact if search else None
         rows.append(LeadRow(lead, emails, readiness(lead, emails, contact.name if contact else "", cfg),
-                            group(lead.score, icp.settings.qualify_at)))
-    return sorted(rows, key=lambda r: (-r.lead.score.fit, r.lead.name.lower()))
+                            group(lead.score, icp.settings.qualify_at), fresh.get(lead.name, [])))
+    return sorted(rows, key=lambda r: (not r.signals, -r.lead.score.fit, r.lead.name.lower()))
 
 
 def share(part: int, whole: int) -> int:
@@ -75,6 +78,7 @@ def home(rows: list[LeadRow]) -> dict:
         "approved": sum(r.status == "approved" for r in ready),
         "sent": sum(r.status == "sent" for r in ready),
         "replied": sum(r.lead.stage in ("replied", "meeting") for r in rows),
+        "new_signals": sum(bool(r.signals) for r in rows),
         "kept": sum(len(e.citations) for e in emails),
         "cut": sum(len(e.rejected) for e in emails),
         "last_scored": max((r.lead.scored_at for r in rows), default=""),
@@ -93,6 +97,7 @@ class LeadFilters(NamedTuple):
     region_only: bool = False
     min_fit: int = 0
     hiring_only: bool = False
+    signals_only: bool = False
 
     def location_ok(self, r: LeadRow) -> bool:
         if self.countries and r.country not in self.countries:
@@ -100,7 +105,8 @@ class LeadFilters(NamedTuple):
         return not (self.region_only and r.lead.score.location.in_region == "no")
 
     def other_ok(self, r: LeadRow) -> bool:
-        return r.lead.score.fit >= self.min_fit and (not self.hiring_only or bool(r.lead.score.sales_roles))
+        return (r.lead.score.fit >= self.min_fit and (not self.hiring_only or bool(r.lead.score.sales_roles))
+                and (not self.signals_only or bool(r.signals)))
 
 
 def leads(rows: list[LeadRow], f: LeadFilters) -> dict:

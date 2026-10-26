@@ -68,6 +68,7 @@ class NewsSearch(BaseModel):
 
     items: list[NewsItem] = []
     pages_tried: list[str] = []
+    pages_read: int = 0
     rejected: list[str] = []
     searched_at: str = ""
 
@@ -150,6 +151,7 @@ def find_news(name: str, url: str, paths: list[str], max_age_days: int, pages: P
     with ThreadPoolExecutor(max_workers=min(PARALLEL_PAGES, len(urls))) as pool:
         fetched = list(pool.map(lambda uf: _page(uf[0], uf[1], fetch), zip(urls, files)))
     readable = []
+    search.pages_read = sum(page.ok for page in fetched)
     for page_url, page in zip(urls, fetched):
         search.pages_tried.append(page_url if page.ok else f"{page_url} ({page.error})")
         if page.ok and (dates := len(DATE_LIKE.findall(page.text))):

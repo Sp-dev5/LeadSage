@@ -34,6 +34,7 @@ Steps 1 and 3 to 6 are built. Step 2 is partly built, and step 7 is planned.
 - **Evaluation** (`agent/evaluate.py`): grades the scorer against hand-labelled leads. With `--text fetched` it scores the company's real website instead of the typed description.
 - **Fetcher** (`agent/fetch.py`): reads a company's web page and returns the text with its source and date. It checks robots.txt first, including at every redirect. A failed fetch never stops a batch.
 - **Sales hiring** (`agent/signals.py`): reads a company's open jobs from its job board (Ashby, Greenhouse, Lever, Keka, Trakstar; found on the careers page or typed in the CSV) and finds the sales roles. A title counts if it contains one of the ICP's sales titles, or if the model says it's a sales role and the title really is on the list. Each role keeps its source and date. Found roles tell the scorer the company has salespeople.
+- **Signal watcher** (`agent/watch.py`): reads each lead's job board and news pages again and flags what is new since the last look: a sales role not seen before, or a news item from the company's own site dated in the last 14 days (`fresh_days` in `data/outreach.json`). The first look at a lead only records what is there, so nothing fires on day one. A board or page that can't be read counts as unknown, never as "no roles". Leads with a new signal move to the top of their tab on the Leads page; news never changes a score, and a lead is rescored only when its set of sales roles changes, since roles were already part of the score. Hiring is watched for companies listed in `data/signals_leads.csv`; news only for leads whose verdict gets an email. Signals show in the web app only, not the Streamlit app.
 - **Careers probe** (`agent/fetch_careers.py`): a feasibility check for the hiring signal. It fetches each careers page from `data/signals_leads.csv` (columns `name,careers_url`) and reports whether the page is readable and mentions sales roles. It passes if at least half do.
 
 ## Roadmap
@@ -41,7 +42,7 @@ Steps 1 and 3 to 6 are built. Step 2 is partly built, and step 7 is planned.
 1. Lead scoring (done)
 2. Walking skeleton: research, score, contact, cited email, follow-ups (done; sending stays manual)
 3. Scoring engine: add intent and engagement on top of fit
-4. **Signal watcher**: watch each company for fresh buying signals and bump it up the queue the moment one fires
+4. Signal watcher: new sales roles and news move a lead up the queue (done; runs when you start it, or on a schedule you set up)
 5. Approval pause: the agent stops for a human to approve before "sending"
 
 ## Run it
@@ -52,6 +53,7 @@ ollama pull qwen3.5:9b            # local model (default)
 python -m agent.pipeline --file real_leads.csv   # research + score into the lead store
 python -m agent.outreach --draft  # find contacts and draft first emails
 python -m agent.outreach --follow-ups            # draft follow-ups that are due
+python -m agent.watch             # look for new sales roles and news (--hiring-only skips news)
 streamlit run streamlit_app.py --server.address localhost   # the app (it has no login: keep it on localhost)
 uvicorn web.app:app --host 127.0.0.1 --port 8000            # the new web app, same pages, at http://127.0.0.1:8000/
 python -m agent.logos             # fetch company logos for stored leads

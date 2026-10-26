@@ -10,6 +10,12 @@
 <span class="meter{{ ' hl' if hl }}" aria-label="{{ score }} of {{ out_of }}">{% for i in range(out_of) %}<i class="{{ 'f' if i < score }}"></i>{% endfor %}<span>{{ score }}/{{ out_of }}</span></span>
 {%- endmacro %}
 
+{% macro signal(events) -%}
+{% if events %}{% set e = events[0] %}<div class="sig small"><span class="pill hl">New signal</span>
+  {% if is_link(e.source) %}<a href="{{ e.source }}" target="_blank" rel="noopener">{{ 'Hiring: ' if e.kind == 'hiring' }}{{ e.quote }}</a>{% else %}{{ e.quote }}{% endif %}
+  <span class="faint">{{ e.first_seen | day }}{% if events | length > 1 %} · {{ events | length - 1 }} more{% endif %}</span></div>{% endif %}
+{%- endmacro %}
+
 {% macro company(name, url, href) -%}
 <div class="co"><img src="/logo/{{ name | urlencode }}" alt="" loading="lazy" width="24" height="24">
   <div><a class="name" href="{{ href }}">{{ name }}</a>{% if url %}<span class="dm">{{ url | domain }}</span>{% endif %}</div></div>
