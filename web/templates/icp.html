@@ -13,9 +13,10 @@
     <form method="post" action="/icp" id="icp-form">
       {% for field, label in fields.items() %}
       <label>{{ label }} <textarea name="{{ field }}" rows="{{ 5 if field == 'notes' else 3 }}" data-field="{{ field }}">{{ raw.get(field, '') }}</textarea></label>
-      <button class="linkish" type="button" data-suggest="{{ field }}">Suggest a fuller description</button>
+      <div class="suggrow"><button class="linkish" type="button" data-suggest="{{ field }}">Suggest a fuller description</button><span class="small faint" data-status="{{ field }}" aria-live="polite"></span></div>
       <div class="sugg" data-sugg="{{ field }}" hidden><h3 style="margin-bottom:8px">Suggestion from the local model</h3><p></p>
         <div class="row-btns"><button class="b" type="button" data-use="{{ field }}">Use this</button><button class="b ghost" type="button" data-dismiss="{{ field }}">Dismiss</button></div></div>
+      {% if field == 'buyer_persona' %}<div class="titles" data-titles="{{ field }}" hidden><span class="small faint">Other titles for this role. Click one to add it to your text.</span><div></div></div>{% endif %}
       {% endfor %}
       <div class="cols" style="border:0;gap:16px">
         <label>Smallest company, employees <input type="number" name="company_size_min" min="1" value="{{ raw.company_size_min }}"></label>

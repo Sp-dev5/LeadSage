@@ -25,3 +25,36 @@ def test_suggest_sends_the_field_draft_and_context(monkeypatch):
 def test_unknown_field_is_refused():
     with pytest.raises(ValueError):
         icp_assist.suggest("weights", "x", {})
+
+
+def test_other_fields_are_context_only_and_nothing_else_is_read():
+    assert "Never carry a fact" in icp_assist.SYSTEM
+    assert "no list of companies" in icp_assist.SYSTEM
+
+
+def test_clean_titles_keeps_short_new_unique_titles():
+    raw = ["VP of Sales", "vp of sales", "Head of Sales", "Chief Revenue Officer", "  Director, Sales Operations. ",
+           "Senior Vice President of Global Field Sales Operations", "Head — Revenue", ""]
+    out = icp_assist.clean_titles(raw, "Head of Sales at B2B software companies")
+    assert out == ["VP of Sales", "Chief Revenue Officer", "Director, Sales Operations", "Head, Revenue"]
+
+
+def test_clean_titles_stops_at_eight():
+    out = icp_assist.clean_titles([f"Title {i}" for i in range(20)], "")
+    assert len(out) == icp_assist.MAX_TITLES
+
+
+def test_suggest_buyer_returns_text_and_cleaned_titles(monkeypatch):
+    seen = {}
+
+    def fake(system, user_prompt, schema, **kw):
+        seen.update(system=system, prompt=user_prompt, schema=schema)
+        return schema(text="Head of Sales who runs the outbound team.", titles=["VP Sales", "Head of Sales", "CRO"])
+
+    monkeypatch.setattr(icp_assist, "generate_structured", fake)
+    text, titles = icp_assist.suggest_buyer("Head of Sales", {"buyer_persona": "Head of Sales", "notes": "AI agent"})
+    assert text == "Head of Sales who runs the outbound team."
+    assert titles == ["VP Sales", "CRO"]
+    assert seen["schema"] is icp_assist.BuyerSuggestion
+    assert "FIELD: buyer_persona" in seen["prompt"]
+    assert "6 to 8 other job titles" in seen["system"]

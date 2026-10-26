@@ -139,3 +139,22 @@ def test_a_background_job_reports_its_lines_and_blocks_a_second(client):
         threading.Event().wait(0.05)
     status = client.get(f"/jobs/{first.id}").json()
     assert status["done"] and status["lines"] == ["step one"] and status["failed"] == ""
+
+
+def test_suggest_returns_titles_for_the_buyer_persona_only(client, monkeypatch):
+    monkeypatch.setattr(web_app, "suggest_buyer", lambda draft, texts: ("Head of Sales.", ["VP Sales", "CRO"]))
+    monkeypatch.setattr(web_app, "suggest", lambda field, draft, texts: "A plain sentence.")
+    body = {"context": {"buyer_persona": "Head of Sales", "pain_solved": "", "notes": ""}}
+    buyer = client.post("/icp/suggest", json={"field": "buyer_persona", **body})
+    assert buyer.json() == {"text": "Head of Sales.", "titles": ["VP Sales", "CRO"]}
+    other = client.post("/icp/suggest", json={"field": "pain_solved", **body})
+    assert other.json() == {"text": "A plain sentence."}
+
+
+def test_suggest_says_so_when_the_model_is_down(client, monkeypatch):
+    def down(draft, texts):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(web_app, "suggest_buyer", down)
+    r = client.post("/icp/suggest", json={"field": "buyer_persona", "context": {}})
+    assert r.status_code == 502 and "ollama serve" in r.json()["error"]

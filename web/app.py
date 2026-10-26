@@ -29,7 +29,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from agent import export, logos, store
 from agent.contacts import typed_contact
-from agent.icp_assist import suggest
+from agent.icp_assist import suggest, suggest_buyer
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
                             save_outreach, sending_problems)
 from agent.pipeline import lead_files, read_leads, score_all, signal_rows
@@ -426,8 +426,11 @@ async def icp_suggest(request: Request):
     if field not in TEXT_FIELDS:
         return JSONResponse({"error": "unknown field"}, status_code=400)
     try:
-        text = await run_in_threadpool(suggest, field, context.get(field, ""),
-                                       {f: context.get(f, "") for f in TEXT_FIELDS})
+        texts = {f: context.get(f, "") for f in TEXT_FIELDS}
+        if field == "buyer_persona":
+            text, titles = await run_in_threadpool(suggest_buyer, texts[field], texts)
+            return {"text": text, "titles": titles}
+        text = await run_in_threadpool(suggest, field, context.get(field, ""), texts)
         return {"text": text}
     except Exception as e:
         return JSONResponse({"error": f"The local model did not answer ({str(e)[:120]}). Is ollama serve running?"},
