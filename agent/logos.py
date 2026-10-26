@@ -3,6 +3,9 @@ Company logos, taken from the company's own website: the icon its homepage decla
 (apple-touch-icon first, then the largest icon, then /favicon.ico). No logo service, no
 outside lookup. Saved in data/logos/ so the app reads them without the network.
 
+Only picture files are kept (PNG, ICO, JPEG, WebP, GIF). An SVG is skipped: it can carry script,
+and the app serves logos from its own address, where that script would run as the app.
+
 Run it:  python -m agent.logos      fetch logos for every stored lead that has none
 """
 
@@ -18,7 +21,7 @@ from agent import store
 from agent.fetch import fetch_html, fetch_image, slug
 
 LOGOS = Path(__file__).resolve().parent.parent / "data" / "logos"
-EXTENSIONS = {"image/png": "png", "image/svg+xml": "svg", "image/x-icon": "ico", "image/vnd.microsoft.icon": "ico",
+EXTENSIONS = {"image/png": "png", "image/x-icon": "ico", "image/vnd.microsoft.icon": "ico",
               "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 
 
@@ -48,7 +51,10 @@ def icon_urls(html: str, base: str) -> list[str]:
 
 
 def logo_path(name: str, logos: Path = LOGOS) -> Path | None:
-    return min(logos.glob(f"{slug(name)}.*"), default=None)
+    """The saved logo, if it is one of the picture types in EXTENSIONS. An SVG saved before they were
+    refused is ignored: it can carry script, so it is never shown."""
+    kinds = set(EXTENSIONS.values())
+    return min((p for p in logos.glob(f"{slug(name)}.*") if p.suffix[1:] in kinds), default=None)
 
 
 def fetch_logo(name: str, url: str, logos: Path = LOGOS) -> Path | None:
@@ -60,10 +66,11 @@ def fetch_logo(name: str, url: str, logos: Path = LOGOS) -> Path | None:
     page = fetch_html(url)
     candidates = icon_urls(page.text, page.url) if page.ok else [urljoin(url, "/favicon.ico")]
     for icon in candidates:
-        if got := fetch_image(icon):
+        got = fetch_image(icon)
+        if got and got[1] in EXTENSIONS:
             data, content_type = got
             logos.mkdir(parents=True, exist_ok=True)
-            path = logos / f"{slug(name)}.{EXTENSIONS.get(content_type, 'png')}"
+            path = logos / f"{slug(name)}.{EXTENSIONS[content_type]}"
             path.write_bytes(data)
             return path
     return None

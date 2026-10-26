@@ -1,9 +1,11 @@
 """The web app's pages and actions against a temporary store. No model, no network."""
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
-from agent import contacts, outreach, store
+from agent import contacts, logos, outreach, store
 from agent.store import Citation, Email
 from tests.test_outreach import CFG, COMPANY, SCORE
 from web import app as web_app
@@ -311,3 +313,48 @@ def test_sender_settings_keep_the_saved_limits_when_the_form_leaves_them_out(cli
 def test_the_minimum_fit_filter_ignores_a_bad_value(client, query, shown):
     seed(emails=False)
     assert client.get(f"/leads.csv?group=All&{query}").text.count("Acme") == shown
+
+
+ALL_PAGES = ["/", "/leads?group=All&lead=Acme", "/outreach?lead=Acme", "/icp", "/login"]
+
+
+@pytest.mark.parametrize("path", ALL_PAGES + ["/static/app.js", "/leads.csv", "/no-such-page"])
+def test_every_response_carries_the_browser_rules(client, path):
+    seed()
+    headers = client.get(path).headers
+    policy = headers["Content-Security-Policy"]
+    assert "script-src 'self';" in policy and "frame-ancestors 'none'" in policy and "object-src 'none'" in policy
+    assert (headers["X-Frame-Options"], headers["X-Content-Type-Options"], headers["Referrer-Policy"]) == (
+        "DENY", "nosniff", "no-referrer")
+
+
+def test_the_login_redirect_carries_the_browser_rules_too(client, monkeypatch):
+    monkeypatch.setattr(web_app, "PASSWORD", "secret")
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["X-Frame-Options"] == "DENY"
+
+
+@pytest.mark.parametrize("path", ALL_PAGES)
+def test_no_page_has_inline_script_or_event_handlers(client, path):
+    seed()
+    html = client.get(path).text
+    assert re.findall(r"<script(?![^>]*\ssrc=)[^>]*>", html) == []
+    assert re.findall(r"\son[a-z]+\s*=", html) == []
+
+
+def test_a_clicked_table_row_opens_its_lead(client):
+    seed()
+    assert 'data-href="?group=All&amp;lead=Acme#detail"' in client.get("/leads?group=All").text
+
+
+def test_logos_are_sandboxed_and_a_stored_svg_is_never_served(client, tmp_path, monkeypatch):
+    real = logos.logo_path
+    (tmp_path / "acme.svg").write_bytes(b"<svg onload='steal()'/>")
+    monkeypatch.setattr(logos, "logo_path", lambda name: real(name, tmp_path))
+    r = client.get("/logo/Acme")
+    assert "steal" not in r.text and ">A</text>" in r.text
+    assert r.headers["Content-Security-Policy"].endswith("sandbox")
+    (tmp_path / "acme.png").write_bytes(b"png")
+    r = client.get("/logo/Acme")
+    assert r.content == b"png" and r.headers["content-type"] == "image/png"
+    assert "sandbox" in r.headers["Content-Security-Policy"]

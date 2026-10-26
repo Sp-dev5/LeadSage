@@ -41,7 +41,7 @@
       <tr><th>Verdict</th><th class="r">Leads</th><th style="width:38%"></th><th class="r">Share</th></tr>
       {% set meaning = {'Qualify': 'Strong match, nothing in the way', 'Strong fit': 'Fit ' ~ qualify_at ~ '+, held back by one rule', 'Review': 'Worth a look, reason given', 'Disqualify': 'Not a fit, reason given'} %}
       {% for name, n, pct in h.verdicts %}
-      <tr class="row" onclick="location.href='/leads?group={{ name | urlencode }}'">
+      <tr class="row" data-href="/leads?group={{ name | urlencode }}">
         <td><a class="name" href="/leads?group={{ name | urlencode }}">{{ name }}</a><span class="sublabel hide-sm">{{ meaning[name] }}</span></td>
         <td class="r num">{{ n }}</td>
         <td><div class="track" style="margin:0"><i class="{{ 'hl' if loop.first }}" style="width:{{ pct }}%"></i></div></td>
@@ -82,7 +82,7 @@
       <tr><th>Company</th><th>Hook</th><th class="hide-sm">To</th><th class="r">Fit</th></tr>
       {% for r in h.up_next %}
       {% set href = '/outreach?lead=' ~ (r.lead.name | urlencode) ~ '#detail' %}
-      <tr class="row" onclick="location.href='{{ href }}'">
+      <tr class="row" data-href="{{ href }}">
         <td>{{ m.company(r.lead.name, r.lead.url, href) }}</td>
         <td><span class="pill">{{ r.ready.hook }}</span></td>
         <td class="hide-sm">{{ r.ready.contact }}</td>
@@ -98,7 +98,7 @@
       <tr><th>Company</th><th>Rule</th><th class="r">Fit</th></tr>
       {% for r in h.strong %}
       {% set href = '/leads?group=Strong+fit&lead=' ~ (r.lead.name | urlencode) ~ '#detail' %}
-      <tr class="row" onclick="location.href='{{ href }}'">
+      <tr class="row" data-href="{{ href }}">
         <td>{{ m.company(r.lead.name, r.lead.url, href) }}</td>
         <td class="muted small">{{ r.held_back_by }}</td>
         <td class="r num">{{ r.lead.score.fit }}</td></tr>

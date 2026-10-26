@@ -68,6 +68,31 @@ async def need_login(request: Request, call_next):
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("LEADSAGE_SECRET") or secrets.token_hex(32),
                    same_site="strict", https_only=False, max_age=14 * 24 * 3600)
 
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "; ".join([
+        "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self'",
+        "font-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'",
+        "frame-ancestors 'none'"]),
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+LOGO_HEADERS = {"Cache-Control": "max-age=3600",
+                "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Browser rules on every response, redirects and errors included. Scripts load only from this
+    app, no other site can frame it or read the URL a click came from (lead names are in it). A
+    response that sets its own policy (a logo) keeps it."""
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
 
 def page(request: Request, name: str, **context) -> HTMLResponse:
     context |= {"flash": request.session.pop("flash", None), "job": jobs.running(), "now": datetime.now(),
@@ -190,9 +215,9 @@ def logo(name: str):
                '<rect x="1" y="1" width="62" height="62" fill="#161917" stroke="#767D78" stroke-width="2"/>'
                '<text x="32" y="43" text-anchor="middle" font-family="Georgia, serif" font-size="32" '
                f'fill="#ECEEEB">{letter if letter.isalnum() else "?"}</text></svg>')
-        return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "max-age=3600"})
+        return Response(svg, media_type="image/svg+xml", headers=LOGO_HEADERS)
     mime = next((m for m, ext in logos.EXTENSIONS.items() if ext == path.suffix[1:]), "image/png")
-    return Response(path.read_bytes(), media_type=mime, headers={"Cache-Control": "max-age=3600"})
+    return Response(path.read_bytes(), media_type=mime, headers=LOGO_HEADERS)
 
 
 def _outreach_rows(icp: ICP, cfg: OutreachConfig) -> list[views.LeadRow]:

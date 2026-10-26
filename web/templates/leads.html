@@ -55,7 +55,7 @@
         <tr><th>Company</th><th>Verdict</th><th class="r">Fit</th><th class="hide-sm"></th><th>Hook</th><th>Contact</th><th class="hide-sm">Stage</th><th class="hide-sm">Country</th><th class="r hide-sm">Size</th><th class="r hide-sm">Roles</th>{% if f.group != 'Qualify' %}<th class="hide-sm">Held back by</th>{% endif %}</tr>
         {% for r in d.table %}
         {% set href = query(lead=r.lead.name) ~ '#detail' %}
-        <tr class="row{{ ' on' if current and current.lead.name == r.lead.name }}" onclick="location.href='{{ href }}'">
+        <tr class="row{{ ' on' if current and current.lead.name == r.lead.name }}" data-href="{{ href }}">
           <td>{{ m.company(r.lead.name, r.lead.url, href) }}</td>
           <td>{{ m.verdict(r.group) }}</td>
           <td class="r num">{{ r.lead.score.fit }}</td>

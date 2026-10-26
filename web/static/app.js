@@ -18,6 +18,11 @@
     paintMotion();
   }
 
+  document.addEventListener("click", function (e) {
+    var row = e.target.closest("tr[data-href]");
+    if (row && !e.target.closest("a, button, input, select, textarea, label")) { location.href = row.dataset.href; }
+  });
+
   var job = document.querySelector("[data-job]");
   if (job) {
     var log = job.querySelector("[data-job-log]");
