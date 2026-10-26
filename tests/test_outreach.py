@@ -758,3 +758,51 @@ def test_saved_search_applies_the_fallbacks_without_saving_them(db):
 
 def test_saved_search_is_none_when_nothing_was_searched(db):
     assert outreach.saved_search(store.load("Acme", db), CFG, db) is None
+
+
+MENU = "Products Pricing Resources Blog Customers Careers Contact Login " * 400
+
+
+def test_a_short_page_goes_to_the_model_whole():
+    assert contacts.leader_view("Priya Rao VP Sales") == "Priya Rao VP Sales"
+
+
+def test_a_long_page_is_cut_to_the_stretches_around_job_titles():
+    text = MENU + "Meet the team. Kedar Kulkarni Co-founder & CEO. Asha Rao Chief Revenue Officer. " + MENU
+    view = contacts.leader_view(text)
+    assert len(text) > contacts.VIEW_CHARS and len(view) <= contacts.VIEW_CHARS
+    assert "Kedar Kulkarni Co-founder & CEO" in view and "Asha Rao Chief Revenue Officer" in view
+    assert view.count("Pricing") < 40
+
+
+def test_the_model_sees_the_stretches_but_names_are_checked_against_the_whole_page(monkeypatch):
+    page_text = MENU + "Kedar Kulkarni Co-founder & CEO " + MENU
+    seen = {}
+
+    def fake(system, user_prompt, schema, **kw):
+        seen["prompt"] = user_prompt
+        return contacts.PeopleSeen(people=[person("Kedar Kulkarni", "Co-founder & CEO"), person("Ghost", "CEO")])
+
+    monkeypatch.setattr(contacts, "generate_structured", fake)
+    found, rejected = contacts.people_on_page(
+        Page(url="https://acme.example/about", text=page_text, fetched_at="t", ok=True), make_icp(), "Acme")
+    assert [p.name for p in found] == ["Kedar Kulkarni"] and len(rejected) == 1
+    assert len(seen["prompt"]) < len(page_text) / 2
+
+
+def test_a_page_saved_at_the_old_cut_is_read_again(tmp_path):
+    from agent.fetch import FULL_MAX_CHARS
+    path = tmp_path / "acme-about-full.json"
+    path.write_text(Page(url="u", text="x" * FULL_MAX_CHARS, fetched_at="t", ok=True).model_dump_json(),
+                    encoding="utf-8")
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        return Page(url=url, text="Priya Rao VP Sales " * 600, fetched_at="t", ok=True)
+
+    again = contacts._people_page("https://acme.example/about", path, fetch)
+    assert calls and len(again.text) > FULL_MAX_CHARS
+    calls.clear()
+    contacts._people_page("https://acme.example/about", path, fetch)
+    assert calls == []

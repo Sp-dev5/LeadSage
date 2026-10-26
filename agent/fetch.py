@@ -48,6 +48,7 @@ PUBLIC_APIS = {"api.ashbyhq.com"}
 RATE_LIMIT_WAIT = 10
 MAX_SITE_LINKS = 6
 MAX_LINK_DEPTH = 2
+AMBIGUOUS_WORDS = ("people", "team")
 SKIP_LINK_ENDINGS = (".pdf", ".jpg", ".jpeg", ".png", ".svg", ".zip", ".xml")
 
 
@@ -243,7 +244,10 @@ def site_links(url: str, words: tuple[str, ...], limit: int = MAX_SITE_LINKS) ->
             continue
         segments = [s for s in path.split("/") if s]
         tokens = set(re.split(r"[-_]", "-".join(segments)))
-        if len(segments) <= MAX_LINK_DEPTH and any(w in tokens or (("-" in w) and w in segments) for w in words):
+        last = re.split(r"[-_]", segments[-1])[-1] if segments else ""
+        named = [w for w in words if w in tokens or (("-" in w) and w in segments)]
+        named = [w for w in named if w not in AMBIGUOUS_WORDS or w == last]
+        if len(segments) <= MAX_LINK_DEPTH and named:
             found.append(path)
     return found[:limit]
 
