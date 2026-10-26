@@ -173,7 +173,7 @@
                 <tr><td class="num faint">·</td><td class="small muted" colspan="3">{{ cut }}</td><td><span class="tag cut">Cut</span></td></tr>
                 {% endfor %}
               </table>
-              <p class="annot"><b>Rule:</b> a line about the company stays only if its quote is found on their own site.</p>
+              <p class="annot"><b>Rule:</b> a line about the company stays only if its quote is in their own words: their site, job posts or news.</p>
               {% endif %}
             {% endif %}
           </div>
@@ -235,12 +235,12 @@
           <p class="small faint" style="margin:8px 0 0">A reply, a meeting or a loss stops the follow-ups.</p>
           <details><summary>Set any stage, do not contact, delete</summary><div>
             <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="stage">
-              <label>Stage <select name="stage">{% for st in stages %}<option {{ 'selected' if st == lead.stage }}>{{ st }}</option>{% endfor %}</select></label>
+              <label>Stage <select name="stage">{% for st in stages %}<option value="{{ st }}" {{ 'selected' if st == lead.stage }}>{{ st | capitalize }}</option>{% endfor %}</select></label>
               <button class="b ghost" type="submit">Set stage</button></form>
             <form method="post" action="/outreach/act" style="margin-top:18px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="suppress">
               <label>Do not contact: reason (optional) <input type="text" name="reason"></label>
               <button class="b ghost" type="submit" {{ 'disabled' if lead.name in suppressed }}>Add to the do-not-contact list</button>
-              <p class="small faint">Stops every email and keeps this company from being drafted for again, even if it is scored again.</p></form>
+              <p class="small faint">Stops every email and keeps this company out of future drafts, even if it is scored again.</p></form>
             <form method="post" action="/outreach/act" style="margin-top:18px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="delete">
               <label class="check"><input type="checkbox" name="sure" value="1" required> I understand this cannot be undone</label>
               <button class="b pen" type="submit">Delete this lead and its data</button>
