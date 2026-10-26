@@ -20,6 +20,14 @@ def test_saved_lead_comes_back(tmp_path):
     assert (lead.name, lead.score.fit, lead.score.location.country, lead.stage) == ("Acme", 55, "India", "new")
 
 
+def test_only_web_addresses_are_kept_as_links(tmp_path):
+    db = tmp_path / "leads.db"
+    store.save(COMPANY, score(55), url="javascript:alert(1)", text_source="fetched", path=db)
+    assert store.load_all(db)[0].url == ""
+    assert store.StoredLead.model_validate({**store.load_all(db)[0].model_dump(), "url": " JavaScript:x"}).url == ""
+    assert store.web_url("HTTPS://acme.test") == "HTTPS://acme.test"
+
+
 def test_rescoring_replaces_the_score_but_keeps_the_stage(tmp_path):
     db = tmp_path / "leads.db"
     store.save(COMPANY, score(55), url="", text_source="typed", path=db)

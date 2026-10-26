@@ -213,7 +213,7 @@
       running = field;
       button.disabled = true;
       status(field).textContent = "Writing a suggestion with the local model. This takes about 15 seconds.";
-      fetch("/icp/suggest", { method: "POST", headers: { "Content-Type": "application/json" },
+      fetch("/icp/suggest", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": document.querySelector("meta[name=csrf]").content },
         body: JSON.stringify({ field: field, context: context }) })
         .then(function (r) { return r.json(); })
         .catch(function () { return { error: "The app did not answer. Is it still running?" }; })

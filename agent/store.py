@@ -17,7 +17,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from agent.contacts import ContactSearch
 from agent.fetch import now
@@ -70,6 +70,17 @@ class StoredLead(BaseModel):
     scored_at: str
     stage: str
 
+    @field_validator("url")
+    @classmethod
+    def _web_only(cls, url: str) -> str:
+        return web_url(url)
+
+
+def web_url(url: str) -> str:
+    """The address if it is a web page, else "". A javascript: or data: address from a lead list
+    would run as the app when its link is clicked."""
+    return url if url.strip().lower().startswith(("http://", "https://")) else ""
+
 
 class Citation(BaseModel):
     """One sentence about the prospect and the company's own words behind it."""
@@ -120,7 +131,7 @@ def save(company: Company, score: LeadScore, url: str, text_source: str, path: P
                VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(name) DO UPDATE SET url = excluded.url, text_source = excluded.text_source,
                    company = excluded.company, score = excluded.score, scored_at = excluded.scored_at""",
-            (company.name, url, text_source, company.model_dump_json(), score.model_dump_json(), now(), stage),
+            (company.name, web_url(url), text_source, company.model_dump_json(), score.model_dump_json(), now(), stage),
         )
 
 
