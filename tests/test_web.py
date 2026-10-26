@@ -44,6 +44,16 @@ def test_pages_open_with_a_lead(client, path):
     assert client.get(path).status_code == 200
 
 
+def test_outreach_splits_the_table_into_pages_of_ten(client):
+    for i in range(12):
+        store.save(COMPANY.model_copy(update={"name": f"Co {i:02}"}), SCORE, url="https://co.example",
+                   text_source="typed", path=views.DB)
+    first = client.get("/outreach").text
+    assert "Page <b>1</b> of 2 · 1 to 10 of 12" in first
+    assert "Page <b>2</b> of 2 · 11 to 12 of 12" in client.get("/outreach?page=2").text
+    assert "Page <b>2</b> of 2" in client.get("/outreach?page=99").text
+
+
 def test_home_counts_kept_and_cut_lines(client):
     seed()
     page = client.get("/").text

@@ -58,7 +58,7 @@
     <div class="empty"><h2>No leads to write to yet.</h2><p class="muted">Score leads on the Leads page first.</p><a class="b" href="/leads">Go to Leads &rarr;</a></div>
     {% else %}
     <nav class="tabs" aria-label="Queue">
-      {% for q in queues %}<a href="{{ query(queue=q, lead=None, step=None) }}" class="{{ 'on' if q == queue }}">{{ q }} <span>{{ counts[q] }}</span></a>{% endfor %}
+      {% for q in queues %}<a href="{{ query(queue=q, lead=None, step=None, page=None) }}" class="{{ 'on' if q == queue }}">{{ q }} <span>{{ counts[q] }}</span></a>{% endfor %}
     </nav>
     <div class="tablewrap swap">
       {% if table %}
@@ -77,6 +77,13 @@
         </tr>
         {% endfor %}
       </table></div>
+      {% if pages > 1 %}
+      <nav class="pager" aria-label="Pages">
+        <a class="b ghost" href="{{ query(page=(at - 1 if at > 2 else None), lead=None, step=None) }}" {{ 'aria-disabled=true' if at == 1 }}>&larr; Previous</a>
+        <span class="mono small muted">Page <b>{{ at }}</b> of {{ pages }} · {{ first }} to {{ first + table | length - 1 }} of {{ total }}</span>
+        <a class="b ghost" href="{{ query(page=at + 1, lead=None, step=None) }}" {{ 'aria-disabled=true' if at == pages }}>Next &rarr;</a>
+      </nav>
+      {% endif %}
       {% else %}<p class="muted">Nothing in "{{ queue }}" right now.</p>{% endif %}
     </div>
 
