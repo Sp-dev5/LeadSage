@@ -127,7 +127,7 @@
             <dt>Scored from</dt><dd class="mono small">{{ lead.url | domain or 'no url' }} · {{ 'website text' if lead.text_source == 'fetched' else lead.text_source }} · {{ lead.scored_at | day }} · {{ s.model or 'model unknown' }}</dd>
           </dl>
           <details><summary>Facts the model found ({{ s.facts | length }})</summary><div>
-            <table>{% for k, v in s.facts.items() %}<tr><td class="mono small">{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}</table>
+            <table>{% for k, v in s.facts.items() %}<tr><td class="small">{{ k | plain }}</td><td>{{ v | plain }}</td></tr>{% endfor %}</table>
           </div></details>
           {% if s.rejected_quotes %}
           <details><summary>Quotes rejected by the quote check ({{ s.rejected_quotes | length }})</summary><div>

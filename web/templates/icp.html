@@ -59,13 +59,13 @@
 
 <section class="pane" style="border-top:0">
   <header><div><h2>Rules</h2><h3>Applied after the facts are checked</h3></div></header>
-  <form method="post" action="/icp/rules" id="rules-form" data-facts="{{ facts | tojson | forceescape }}">
+  <form method="post" action="/icp/rules" id="rules-form" data-facts="{{ facts | tojson | forceescape }}" data-labels="{{ labels | tojson | forceescape }}">
     <div class="scroll"><table class="edit" id="rules-table">
       <tr><th>If fact</th><th>Is</th><th>Then</th><th>Why</th><th></th></tr>
       {% for r in raw.fact_rules %}
       <tr data-rule>
-        <td><select name="rule_fact" aria-label="Fact">{% for f in facts %}<option value="{{ f }}"{% if f == r.fact %} selected{% endif %}>{{ f }}</option>{% endfor %}</select></td>
-        <td><select name="rule_value" aria-label="Value">{% for v in facts[r.fact] %}<option value="{{ v }}"{% if v == r.value %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></td>
+        <td><select name="rule_fact" aria-label="Fact">{% for f in facts %}<option value="{{ f }}"{% if f == r.fact %} selected{% endif %}>{{ f | plain }}</option>{% endfor %}</select></td>
+        <td><select name="rule_value" aria-label="Value">{% for v in facts[r.fact] %}<option value="{{ v }}"{% if v == r.value %} selected{% endif %}>{{ v | plain }}</option>{% endfor %}</select></td>
         <td><select name="rule_action" aria-label="Then"><option value="review"{% if r.action == 'review' %} selected{% endif %}>Review</option><option value="disqualify"{% if r.action == 'disqualify' %} selected{% endif %}>Disqualify</option></select></td>
         <td><input type="text" name="rule_label" value="{{ r.label }}" required aria-label="Why"></td>
         <td class="r"><button class="b ghost" type="button" data-remove-rule aria-label="Remove this rule">Remove</button></td>
@@ -90,8 +90,8 @@
           <tr><th>They sell</th><th>To</th><th class="r">Score 0-5</th><th></th></tr>
           {% for r in raw.industry_map %}
           <tr data-ind>
-            <td><select name="ind_offering" aria-label="They sell"><option value="">Any</option>{% for v in facts.offering %}<option value="{{ v }}"{% if v == r.offering %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></td>
-            <td><select name="ind_customers" aria-label="To"><option value="">Any</option>{% for v in facts.customers %}<option value="{{ v }}"{% if v == r.customers %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></td>
+            <td><select name="ind_offering" aria-label="They sell"><option value="">Any</option>{% for v in facts.offering %}<option value="{{ v }}"{% if v == r.offering %} selected{% endif %}>{{ v | plain }}</option>{% endfor %}</select></td>
+            <td><select name="ind_customers" aria-label="To"><option value="">Any</option>{% for v in facts.customers %}<option value="{{ v }}"{% if v == r.customers %} selected{% endif %}>{{ v | plain }}</option>{% endfor %}</select></td>
             <td class="r"><input type="number" name="ind_score" value="{{ r.score }}" min="0" max="5" step="1" required aria-label="Score"></td>
             <td class="r"><button class="b ghost" type="button" data-remove-row aria-label="Remove this row">Remove</button></td>
           </tr>

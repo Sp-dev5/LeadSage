@@ -120,6 +120,23 @@ def leads(rows: list[LeadRow], f: LeadFilters) -> dict:
     }
 
 
+PLAIN_NAMES = {
+    "what_they_sell": "What they sell", "is_services": "Sells services", "is_marketplace": "Is a marketplace",
+    "is_non_software": "Sells something other than software", "builds_own_software": "Builds its own software",
+    "customers": "Sells to", "sales_motion": "How it sells", "sells_sales_tools": "Sells sales tools",
+    "primary_business": "Most revenue from", "non_profit_or_government": "Non-profit or government",
+    "offering": "What it offers", "no_sales": "no sales team", "founder_led": "founders sell",
+    "outbound_team": "outbound sales team", "sales_team_unclear": "has salespeople, method unclear",
+    "own_software": "its own software", "non_software": "not software", "other_unclear": "unclear",
+}
+
+
+def plain(code: str) -> str:
+    if code in PLAIN_NAMES:
+        return PLAIN_NAMES[code]
+    return code.replace("_", " ") if re.fullmatch(r"[a-z_]+", code or "") else code
+
+
 def domain(url: str) -> str:
     m = re.match(r"https?://(?:www\.)?([^/]+)", url or "")
     return m.group(1) if m else (url or "")
