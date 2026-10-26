@@ -18,7 +18,7 @@
   </div>
 </section>
 
-<section class="stats stats-4">
+<section class="stats stats-5">
   <div class="stat"><small>Leads scored</small><b>{{ h.scored }}</b>
     <span class="sub">{{ h.by_group['Qualify'] }} qualify · {{ h.by_group['Disqualify'] }} disqualify</span>
     <div class="track"><i class="wd-100p"></i></div></div>
@@ -31,6 +31,9 @@
   <div class="stat"><small>Sent</small><b>{{ h.sent }}</b>
     <span class="sub">{{ h.approved }} approved · {{ h.replied }} replied</span>
     <div class="track"><i class="hl w-{{ share(h.sent, h.worth) }}"></i></div></div>
+  <a class="stat" href="/leads?group=All&amp;signals=1"><small>New signals</small><b>{{ h.new_signals }}</b>
+    <span class="sub">{{ 'lead' if h.new_signals == 1 else 'leads' }} with a new signal in the last {{ fresh_days }} days</span>
+    <div class="track"><i class="hl w-{{ share(h.new_signals, h.scored) }}"></i></div></a>
 </section>
 
 <section class="cols wide">
@@ -75,7 +78,7 @@
 
 <section class="cols">
   <div class="pane">
-    <header><div><h2>Up next</h2><h3>Ready to review, best fit first</h3></div>
+    <header><div><h2>Up next</h2><h3>Ready to review, new signals first, then best fit</h3></div>
       <a class="b ghost" href="/outreach?queue=Ready+to+review">Open queue</a></header>
     {% if h.up_next %}
     <table>

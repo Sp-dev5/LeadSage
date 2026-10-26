@@ -63,6 +63,8 @@ class OutreachConfig(BaseModel):
     contact_pages: list[str] = Field(min_length=1, description="website paths read to find people")
     news_pages: list[str] = Field(min_length=1, description="website paths read to find recent news")
     news_max_age_days: int = Field(gt=0, description="news older than this many days is not a hook")
+    fresh_days: int = Field(gt=0, description="a new signal counts as fresh for this many days, and a news item "
+                                              "dated earlier than that never fires as new")
     startup_max_headcount: int = Field(gt=0, description="at or below this headcount, a company with no "
                                                          "buyer named gets its chief executive instead")
     startup_contact_titles: list[str] = Field(min_length=1, description="titles for that fallback, best first")

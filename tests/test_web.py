@@ -1,6 +1,7 @@
 """The web app's pages and actions against a temporary store. No model, no network."""
 
 import re
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -262,6 +263,46 @@ def test_a_post_without_the_page_token_is_refused(client):
     assert client.post("/outreach/act", data={"lead": "Acme", "do": "approve", "step": 0, "csrf": "forged"},
                        csrf=False).status_code == 403
     assert client.post("/icp/suggest", json={"field": "notes", "context": {}}, csrf=False).status_code == 403
+
+
+def test_check_signals_needs_the_page_token_and_starts_a_job(client, monkeypatch):
+    seed(emails=False)
+    calls = []
+    monkeypatch.setattr(web_app, "watch_leads", lambda icp, cfg, db, report: calls.append(db))
+    assert client.post("/watch", csrf=False).status_code == 403
+    assert client.post("/watch", follow_redirects=False).status_code == 303
+    for _ in range(50):
+        if calls:
+            break
+        threading.Event().wait(0.05)
+    assert calls == [views.DB]
+
+
+def new_signal(lead: str, quote: str):
+    store.record_events(lead, [store.SignalEvent(kind="news", key=quote.lower(), detail="{}", quote=quote,
+                                                 source="https://acme.example/news", item_date="2026-10-25",
+                                                 fired=True)], views.DB)
+
+
+def test_leads_with_a_new_signal_come_first_in_their_tab(client):
+    store.save(COMPANY, SCORE, url="https://acme.example", text_source="typed", path=views.DB)
+    store.save(COMPANY.model_copy(update={"name": "Busy"}), SCORE.model_copy(update={"fit": 72}),
+               url="https://busy.example", text_source="typed", path=views.DB)
+    new_signal("Busy", "Busy launches a billing module")
+    page = client.get("/leads?group=Qualify").text
+    assert page.index(">Busy<") < page.index(">Acme<")
+    assert 'class="sig' in page and "Busy launches a billing module" in page
+    only = client.get("/leads?group=Qualify&signals=1").text
+    assert ">Busy<" in only and ">Acme<" not in only
+    assert "<b>1</b>" in client.get("/").text.split("New signals")[1][:40]
+
+
+def test_signals_stored_on_a_baseline_never_show_as_new(client):
+    seed(emails=False)
+    store.record_events("Acme", [store.SignalEvent(kind="news", key="k", detail="{}", quote="Old launch",
+                                                   source="https://acme.example/news")], views.DB)
+    page = client.get("/leads?group=All&lead=Acme").text
+    assert "Old launch" not in page and 'class="sig' not in page
 
 
 def test_login_locks_after_five_wrong_tries(client, monkeypatch):

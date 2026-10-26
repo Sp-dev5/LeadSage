@@ -346,6 +346,9 @@ table.edit input[type=text] { width: 100%; min-width: 260px; padding: 7px 10px; 
 label.check { display: flex; align-items: center; gap: 10px; text-transform: none; letter-spacing: 0; font: 400 14.5px var(--sans); color: var(--ink); margin: 0 0 8px; }
 
 .stats-4 { --n:4 !important; }
+.stats-5 { --n:5 !important; }
+a.stat { color: inherit; text-decoration: none; }
+.sig { margin: 5px 0 0 34px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .wd-100p { width:100% !important; }
 .wd-38p { width:38% !important; }
 .m-0 { margin:0 !important; }

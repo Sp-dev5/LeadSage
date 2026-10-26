@@ -23,8 +23,9 @@
           <input type="range" name="min_fit" min="0" max="100" step="5" value="{{ f.min_fit }}" data-range></label>
         <label class="check"><input type="checkbox" name="region" value="1" {{ 'checked' if f.region_only }}> Only my ideal-customer region</label>
         <label class="check"><input type="checkbox" name="hiring" value="1" {{ 'checked' if f.hiring_only }}> Only companies hiring for sales</label>
+        <label class="check"><input type="checkbox" name="signals" value="1" {{ 'checked' if f.signals_only }}> New signals only</label>
         <div class="row-btns"><button class="b ghost" type="submit">Apply</button>
-          {% if f.countries or f.min_fit or f.region_only or f.hiring_only %}<a class="b ghost" href="/leads?group={{ f.group | urlencode }}">Clear</a>{% endif %}</div>
+          {% if f.countries or f.min_fit or f.region_only or f.hiring_only or f.signals_only %}<a class="b ghost" href="/leads?group={{ f.group | urlencode }}">Clear</a>{% endif %}</div>
       </form>
     </section>
     <section>
@@ -37,6 +38,15 @@
       </form>
       <p class="faint small m-12-0-0">About 20 seconds a company on the local model. You can leave this page; the progress shows at the top.</p>
     </section>
+    {% if rows %}
+    <section>
+      <h3>New signals</h3>
+      <form method="post" action="/watch" data-busy="Starting"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="b wide ghost" type="submit" {{ 'disabled' if job }}>Check signals now</button>
+      </form>
+      <p class="faint small m-12-0-0">Reads job boards and news pages again and flags what's new since the last check. The first check only records what's there.</p>
+    </section>
+    {% endif %}
   </aside>
 
   <div class="main">
@@ -46,7 +56,7 @@
     <nav class="tabs" aria-label="Verdict">
       {% for g in d.groups %}<a href="{{ query(group=g, lead=None) }}" class="{{ 'on' if g == f.group }}">{{ g }} <span>{{ d.counts[g] }}</span></a>{% endfor %}
     </nav>
-    <div class="note"><span>{{ {'Qualify': 'Strong matches with nothing holding them back.', 'Strong fit': 'Fit ' ~ qualify_at ~ ' or more, held at review by one rule. The rule is in the last column.', 'Review': 'Worth a look. Each one says what held it back.', 'Disqualify': 'Not a fit, with the reason.', 'All': 'Every lead, best fit first.'}[f.group] }}</span>
+    <div class="note"><span>{{ {'Qualify': 'Strong matches with nothing holding them back.', 'Strong fit': 'Fit ' ~ qualify_at ~ ' or more, held at review by one rule. The rule is in the last column.', 'Review': 'Worth a look. Each one says what held it back.', 'Disqualify': 'Not a fit, with the reason.', 'All': 'Every lead, best fit first.'}[f.group] }}{% if d.table | selectattr('signals') | list %} Leads with a new signal come first.{% endif %}</span>
       {% if d.hidden %}<span class="faint">{{ d.hidden }} of {{ rows | length }} hidden by filters</span>{% endif %}</div>
 
     <div class="tablewrap swap">
@@ -56,7 +66,7 @@
         {% for r in d.table %}
         {% set href = query(lead=r.lead.name) ~ '#detail' %}
         <tr class="row{{ ' on' if current and current.lead.name == r.lead.name }}" data-href="{{ href }}">
-          <td>{{ m.company(r.lead.name, r.lead.url, href) }}</td>
+          <td>{{ m.company(r.lead.name, r.lead.url, href) }}{{ m.signal(r.signals) }}</td>
           <td>{{ m.verdict(r.group) }}</td>
           <td class="r num">{{ r.lead.score.fit }}</td>
           <td class="hide-sm">{{ m.squares(r.lead.score.fit) }}</td>
@@ -122,6 +132,7 @@
           <header><div><h2>Evidence</h2><h3>Where this came from</h3></div></header>
           <dl class="kv">
             <dt>Outreach</dt><dd>{% if not ready.worth_contacting %}<span class="muted">This verdict does not get an email.</span>{% elif not ready.drafted %}<span class="muted">No email drafted yet.</span>{% else %}<span class="row-btns">{% if ready.hook %}<span class="pill hl">Hook: {{ ready.hook }}</span>{% else %}<span class="pill">No hook</span>{% endif %}<span class="pill">{{ ready.contact or 'No contact' }}</span><span class="pill">Email: {{ ready.status }}</span></span>{% endif %}</dd>
+            {% if current.signals %}<dt>New signals</dt><dd><ul class="plain">{% for e in current.signals %}<li><span class="pill hl">{{ 'Hiring' if e.kind == 'hiring' else 'News' }}</span> {% if is_link(e.source) %}<a href="{{ e.source }}" target="_blank" rel="noopener">{{ e.quote }}</a>{% else %}{{ e.quote }}{% endif %} <span class="faint mono small">{% if e.item_date %}dated {{ e.item_date | day }} · {% endif %}first seen {{ e.first_seen | day }}</span></li>{% endfor %}</ul></dd>{% endif %}
             <dt>Open sales roles</dt><dd>{% if s.sales_roles %}<ul class="plain">{% for role in s.sales_roles %}<li><a href="{{ role.source }}" target="_blank" rel="noopener">{{ role.title }}</a> <span class="faint mono small">{{ role.match }}</span></li>{% endfor %}</ul>{% else %}<span class="muted">None found on a job board.</span>{% endif %}</dd>
             <dt>Where they are</dt><dd>{{ s.location.evidence or 'No location given.' }}</dd>
             <dt>Scored from</dt><dd class="mono small">{{ lead.url | domain or 'no url' }} · {{ 'website text' if lead.text_source == 'fetched' else lead.text_source }} · {{ lead.scored_at | day }} · {{ s.model or 'model unknown' }}</dd>
