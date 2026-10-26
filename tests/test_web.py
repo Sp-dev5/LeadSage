@@ -204,6 +204,12 @@ def scoring_form(path, **change):
     return data | change
 
 
+def test_icp_page_names_facts_in_words(client):
+    html = client.get("/icp").text
+    assert ">How it sells<" in html and ">has salespeople, method unclear<" in html
+    assert ">sales_team_unclear<" not in html and ">is_services<" not in html
+
+
 def test_icp_page_shows_the_numbers_and_rules_as_inputs(client):
     html = client.get("/icp").text
     assert 'name="qualify_at"' in html and 'name="weight:industry match"' in html

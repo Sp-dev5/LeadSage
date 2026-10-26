@@ -94,13 +94,14 @@
   var rules = document.getElementById("rules-form");
   if (rules) {
     var facts = JSON.parse(rules.dataset.facts);
+    var labels = JSON.parse(rules.dataset.labels || "{}");
     var table = document.getElementById("rules-table");
     var fill = function (select, options, chosen) {
       select.textContent = "";
       options.forEach(function (o) {
         var opt = document.createElement("option");
         opt.value = o;
-        opt.textContent = o;
+        opt.textContent = labels[o] || o;
         if (o === chosen) { opt.selected = true; }
         select.appendChild(opt);
       });

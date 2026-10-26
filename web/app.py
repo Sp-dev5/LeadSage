@@ -83,7 +83,7 @@ async def check_csrf(request: Request):
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, dependencies=[Depends(check_csrf)])
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
-templates.env.filters.update(domain=views.domain, bare=views.bare, day=views.day, stamp=views.stamp, letter=views.letter)
+templates.env.filters.update(plain=views.plain, domain=views.domain, bare=views.bare, day=views.day, stamp=views.stamp, letter=views.letter)
 templates.env.globals.update(is_link=views.is_link, share=views.share)
 
 
@@ -480,7 +480,8 @@ def icp_page(request: Request):
                 weights=[(n, w, round(100 * w / total)) for n, w in s["weights"].items()],
                 setting_fields=[(k, label, kind is int, lo, hi, step, s[k])
                                 for k, label, kind, lo, hi, step in SETTING_FIELDS],
-                facts={name: list(values) for name, values in FACT_VALUES.items()}, criteria=ALL_CRITERIA)
+                facts={name: list(values) for name, values in FACT_VALUES.items()}, criteria=ALL_CRITERIA,
+                labels={c: views.plain(c) for name, values in FACT_VALUES.items() for c in (name, *values)})
 
 
 def _first_error(e: ValidationError) -> str:

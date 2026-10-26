@@ -102,6 +102,11 @@ def test_locate_from_state_or_city(location, in_region):
     assert sl.locate(make_icp(), location).in_region == in_region
 
 
+def test_location_evidence_names_the_country_once():
+    assert sl.locate(make_icp(), "Bengaluru, India").evidence == "Bengaluru, India: in your ideal-customer region"
+    assert sl.locate(make_icp(), "Toronto, Ontario").evidence.endswith("outside your ideal-customer region")
+
+
 def test_geography_is_not_a_criterion():
     assert "geography match" not in sl.ALL_CRITERIA
 
@@ -425,7 +430,7 @@ def test_disagreement_sends_a_disqualified_lead_to_review(two_models):
     results[sl.second_model_name()] = lead_score(50, "review", "second")
     result = sl.score_with_second_opinion(make_icp(), COMPANY)
     assert result.verdict == "review"
-    assert "models disagree: main disqualify 35, second review 50" in result.review_flags
+    assert "second model disagrees: main disqualify 35, second review 50" in result.review_flags
 
 
 def test_two_disqualifies_agree_however_far_apart(two_models):
@@ -441,7 +446,7 @@ def test_two_reviews_far_apart_still_disagree(two_models):
     results[None] = lead_score(45, "review")
     results[sl.second_model_name()] = lead_score(65, "review", "second")
     assert sl.score_with_second_opinion(make_icp(), COMPANY).verdict == "review"
-    assert "models disagree" in sl.score_with_second_opinion(make_icp(), COMPANY).review_flags[-1]
+    assert "second model disagrees" in sl.score_with_second_opinion(make_icp(), COMPANY).review_flags[-1]
 
 
 def test_failed_second_model_keeps_the_main_score(two_models):
