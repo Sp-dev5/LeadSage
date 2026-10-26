@@ -119,7 +119,9 @@ doing. If there is a HOOK, the first claim is about it. A second claim is option
 one only if it is about how they sell, who their customers are or that they hire for sales, \
 never about a product feature. One claim is enough. Without a HOOK, prefer a detail about \
 how they sell, who their customers are, or that they are hiring for sales: it is what links \
-them to us. Write to the reader in the second person, saying "you" and "your", never "the \
+them to us. Never tell them what their own product does, how many people use it or who trusts \
+it: they know that, and it reads like their own website read back to them. If nothing else \
+is in the text, say who their customers are. Write to the reader in the second person, saying "you" and "your", never "the \
 company" or their company's name as the subject ("Your platform lets reps see what they will \
 earn before a deal closes."). For each, first copy a quote of under 15 words \
 from COMPANY DETAILS, OPEN ROLES or RECENT NEWS, character for character, from one place in the text \
@@ -130,12 +132,15 @@ Use only details that are in the quote: no other names, places, numbers or dates
 the company's own words count: never quote WHAT WE SELL or RESEARCH.
 - pitch: one or two sentences about OUR product, and what it would change for their sales \
 team, linked to the detail in the claims. Describe what our product does in the words of \
-WHAT WE SELL and promise nothing else: no features, integrations, pilots, demos, trials \
+WHAT WE SELL and promise nothing else. Say what it does, never the label: don't write "AI" or "AI agent" or "agent", write "we research \
+the companies, check how well they fit and choose when to write" in your own plain words. Make it about the change for their reps, tied to the claim (a hire means new reps with no list; a launch means a busy quarter): no features, integrations, pilots, demos, trials \
 or results, and don't say it sends messages unless WHAT WE SELL says so. Their own product is never the pitch: don't describe it back to them, and \
 never criticise it. Never credit our product with a result their customers got from their \
 product. State no new facts about their company here.
 - ask: one short, low-pressure question that invites a reply and follows from what you \
-wrote. Make it specific to this company; never reuse a stock question. State no new facts \
+wrote. It is a question they can answer in a line about their own team or plans, never a request for a \
+meeting or call and never "would you be open to" or "interested in exploring". Make it specific \
+to this company; never reuse a stock question. State no new facts \
 about their company here: never describe how they sell from WHAT WE SELL or RESEARCH.
 
 Style:

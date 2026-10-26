@@ -24,27 +24,33 @@
                     "streamline", "seamless", "optimal", "optimize", "elevate", "empower", "unlock", "unleash",
                     "delve", "robust", "cutting-edge", "effortless", "supercharge", "revolutionize", "harness",
                     "landscape", "tailored", "in today's", "navigate", "game changer", "I came across",
-                    "I noticed", "excited to", "I'd love to", "sends outreach", "sends messages", "sends emails"],
+                    "I noticed", "excited to", "I'd love to", "sends outreach", "sends messages", "sends emails",
+                    "open to exploring", "interested in exploring", "exploring how", "would you consider"],
   "examples": [
     {
       "situation": "first email, they are hiring salespeople",
       "subject": "two new account executives",
-      "body": "You are hiring two account executives for your new Singapore office. New reps usually spend their first weeks researching accounts before they have a real conversation. We research and qualify prospects and time the first message, so they start on warm conversations. How are you planning to get the new reps ramped on prospecting?"
+      "body": "You are hiring two account executives for your new Singapore office. Reps who start without a target list spend their first weeks building one by hand. We research the companies, check which ones fit and choose when to write, so the new reps start with warm names. Who is building their first list for them?"
     },
     {
-      "situation": "first email, no hiring signal, written from who their customers are",
+      "situation": "first email, a launch they announced",
+      "subject": "the new billing module",
+      "body": "You launched a billing module for freight forwarders this month. A launch usually means a few busy weeks of finding the right accounts to tell. We research the companies, check which ones fit and choose when to write, so your reps start from a short list. How are they picking who to tell first?"
+    },
+    {
+      "situation": "first email, no hiring or news, written from who their customers are",
       "subject": "selling to logistics firms",
-      "body": "Your customers are mostly mid-size logistics firms, a market where a good prospect list takes real digging. Our agent researches those companies, works out which ones fit and picks the moment to contact them, so your reps spend their time on conversations. Does your team build those lists by hand today?"
+      "body": "Your customers are mostly mid-size logistics firms, a market where a good prospect list takes real digging. We research those companies, work out which ones fit and pick the moment to contact them, so your reps spend their time on conversations. Who builds those lists today?"
     },
     {
       "situation": "follow-up 1, adds one new thing",
       "subject": "Re: two new account executives",
-      "body": "One more thought on the new hires. The prospect research they will do in month one is the part we take over, which leaves them more time with buyers. If the timing is wrong, tell me and I will come back after your next quarter."
+      "body": "One more thought on the new hires. The research they do in month one is the part we take over, which leaves them more time with buyers. If the timing is wrong, tell me and I will come back after your next quarter."
     },
     {
       "situation": "last follow-up, final and leaves the door open",
       "subject": "Re: two new account executives",
-      "body": "This is my last note, so I will not clutter your inbox. If prospecting time becomes a bottleneck for the new reps, I would be glad to show you how we handle the research. Either way, good luck with the hiring push."
+      "body": "This is my last note, so I will not clutter your inbox. If prospecting time becomes a bottleneck for the new reps, I will gladly show you how we handle the research. Either way, good luck with the hiring push."
     }
   ]
 }
