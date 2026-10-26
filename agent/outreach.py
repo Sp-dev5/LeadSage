@@ -27,9 +27,10 @@ from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, Field, field_validator
 
-from agent import store
+from agent import logos, store
 from agent.contacts import Contact, ContactSearch, closest_match, find_contact, startup_fallback
 from agent.fetch import Page, site_links, slug
+from agent.files import write_text_atomic
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
 from agent.llm import generate_writing
 from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, quote_in
@@ -88,7 +89,7 @@ def load_outreach(path: Path = OUTREACH_PATH) -> OutreachConfig:
 
 
 def save_outreach(cfg: OutreachConfig, path: Path = OUTREACH_PATH) -> None:
-    path.write_text(cfg.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    write_text_atomic(path, cfg.model_dump_json(indent=2) + "\n")
 
 
 class ClaimOut(BaseModel):
@@ -341,9 +342,13 @@ def plain_email(out: EmailOut) -> EmailOut:
                     claims=[ClaimOut(quote=_plain(c.quote), sentence=_plain(c.sentence)) for c in out.claims])
 
 
+def _phrases_in(text: str, cfg: OutreachConfig) -> list[str]:
+    """The phrases the emails must not use that `text` contains, whatever their case."""
+    return [p for p in cfg.avoid_phrases if p.lower() in text.lower()]
+
+
 def _avoided(out: EmailOut, cfg: OutreachConfig) -> list[str]:
-    text = " ".join([out.subject, *(c.sentence for c in out.claims), out.pitch, out.ask]).lower()
-    return [p for p in cfg.avoid_phrases if p.lower() in text]
+    return _phrases_in(" ".join([out.subject, *(c.sentence for c in out.claims), out.pitch, out.ask]), cfg)
 
 
 def _repeats(part: str, earlier_body: str) -> bool:
@@ -367,32 +372,34 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
         raise ValueError(f"step {step}: only {total} follow-ups are set in outreach.json")
     user_prompt = _prompt(lead, icp, contact, earlier, news)
     extra = _news_extra(news)
-    out, written_by, cloud_failed = generate_writing(system=system, user_prompt=user_prompt, schema=EmailOut)
-    out = plain_email(out)
+
+    def write(note: str = "", last: EmailOut | None = None) -> tuple[EmailOut, str, str]:
+        """One drafting call; with `last`, the model also sees its last draft and what to change."""
+        prompt = user_prompt if last is None else f"{user_prompt}\n\nYOUR LAST DRAFT\n{last.model_dump_json()}\n\n{note}"
+        written, by, failed = generate_writing(system=system, user_prompt=prompt, schema=EmailOut)
+        return plain_email(written), by, failed
+
+    out, written_by, cloud_failed = write()
     if used := _avoided(out, cfg):
-        retry = (f"{user_prompt}\n\nYOUR LAST DRAFT\n{out.model_dump_json()}\n\nIt used {', '.join(used)}. "
-                 f"Write it again without those phrases, in fresh words.")
-        out, written_by, cloud_failed = generate_writing(system=system, user_prompt=retry, schema=EmailOut)
-        out = plain_email(out)
+        out, written_by, cloud_failed = write(
+            f"It used {', '.join(used)}. Write it again without those phrases, in fresh words.", out)
     allowed = _allowed(cfg, contact)
     citations, rejected = check_claims(out.claims, lead, pages, allowed, extra)
     if not citations and rejected:
-        retry = (f"{user_prompt}\n\nYOUR LAST DRAFT\n{out.model_dump_json()}\n\nEvery claim was cut by the quote "
-                 f"check: {' | '.join(rejected)}\nWrite it again. Copy each quote exactly as written in COMPANY "
-                 f"DETAILS, OPEN ROLES or RECENT NEWS: under 15 words, from one place, character for character.")
-        again, again_by, again_failed = generate_writing(system=system, user_prompt=retry, schema=EmailOut)
-        again = plain_email(again)
+        again, again_by, again_failed = write(
+            f"Every claim was cut by the quote check: {' | '.join(rejected)}\nWrite it again. Copy each quote "
+            f"exactly as written in COMPANY DETAILS, OPEN ROLES or RECENT NEWS: under 15 words, from one place, "
+            f"character for character.", out)
         again_citations, again_rejected = check_claims(again.claims, lead, pages, allowed, extra)
         if again_citations:
             out, written_by, cloud_failed = again, again_by, again_failed
             citations, rejected = again_citations, again_rejected
     hook = hook_for(lead, news)
     if step == 0 and hook.text and not _hook_used(lead, citations, news):
-        retry = (f"{user_prompt}\n\nYOUR LAST DRAFT\n{out.model_dump_json()}\n\nThe first claim must be about the HOOK "
-                 f"({hook.text}). Quote it from {'OPEN ROLES' if hook.kind == 'open sales roles' else 'RECENT NEWS'}, "
-                 f"under 15 words, character for character, and write the email again around it.")
-        again, again_by, again_failed = generate_writing(system=system, user_prompt=retry, schema=EmailOut)
-        again = plain_email(again)
+        again, again_by, again_failed = write(
+            f"The first claim must be about the HOOK ({hook.text}). Quote it from "
+            f"{'OPEN ROLES' if hook.kind == 'open sales roles' else 'RECENT NEWS'}, under 15 words, character "
+            f"for character, and write the email again around it.", out)
         again_citations, again_rejected = check_claims(again.claims, lead, pages, allowed, extra)
         if _hook_used(lead, again_citations, news):
             out, written_by, cloud_failed = again, again_by, again_failed
@@ -429,7 +436,7 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
         flags.append("the contact is the closest match on their site, not a sales leader: check it fits")
     if any(_repeats(part, e.body) for e in earlier for part in (out.pitch, out.ask)):
         flags.append("repeats a line from an earlier email")
-    if used := [p for p in cfg.avoid_phrases if p.lower() in core.lower()]:
+    if used := _phrases_in(core, cfg):
         flags.append(f"uses phrases you avoid: {', '.join(used)}")
     if loose:
         flags.append(f"pitch or ask names {', '.join(loose)}, found in neither their text nor ours: check it")
@@ -475,7 +482,7 @@ def next_step(stage: str, emails: list[Email], cfg: OutreachConfig, now: datetim
     return NextStep(action="done", text="All emails sent, no reply yet")
 
 
-def _with_fallbacks(search: ContactSearch, lead: StoredLead, cfg: OutreachConfig) -> ContactSearch:
+def with_fallbacks(search: ContactSearch, lead: StoredLead, cfg: OutreachConfig) -> ContactSearch:
     """No buyer named: a startup writes to its chief executive or a founder; any other company to
     the closest match by title. A contact already chosen is never replaced."""
     startup = startup_fallback(search, _parse_headcount(lead.company.size), cfg.startup_max_headcount,
@@ -483,10 +490,17 @@ def _with_fallbacks(search: ContactSearch, lead: StoredLead, cfg: OutreachConfig
     return closest_match(startup, cfg.closest_contact_titles)
 
 
+def saved_search(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH) -> ContactSearch | None:
+    """The saved contact search with the fallbacks applied, or None if there is none. Only reads:
+    nothing is searched and nothing is saved, so a page can show it safely."""
+    search = store.load_contacts(lead.name, db)
+    return with_fallbacks(search, lead, cfg) if search else None
+
+
 def saved_contact(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH) -> Contact | None:
     """The contact a saved search gives, fallbacks included, without searching or saving."""
-    search = store.load_contacts(lead.name, db)
-    return _with_fallbacks(search, lead, cfg).contact if search else None
+    search = saved_search(lead, cfg, db)
+    return search.contact if search else None
 
 
 def with_site_links(url: str, words: tuple[str, ...], paths: list[str]) -> list[str]:
@@ -507,7 +521,7 @@ def contact_for(lead: StoredLead, icp: ICP, cfg: OutreachConfig, db: Path = stor
     fresh = search is None
     if fresh:
         search = find_contact(lead.name, lead.url, icp, with_site_links(lead.url, CONTACT_LINK_WORDS, cfg.contact_pages))
-    chosen = _with_fallbacks(search, lead, cfg)
+    chosen = with_fallbacks(search, lead, cfg)
     if fresh or chosen is not search:
         store.save_contacts(lead.name, chosen, db)
     return chosen
@@ -541,20 +555,31 @@ def draft_step(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, db: P
     return email
 
 
-def forget_lead(lead: StoredLead, cfg: OutreachConfig, db: Path = store.DB_PATH, pages: Path = PAGES) -> int:
-    """Delete everything stored about a company: its rows in the lead store and the website pages
-    cached for it. The do-not-contact list is kept. Returns how many cached pages were removed."""
+def _cached_pages(lead_name: str, others: list[str], pages: Path) -> list[Path]:
+    """Every file in `pages` that belongs to the company: its name, or its name and a dash, then
+    anything. A file that starts with a longer stored company's name ("acme-labs" for "acme") is
+    that company's, so it stays."""
+    base = slug(lead_name)
+    rivals = [o for o in others if o.startswith(f"{base}-")]
+    return [p for p in pages.glob("*.json")
+            if (p.stem == base or p.stem.startswith(f"{base}-"))
+            and not any(p.stem == r or p.stem.startswith(f"{r}-") for r in rivals)]
+
+
+def forget_lead(lead: StoredLead, db: Path = store.DB_PATH, pages: Path = PAGES,
+                logo_dir: Path = logos.LOGOS) -> int:
+    """Delete everything stored about a company: its rows in the lead store, every website page
+    cached for it (including the about, team and news pages found from its homepage) and its logo.
+    The do-not-contact list is kept. Returns how many cached pages were removed."""
+    others = [slug(other.name) for other in store.load_all(db) if other.name != lead.name]
     store.delete_lead(lead.name, db)
-    base = slug(lead.name)
-    names = {f"{base}.json", f"{base}-careers.json", f"{base}-careers-html.json", f"{base}-jobs.json"}
-    names |= {f"{base}-{slug(p)}-full.json" for p in cfg.contact_pages}
-    names |= {f"{base}-news-{slug(p)}-full.json" for p in cfg.news_pages}
-    removed = 0
-    for name in names:
-        if (pages / name).exists():
-            (pages / name).unlink()
-            removed += 1
-    return removed
+    found = _cached_pages(lead.name, others, pages) if pages.exists() else []
+    for path in found:
+        path.unlink(missing_ok=True)
+    if logo_dir.exists():
+        for logo in logo_dir.glob(f"{slug(lead.name)}.*"):
+            logo.unlink(missing_ok=True)
+    return len(found)
 
 
 def _report(lead: str, email: Email) -> str:

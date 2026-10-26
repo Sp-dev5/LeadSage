@@ -7,7 +7,7 @@ import app_ui as ui
 from agent import export, store
 from agent.contacts import typed_contact
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
-                            save_outreach, sending_problems)
+                            save_outreach, saved_search, sending_problems)
 from agent.readiness import QUEUES, in_queue, todo
 from agent.score_lead import load_icp
 
@@ -189,7 +189,7 @@ with st.container(border=True, key=f"panel_lead_{sorted(names).index(lead.name)}
             sure = st.checkbox("I understand this cannot be undone", key=f"delete_sure_{lead.name}")
             if st.button("Delete this lead and its data", key=f"delete_{lead.name}", icon=":material/delete:",
                          width="stretch", disabled=not sure):
-                removed = forget_lead(lead, cfg)
+                removed = forget_lead(lead)
                 st.session_state.pop("outreach_lead", None)
                 st.toast(f"Deleted {lead.name} and {removed} saved pages.", icon=":material/delete:")
                 st.rerun()
@@ -219,7 +219,7 @@ with st.container(border=True, key=f"panel_lead_{sorted(names).index(lead.name)}
                         contact_for(lead, icp, cfg)
                     st.rerun()
             else:
-                search = contact_for(lead, icp, cfg)
+                search = saved_search(lead, cfg)
                 if c := search.contact:
                     st.markdown(f"**{c.name}**, {c.title}")
                     why = {"buyer": "Matches your buyer", "rep": "Chosen by you",

@@ -17,7 +17,7 @@ import re
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urljoin
@@ -25,7 +25,7 @@ from urllib.parse import urljoin
 from dateutil import parser as dateparser
 from pydantic import BaseModel
 
-from agent.fetch import Page, fetch_full_text, load_or_fetch, slug
+from agent.fetch import Page, fetch_full_text, load_or_fetch, now, slug
 from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import quote_in
 
@@ -86,10 +86,6 @@ joining), award, event (a webinar, conference or talk), post (any other article)
 If the page lists no dated items, return an empty list."""
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 def parse_date(text: str) -> date | None:
     """The date in `text`, or None. A date with no year is not accepted."""
     try:
@@ -145,7 +141,7 @@ def find_news(name: str, url: str, paths: list[str], max_age_days: int, pages: P
               fetch: Callable[[str], Page] = fetch_full_text, today: date | None = None,
               read: Callable[[Page, int, date], tuple[list[NewsItem], list[str]]] = read_items) -> NewsSearch:
     """Read the company's news pages and keep the recent, checked items."""
-    search = NewsSearch(searched_at=_now())
+    search = NewsSearch(searched_at=now())
     if not url:
         return search
     today = today or date.today()

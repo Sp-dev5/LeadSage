@@ -209,7 +209,7 @@
 
           <header style="margin-top:30px"><div><h2>Hook</h2><h3>The reason to write now</h3></div></header>
           {% if d.first and d.first.hook %}
-            <p style="margin:0"><span class="pill hl">{{ 'Hiring' if d.first.hook_kind == 'open sales roles' or d.first.hook.startswith('they have open sales roles') else 'News' }}</span></p>
+            <p style="margin:0"><span class="pill hl">{{ d.hook_label }}</span></p>
             <p class="small muted">{{ d.first.hook }}</p>
           {% elif d.first %}
             <p class="small muted" style="margin:0">Nothing timely on their site or job boards. Add a reason to write now (news, funding, a new hire) when you edit the email.</p>

@@ -575,14 +575,21 @@ def test_deleting_a_lead_removes_its_rows_and_cached_pages_but_keeps_the_do_not_
     store.save_contacts("Acme", staff(("Zed Khan", "CEO")), db)
     store.save_news("Acme", hooks.NewsSearch(searched_at="t"), db)
     store.suppress("Acme", "asked", db)
-    pages = tmp_path / "pages"
+    store.save(COMPANY.model_copy(update={"name": "Acme Labs"}), SCORE, url="", text_source="typed", path=db)
+    pages, logo_dir = tmp_path / "pages", tmp_path / "logos"
     pages.mkdir()
+    logo_dir.mkdir()
     for name in ("acme.json", "acme-jobs.json", "acme-about-full.json", "acme-news-blog-full.json",
-                 "acme-labs.json", "acme-labs-about-full.json"):
+                 "acme-company-about-us-full.json", "acme-news-newsroom-full.json", "acme-careers-html.json",
+                 "acme-labs.json", "acme-labs-about-full.json", "acmecorp.json", "other.json"):
         (pages / name).write_text("{}", encoding="utf-8")
-    removed = outreach.forget_lead(store.load("Acme", db), CFG, db, pages)
-    assert removed == 4
-    assert sorted(p.name for p in pages.iterdir()) == ["acme-labs-about-full.json", "acme-labs.json"]
+    for name in ("acme.png", "acme-labs.png"):
+        (logo_dir / name).write_bytes(b"x")
+    removed = outreach.forget_lead(store.load("Acme", db), db, pages, logo_dir)
+    assert removed == 7
+    assert sorted(p.name for p in pages.iterdir()) == [
+        "acme-labs-about-full.json", "acme-labs.json", "acmecorp.json", "other.json"]
+    assert [p.name for p in logo_dir.iterdir()] == ["acme-labs.png"]
     with pytest.raises(KeyError):
         store.load("Acme", db)
     assert (store.load_emails("Acme", db), store.load_contacts("Acme", db), store.load_news("Acme", db)) == ([], None, None)
@@ -737,3 +744,17 @@ def test_the_ceos_assistant_is_not_the_ceo():
     assert not contacts.holds_title(person("Executive Assistant to the CEO"), "ceo")
     assert not contacts.holds_title(person("Office of the CEO"), "ceo")
     assert contacts.holds_title(person("CEO and Co-founder"), "ceo")
+
+
+def test_saved_search_applies_the_fallbacks_without_saving_them(db):
+    ceo = contacts.Contact(name="Zed Khan", title="Chief Executive Officer", matches_buyer="no", source="https://acme.example/team",
+                  fetched_at="2026-10-24T00:00:00+00:00")
+    store.save_contacts("Acme", contacts.ContactSearch(people=[ceo], searched_at="t"), db)
+    lead = store.load("Acme", db).model_copy(update={"company": COMPANY.model_copy(update={"size": "10 employees"})})
+    shown = outreach.saved_search(lead, CFG, db)
+    assert shown.contact == ceo and shown.chosen_by == "startup_ceo"
+    assert store.load_contacts("Acme", db).contact is None
+
+
+def test_saved_search_is_none_when_nothing_was_searched(db):
+    assert outreach.saved_search(store.load("Acme", db), CFG, db) is None

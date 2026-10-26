@@ -29,11 +29,12 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from agent import export, logos, store
 from agent.contacts import typed_contact
+from agent.files import write_text_atomic
 from agent.icp_assist import suggest, suggest_buyer
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
-                            save_outreach, sending_problems)
+                            save_outreach, saved_search, sending_problems)
 from agent.pipeline import lead_files, read_leads, score_all, signal_rows
-from agent.readiness import QUEUES, group, in_queue, todo
+from agent.readiness import QUEUES, group, hook_label, in_queue, todo
 from agent.score_lead import ALL_CRITERIA, FACT_VALUES, ICP, ICP_PATH, load_icp
 from web import jobs, views
 
@@ -106,6 +107,11 @@ def home(request: Request):
                 qualify_at=icp.settings.qualify_at)
 
 
+def _whole(text: str | None) -> int:
+    """A whole number from a query value; 0 when it is missing or not one."""
+    return int(text) if text and text.isdigit() else 0
+
+
 def _filters(request: Request) -> views.LeadFilters:
     q = request.query_params
     picked = q.get("group", "Qualify")
@@ -113,7 +119,7 @@ def _filters(request: Request) -> views.LeadFilters:
         group=picked if picked in views.GROUPS else "Qualify",
         countries=tuple(q.getlist("country")),
         region_only=q.get("region") == "1",
-        min_fit=int(q.get("min_fit") or 0) if (q.get("min_fit") or "0").isdigit() else 0,
+        min_fit=_whole(q.get("min_fit")),
         hiring_only=q.get("hiring") == "1",
     )
 
@@ -226,9 +232,7 @@ def outreach_page(request: Request):
 def _detail(name: str, icp: ICP, cfg: OutreachConfig, now: datetime) -> dict:
     lead = store.load(name, views.DB)
     emails = {e.step: e for e in store.load_emails(name, views.DB)}
-    search = store.load_contacts(name, views.DB)
-    if search is not None:
-        search = contact_for(lead, icp, cfg, views.DB)
+    search = saved_search(lead, cfg, views.DB)
     stopped = lead.stage in store.STOPPED
     due = due_dates(list(emails.values()), cfg)
     steps = []
@@ -249,7 +253,7 @@ def _detail(name: str, icp: ICP, cfg: OutreachConfig, now: datetime) -> dict:
         "lead": lead, "search": search, "steps": steps, "stopped": stopped, "open_step": open_step,
         "group": group(lead.score, icp.settings.qualify_at),
         "next": next_step(lead.stage, list(emails.values()), cfg, now).text,
-        "news": store.load_news(name, views.DB), "first": emails.get(0),
+        "news": store.load_news(name, views.DB), "first": emails.get(0), "hook_label": hook_label(emails.get(0)),
         "others": [p for p in search.people if p != search.contact] if search else [],
     }
 
@@ -294,7 +298,7 @@ def outreach_act(request: Request, lead: str = Form(...), do: str = Form(...), s
         if do == "delete":
             if not sure:
                 raise ValueError("tick the box to confirm the delete")
-            removed = forget_lead(current, cfg, views.DB)
+            removed = forget_lead(current, views.DB)
             return back(request, "/outreach", f"Deleted {lead} and {removed} saved pages.")
         if do == "search":
             contact_for(current, icp, cfg, views.DB, refresh=True)
@@ -352,15 +356,16 @@ def draft_all(request: Request):
 def outreach_settings(request: Request, sender_name: str = Form(""), sender_company: str = Form(""),
                       sender_address: str = Form(""), opt_out_line: str = Form(""),
                       draft_verdicts: list[str] = Form([]), follow_up_days: str = Form(""),
-                      max_words: int = Form(120), startup_max_headcount: int = Form(50)):
+                      max_words: int | None = Form(None), startup_max_headcount: int | None = Form(None)):
     cfg = load_outreach()
     try:
         days = [int(d) for d in follow_up_days.split(",") if d.strip()]
         new = OutreachConfig(**(cfg.model_dump() | {
             "sender_name": sender_name.strip(), "sender_company": sender_company.strip(),
             "sender_address": sender_address.strip(), "opt_out_line": opt_out_line.strip(),
-            "draft_verdicts": draft_verdicts, "follow_up_days": days, "max_words": max_words,
-            "startup_max_headcount": startup_max_headcount}))
+            "draft_verdicts": draft_verdicts, "follow_up_days": days,
+            "max_words": max_words or cfg.max_words,
+            "startup_max_headcount": startup_max_headcount or cfg.startup_max_headcount}))
     except (ValueError, ValidationError) as e:
         msg = e.errors()[0]["msg"] if isinstance(e, ValidationError) else str(e)
         return back(request, "/outreach#settings", f"Not saved: {msg}", "error")
@@ -418,7 +423,7 @@ def _save_icp(request: Request, new: dict, done: str):
         ICP.model_validate(new)
     except ValidationError as e:
         return back(request, "/icp", f"Not saved. {_first_error(e)}", "error")
-    ICP_PATH.write_text(json.dumps(new, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_text_atomic(ICP_PATH, json.dumps(new, indent=2, ensure_ascii=False) + "\n")
     return back(request, "/icp", done)
 
 
@@ -432,12 +437,7 @@ def icp_save(request: Request, buyer_persona: str = Form(""), pain_solved: str =
     new = raw | {"buyer_persona": buyer_persona.strip(), "pain_solved": pain_solved.strip(), "notes": notes.strip(),
                  "company_size_min": company_size_min, "company_size_max": company_size_max,
                  "geography_countries": countries}
-    try:
-        ICP.model_validate(new)
-    except ValidationError as e:
-        return back(request, "/icp", f"Not saved: {e.errors()[0]['msg']}", "error")
-    ICP_PATH.write_text(json.dumps(new, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return back(request, "/icp", "Saved. Rescore the leads to apply it.")
+    return _save_icp(request, new, "Saved. Rescore the leads to apply it.")
 
 
 @app.post("/icp/suggest")
@@ -465,7 +465,7 @@ async def icp_scoring(request: Request):
     settings = dict(raw["settings"])
     try:
         for key, label, kind, *_ in SETTING_FIELDS:
-            settings[key] = kind(form[key]) if kind is float else int(form[key])
+            settings[key] = kind(form[key])
         settings["weights"] = {name: float(form[f"weight:{name}"]) for name in raw["settings"]["weights"]}
     except (KeyError, ValueError):
         return back(request, "/icp", "Not saved. Every number needs a value, and the cut-offs are whole numbers.",

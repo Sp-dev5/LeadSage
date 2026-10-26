@@ -14,17 +14,16 @@ contact in.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urljoin
 
 from pydantic import BaseModel
 
-from agent.fetch import Page, fetch_full_text, load_or_fetch, slug
+from agent.fetch import Page, fetch_full_text, load_or_fetch, now, slug
 from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import ICP, quote_in
 from agent.signals import exact_match
@@ -83,10 +82,6 @@ The buyer: {persona}
 If the page names nobody with a title, return an empty list."""
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 def works_elsewhere(title: str, company: str) -> bool:
     """A title that names another employer ("CDO @ Mastercard", "VP Data at Workday"): a customer
     quoted on the company's site, not someone who works there."""
@@ -124,7 +119,7 @@ def find_contact(name: str, url: str, icp: ICP, contact_pages: list[str], pages:
                  fetch: Callable[[str], Page] = fetch_full_text) -> ContactSearch:
     """Fetch the company's people pages (whole page, not just the main article, where team blocks
     get dropped), then read them in order and stop at the first buyer match."""
-    search = ContactSearch(searched_at=_now())
+    search = ContactSearch(searched_at=now())
     if not url:
         return search
     urls = [urljoin(url, path) for path in contact_pages]
@@ -145,6 +140,14 @@ def find_contact(name: str, url: str, icp: ICP, contact_pages: list[str], pages:
     return search
 
 
+def _first_holding(search: ContactSearch, titles: list[str]) -> Contact | None:
+    """The first person who holds one of `titles`, trying the titles in order."""
+    for title in titles:
+        if person := next((p for p in search.people if holds_title(p, title)), None):
+            return person
+    return None
+
+
 def startup_fallback(search: ContactSearch, headcount: int | None, max_headcount: int,
                      titles: list[str]) -> ContactSearch:
     """No buyer named at a startup: write to its chief executive, else a founder.
@@ -154,9 +157,8 @@ def startup_fallback(search: ContactSearch, headcount: int | None, max_headcount
     """
     if search.contact or headcount is None or headcount > max_headcount:
         return search
-    for title in titles:
-        if top := next((p for p in search.people if holds_title(p, title)), None):
-            return search.model_copy(update={"contact": top, "chosen_by": "startup_ceo"})
+    if top := _first_holding(search, titles):
+        return search.model_copy(update={"contact": top, "chosen_by": "startup_ceo"})
     return search
 
 
@@ -166,12 +168,11 @@ def closest_match(search: ContactSearch, titles: list[str]) -> ContactSearch:
     closest match, not the buyer, so the search says so and the rep can pick someone else."""
     if search.contact:
         return search
-    for title in titles:
-        if top := next((p for p in search.people if holds_title(p, title)), None):
-            return search.model_copy(update={"contact": top, "chosen_by": "closest"})
+    if top := _first_holding(search, titles):
+        return search.model_copy(update={"contact": top, "chosen_by": "closest"})
     return search
 
 
 def typed_contact(name: str, title: str) -> Contact:
     """A contact the rep typed in themselves."""
-    return Contact(name=name.strip(), title=title.strip(), matches_buyer="typed", source=TYPED, fetched_at=_now())
+    return Contact(name=name.strip(), title=title.strip(), matches_buyer="typed", source=TYPED, fetched_at=now())

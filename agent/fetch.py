@@ -1,7 +1,9 @@
 """
 Fetcher: reads one web page and returns its main text, where it came from, and when.
 
-Checks robots.txt first and names itself in the user agent. Never raises: any problem
+Checks robots.txt first and names itself in the user agent. Refuses any address that is not
+on the public internet (loopback, private ranges, link-local, cloud metadata), at every
+redirect hop. Never raises: any problem
 (blocked, timeout, 404, not HTML, no readable text) comes back as ok=False with a reason,
 so one dead website can't stop a batch of leads.
 
@@ -14,7 +16,9 @@ Run it:  python -m agent.fetch https://example.com
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 import sys
 import time
 from collections.abc import Callable
@@ -28,8 +32,14 @@ import trafilatura
 from protego import Protego
 from pydantic import BaseModel
 
+from agent.files import write_text_atomic
+
 USER_AGENT = "LeadSage/0.1"
 TIMEOUT = 10
+MAX_PAGE_BYTES = 10_000_000
+MAX_ROBOTS_BYTES = 500_000
+MAX_DOWNLOAD_SECONDS = 30
+CHUNK_BYTES = 16_384
 MAX_CHARS = 4000
 FULL_MAX_CHARS = 9000
 MAX_REDIRECTS = 5
@@ -49,12 +59,63 @@ class Page(BaseModel):
     error: str = ""
 
 
-def _now() -> str:
+def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _fail(url: str, error: str) -> Page:
-    return Page(url=url, fetched_at=_now(), ok=False, error=error)
+    return Page(url=url, fetched_at=now(), ok=False, error=error)
+
+
+class _Refused(Exception):
+    """A fetch we won't make or finish. The message is the reason."""
+
+
+def _resolve(host: str) -> list[str]:
+    """Every address a host name points to; empty when it doesn't resolve."""
+    try:
+        return [info[4][0] for info in socket.getaddrinfo(host, None)]
+    except socket.gaierror:
+        return []
+
+
+def _is_public(address: str) -> bool:
+    ip = ipaddress.ip_address(address.split("%")[0])
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_global
+
+
+def _require_public(url: str, reason: str) -> None:
+    """Refuse a URL whose host is, or resolves to, a private, loopback, link-local or reserved
+    address, so a lead's website (or a redirect) can't point us at the machine's own network
+    or a cloud metadata address. A host that doesn't resolve passes: the request fails on its own."""
+    host = urlsplit(url).hostname
+    if not host:
+        raise _Refused("no host in the URL")
+    if not all(_is_public(address) for address in _resolve(host)):
+        raise _Refused(reason)
+
+
+def _read_capped(resp: requests.Response, max_bytes: int, what: str = "page") -> None:
+    """Read a streamed response into `resp`, refusing one that is declared or turns out bigger than
+    `max_bytes`, or that takes longer than MAX_DOWNLOAD_SECONDS, so one hostile site can't fill the
+    memory or hold a batch up. The timeout alone only limits the wait for each piece."""
+    declared = resp.headers.get("Content-Length", "")
+    if declared.isdigit() and int(declared) > max_bytes:
+        resp.close()
+        raise _Refused(f"{what} too large")
+    body, started = bytearray(), time.monotonic()
+    for chunk in resp.iter_content(CHUNK_BYTES):
+        body += chunk
+        if len(body) > max_bytes:
+            resp.close()
+            raise _Refused(f"{what} too large")
+        if time.monotonic() - started > MAX_DOWNLOAD_SECONDS:
+            resp.close()
+            raise _Refused(f"{what} took too long to download")
+    resp._content = bytes(body)
+    resp._content_consumed = True
 
 
 def _allowed_by_robots(url: str) -> bool:
@@ -68,7 +129,20 @@ def _allowed_by_robots(url: str) -> bool:
     """
     parts = urlsplit(url)
     robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
-    resp = requests.get(robots_url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+    for _ in range(MAX_REDIRECTS + 1):
+        resp = requests.get(robots_url, headers={"User-Agent": USER_AGENT},
+                            timeout=TIMEOUT, allow_redirects=False, stream=True)
+        location = resp.headers.get("Location")
+        if resp.status_code not in REDIRECT_CODES or not location:
+            _read_capped(resp, MAX_ROBOTS_BYTES, "robots.txt")
+            break
+        resp.close()
+        robots_url = urljoin(robots_url, location)
+        if urlsplit(robots_url).scheme not in ("http", "https"):
+            return False
+        _require_public(robots_url, "robots.txt redirected to an internal address")
+    if resp.status_code in REDIRECT_CODES:
+        return False
     if resp.status_code in (401, 403):
         return False
     if 400 <= resp.status_code < 500:
@@ -82,17 +156,15 @@ def _robots_ok(url: str) -> bool:
     return urlsplit(url).netloc in PUBLIC_APIS or _allowed_by_robots(url)
 
 
-class _Refused(Exception):
-    """A fetch we won't make or finish. The message is the reason."""
-
-
-def _get(url: str) -> tuple[requests.Response, str]:
+def _get(url: str, max_bytes: int | None = None) -> tuple[requests.Response, str]:
     """GET a URL, checking robots.txt first and again at every redirect hop.
 
-    Returns the final response and its URL. Raises _Refused with a reason.
+    The body is read in pieces and refused past `max_bytes` (default MAX_PAGE_BYTES). Returns the final response and its
+    URL. Raises _Refused with a reason.
     """
     if urlsplit(url).scheme not in ("http", "https"):
         raise _Refused("not an http(s) URL")
+    _require_public(url, "internal address")
     if not _robots_ok(url):
         raise _Refused("blocked by robots.txt")
 
@@ -101,25 +173,30 @@ def _get(url: str) -> tuple[requests.Response, str]:
     waited = False
     while True:
         resp = requests.get(current, headers={"User-Agent": USER_AGENT},
-                            timeout=TIMEOUT, allow_redirects=False)
+                            timeout=TIMEOUT, allow_redirects=False, stream=True)
         if resp.status_code == 429 and not waited:
             waited = True
+            resp.close()
             time.sleep(_wait_for(resp))
             continue
         location = resp.headers.get("Location")
         if resp.status_code not in REDIRECT_CODES or not location:
             break
+        resp.close()
         if redirects == MAX_REDIRECTS:
             raise _Refused("too many redirects")
         current = urljoin(current, location)
         if urlsplit(current).scheme not in ("http", "https"):
             raise _Refused("redirected to a non-http(s) URL")
+        _require_public(current, "redirect to an internal address")
         if not _robots_ok(current):
             raise _Refused("redirect blocked by robots.txt")
         redirects += 1
 
     if resp.status_code >= 400:
+        resp.close()
         raise _Refused(f"HTTP {resp.status_code}")
+    _read_capped(resp, max_bytes or MAX_PAGE_BYTES)
     return resp, current
 
 
@@ -197,7 +274,7 @@ def fetch_page(url: str) -> Page:
         text = _clean(trafilatura.extract(resp.content, url=final_url) or "")
         if not text:
             raise _Refused("no readable text")
-        return Page(url=final_url, text=text, fetched_at=_now(), ok=True)
+        return Page(url=final_url, text=text, fetched_at=now(), ok=True)
     except Exception as e:
         return _fail(url, _reason(e))
 
@@ -213,7 +290,7 @@ def fetch_full_text(url: str, max_chars: int = FULL_MAX_CHARS) -> Page:
         text = re.sub(r"\s+", " ", trafilatura.html2txt(resp.text) or "").strip()[:max_chars]
         if not text:
             raise _Refused("no readable text")
-        return Page(url=final_url, text=text, fetched_at=_now(), ok=True)
+        return Page(url=final_url, text=text, fetched_at=now(), ok=True)
     except Exception as e:
         return _fail(url, _reason(e))
 
@@ -225,7 +302,7 @@ def _fetch_raw(url: str, kind: str) -> Page:
         content_type = resp.headers.get("Content-Type", "")
         if kind not in content_type.lower():
             raise _Refused(f"not {kind.upper()} ({content_type or 'no content type'})")
-        return Page(url=final_url, text=resp.text, fetched_at=_now(), ok=True)
+        return Page(url=final_url, text=resp.text, fetched_at=now(), ok=True)
     except Exception as e:
         return _fail(url, _reason(e))
 
@@ -246,9 +323,9 @@ MAX_IMAGE_BYTES = 300_000
 def fetch_image(url: str) -> tuple[bytes, str] | None:
     """An image's bytes and content type, robots.txt respected; None if it can't be had. Never raises."""
     try:
-        resp, _ = _get(url)
+        resp, _ = _get(url, MAX_IMAGE_BYTES)
         content_type = resp.headers.get("Content-Type", "").split(";")[0].strip().lower()
-        if not content_type.startswith("image/") or len(resp.content) > MAX_IMAGE_BYTES:
+        if not content_type.startswith("image/"):
             return None
         return resp.content, content_type
     except Exception:
@@ -271,7 +348,7 @@ def load_or_fetch(url: str, path: Path, fetch: Callable[[str], Page] = fetch_pag
     page = fetch(url)
     if page.ok:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(page.model_dump_json(indent=2), encoding="utf-8")
+        write_text_atomic(path, page.model_dump_json(indent=2))
     return page
 
 

@@ -20,7 +20,7 @@
 
 <section class="stats" style="--n:4">
   <div class="stat"><small>Leads scored</small><b>{{ h.scored }}</b>
-    <span class="sub">{{ h.verdicts[3][1] }} disqualified · {{ h.verdicts[0][1] }} qualify</span>
+    <span class="sub">{{ h.by_group['Disqualify'] }} disqualified · {{ h.by_group['Qualify'] }} qualify</span>
     <div class="track"><i style="width:100%"></i></div></div>
   <div class="stat"><small>Worth contacting</small><b>{{ h.worth }}</b>
     <span class="sub">{{ share(h.worth, h.scored) }}% of scored · {{ h.drafted }} drafted</span>

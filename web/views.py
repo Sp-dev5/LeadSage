@@ -14,7 +14,7 @@ from typing import NamedTuple
 from markupsafe import Markup
 
 from agent import store
-from agent.outreach import OutreachConfig, saved_contact
+from agent.outreach import OutreachConfig, with_fallbacks
 from agent.readiness import GROUPS, Readiness, funnel, group, held_back_by, readiness
 from agent.score_lead import ICP, _parse_headcount
 
@@ -43,10 +43,12 @@ class LeadRow(NamedTuple):
 
 
 def lead_rows(icp: ICP, cfg: OutreachConfig) -> list[LeadRow]:
+    all_emails, searches = store.load_all_emails(DB), store.load_all_contacts(DB)
     rows = []
     for lead in store.load_all(DB):
-        emails = store.load_emails(lead.name, DB)
-        contact = saved_contact(lead, cfg, DB)
+        emails = all_emails.get(lead.name, [])
+        search = searches.get(lead.name)
+        contact = with_fallbacks(search, lead, cfg).contact if search else None
         rows.append(LeadRow(lead, emails, readiness(lead, emails, contact.name if contact else "", cfg),
                             group(lead.score, icp.settings.qualify_at)))
     return sorted(rows, key=lambda r: (-r.lead.score.fit, r.lead.name.lower()))
@@ -77,6 +79,7 @@ def home(rows: list[LeadRow]) -> dict:
         "cut": sum(len(e.rejected) for e in emails),
         "last_scored": max((r.lead.scored_at for r in rows), default=""),
         "model": models.most_common(1)[0][0] if models else "",
+        "by_group": groups,
         "verdicts": [(g, groups[g], share(groups[g], scored)) for g in VERDICT_ORDER],
         "funnel": [(step, n, share(n, scored)) for step, n in steps],
         "up_next": [r for r in rows if r.ready.ready][:7],

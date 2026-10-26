@@ -18,11 +18,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 from agent import store
-from agent.evaluate import DATA, _lead_description
+from agent.fetch import fetch_page, load_or_fetch, slug
 from agent.llm import second_model_name
 from agent.logos import fetch_logo
 from agent.score_lead import ICP, Company, is_borderline, load_icp, score_lead, with_second_opinion
-from agent.signals import hiring_for, read_rows
+from agent.signals import DATA, PAGES, hiring_for, rows_by_name
 
 LEAD_COLUMNS = {"name", "industry", "size", "location", "url", "description"}
 SIGNALS_FILE = "signals_leads.csv"
@@ -48,12 +48,28 @@ def signal_rows(file: str = SIGNALS_FILE) -> dict[str, dict]:
     """Company name (lowercase) -> its job-board row, if the signals file exists."""
     if not (DATA / file).exists():
         return {}
-    return {r["name"].strip().lower(): r for r in read_rows(file)}
+    return rows_by_name(file)
+
+
+def lead_text(row: dict, mode: str, pages: Path = PAGES, refetch: bool = False) -> tuple[str, str]:
+    """The text to score for one lead, and where it came from: the typed description, or the
+    lead's website (cached in `pages`) when `mode` is "fetched" and the row has a url. A failed
+    fetch falls back to the typed description."""
+    typed = row["description"]
+    url = (row.get("url") or "").strip()
+    if mode == "typed" or not url:
+        return typed, "typed"
+
+    page = load_or_fetch(url, pages / f"{slug(row['name'])}.json", fetch_page, refetch)
+    if not page.ok:
+        print(f"  fetch failed for {row['name']}: {page.error}, using typed", flush=True)
+        return typed, "typed (fetch failed)"
+    return page.text, "fetched"
 
 
 def research(row: dict, icp: ICP, signals: dict[str, dict]) -> tuple[Company, str]:
     """The company as the scorer sees it, and where its description came from."""
-    description, text_source = _lead_description(row, "fetched")
+    description, text_source = lead_text(row, "fetched")
     roles = []
     if signal := signals.get(row["name"].strip().lower()):
         roles = hiring_for(signal, icp).roles

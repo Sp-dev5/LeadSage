@@ -26,7 +26,8 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Callable, Literal, NamedTuple
+from collections.abc import Callable
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel
 
@@ -192,6 +193,11 @@ def hiring_for(row: dict, icp: ICP, pages: Path = PAGES, refetch: bool = False) 
 def read_rows(file: str) -> list[dict]:
     with (DATA / file).open(encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
+
+
+def rows_by_name(file: str) -> dict[str, dict]:
+    """Company name (lowercase) -> its row from a signals CSV in data/."""
+    return {r["name"].strip().lower(): r for r in read_rows(file)}
 
 
 def main() -> None:
