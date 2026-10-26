@@ -219,8 +219,10 @@ def delete_lead(lead: str, path: Path = DB_PATH) -> None:
     """Remove everything stored about a company: its score, contacts, news and emails. The
     do-not-contact list is kept, so a company that asked to be left alone stays left alone."""
     with closing(_connect(path)) as conn, conn:
-        for table, column in (("emails", "lead"), ("news", "lead"), ("contacts", "lead"), ("leads", "name")):
-            conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (lead,))
+        conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
+        conn.execute("DELETE FROM news WHERE lead = ?", (lead,))
+        conn.execute("DELETE FROM contacts WHERE lead = ?", (lead,))
+        conn.execute("DELETE FROM leads WHERE name = ?", (lead,))
 
 
 def save_contacts(lead: str, search: ContactSearch, path: Path = DB_PATH) -> None:

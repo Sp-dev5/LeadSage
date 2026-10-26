@@ -1,0 +1,27 @@
+{
+ "errors": [],
+ "generated_at": "",
+ "metrics": {},
+ "results": [
+  {
+   "code": "170     paragraphs = [p.strip().replace(\"\\n\", \"<br>\") for p in re.split(r\"\\n\\s*\\n\", body) if p.strip()]\n171     return Markup(\"\".join(f\"<p>{p}</p>\" for p in paragraphs))\n172 \n",
+   "col_offset": 11,
+   "end_col_offset": 61,
+   "filename": "web/views.py",
+   "issue_confidence": "HIGH",
+   "issue_cwe": {
+    "id": 79,
+    "link": "https://cwe.mitre.org/data/definitions/79.html"
+   },
+   "issue_severity": "MEDIUM",
+   "issue_text": "Potential XSS with ``markupsafe.Markup`` detected. Do not use ``Markup`` on untrusted data.",
+   "line_number": 171,
+   "line_range": [
+    171
+   ],
+   "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b704_markupsafe_markup_xss.html",
+   "test_id": "B704",
+   "test_name": "markupsafe_markup_xss"
+  }
+ ]
+}
