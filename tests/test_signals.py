@@ -98,7 +98,7 @@ def test_unlisted_and_duplicate_jobs_are_skipped(tmp_path, board, model):
     assert h.jobs_seen == 1 and [r.title for r in h.roles] == ["SDR"]
 
 
-@pytest.mark.parametrize("job_board", ["kula:rocketlane", "ashby", "ashby:", ""])
+@pytest.mark.parametrize("job_board", ["workday:acme", "ashby", "ashby:", ""])
 def test_unsupported_board_is_not_fetched(tmp_path, board, job_board):
     h = signals.sales_hiring("Acme", job_board, ICP_, tmp_path)
     assert not h.ok and "unsupported" in h.error
@@ -128,6 +128,14 @@ TRAKSTAR_HTML = """<div class="js-card"><a href="/jobs/a/"><h3 class="rb-h3 js-j
         Integration &amp; Customisation Engineer-3
     </h3></a></div>"""
 
+KULA_HTML = """<div class="chakra-card css-1"><p class="chakra-text">Join our team</p></div>
+<div class="chakra-card css-2vpafz"><span><span class="css-3snkxd">Sales</span></span>
+<div class="chakra-stack"><p class="chakra-text css-1ttm4yl">Account Executive, Mid-Market - EMEA</p></div>
+<p class="chakra-text">Full time<!-- --> • Hybrid</p>
+<a class="chakra-link" href="/rocketlane/2120-account-executive-mid-market-emea"><span>Apply Now</span></a></div>
+<div class="chakra-card css-2vpafz"><p class="chakra-text">R&amp;D Lead</p>
+<a class="chakra-link" href="/rocketlane/2200-r-d-lead"><span>Apply Now</span></a></div>"""
+
 
 @pytest.mark.parametrize("board, text, expected", [
     ("ashby", json.dumps({"jobs": [{"title": "SDR"}, {"title": "Hidden", "isListed": False}]}), ["SDR"]),
@@ -135,6 +143,7 @@ TRAKSTAR_HTML = """<div class="js-card"><a href="/jobs/a/"><h3 class="rb-h3 js-j
     ("lever", json.dumps([{"text": "Sales Manager", "id": "1"}]), ["Sales Manager"]),
     ("keka", json.dumps([{"id": 1, "title": "Technical Support Engineer"}]), ["Technical Support Engineer"]),
     ("trakstar", TRAKSTAR_HTML, ["Sales Manager-Mid Market", "Integration & Customisation Engineer-3"]),
+    ("kula", KULA_HTML, ["Account Executive, Mid-Market - EMEA", "R&D Lead"]),
 ])
 def test_each_board_reads_its_titles(board, text, expected):
     assert signals.BOARDS[board].titles(text) == expected
@@ -147,6 +156,7 @@ def test_each_board_reads_its_titles(board, text, expected):
     ("keka", "zluri/ed2b6b25-be74-43f1-9a38-c3bf27b9146c",
      "https://zluri.keka.com/careers/api/embedjobs/default/active/ed2b6b25-be74-43f1-9a38-c3bf27b9146c"),
     ("trakstar", "exotel", "https://exotel.hire.trakstar.com/"),
+    ("kula", "rocketlane", "https://careers.kula.ai/rocketlane"),
 ])
 def test_each_board_builds_its_list_address(board, board_id, url):
     assert signals.BOARDS[board].list_url(board_id) == url
@@ -160,6 +170,7 @@ def test_each_board_builds_its_list_address(board, board_id, url):
      '<script src="https://zluri.keka.com/careers/api/embedjobs/js/ed2b6b25-be74-43f1-9a38-c3bf27b9146c">',
      "keka:zluri/ed2b6b25-be74-43f1-9a38-c3bf27b9146c"),
     ("https://exotel.hire.trakstar.com/", "<html></html>", "trakstar:exotel"),
+    ("https://careers.kula.ai/rocketlane", "<html></html>", "kula:rocketlane"),
     ("https://acme.test/careers", "<html>We are hiring, see below</html>", ""),
 ])
 def test_board_is_spotted_on_the_careers_page(url, page_html, expected):

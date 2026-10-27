@@ -97,6 +97,7 @@ h3 { margin: 0; font: 600 11px var(--mono); text-transform: uppercase; letter-sp
 @keyframes grow { from { transform: scaleX(0); } }
 
 .cols { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 2px solid var(--rule); }
+.cols > * { min-width: 0; }
 .cols.wide { grid-template-columns: 7fr 5fr; }
 .cols:last-child, .stats:last-child { border-bottom: 0; }
 .pane { padding: 26px 30px 30px; min-width: 0; }

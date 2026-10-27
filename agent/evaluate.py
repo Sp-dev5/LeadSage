@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import NamedTuple
@@ -67,13 +68,14 @@ def main() -> None:
     ap.add_argument("--second-opinion", action="store_true",
                     help="score borderline leads again with the second model; disagreement -> review")
     args = ap.parse_args()
+    sys.stdout.reconfigure(encoding="utf-8")
     scorer = score_with_second_opinion if args.second_opinion else score_lead
     runs = max(1, args.runs)
     lead_file = DATA / args.file
 
     icp_file = DATA / args.icp
     icp = load_icp(icp_file)
-    with lead_file.open(encoding="utf-8", newline="") as f:
+    with lead_file.open(encoding="utf-8-sig", newline="") as f:
         rows = [r for r in csv.DictReader(f) if r["my_label"].strip()]
     if args.names:
         wanted = [n.strip().lower() for n in args.names.split(",")]

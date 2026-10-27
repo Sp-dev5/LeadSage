@@ -12,7 +12,7 @@ unknown, never "no sales team".
 
 `job_board` is "<board>:<company id on that board>", e.g. "ashby:atlan". Leave it blank and the
 board is found on the careers page instead (see BOARDS). Supported: ashby, greenhouse, lever,
-keka, trakstar. Adding one means one row in BOARDS and a test.
+keka, trakstar, kula. Adding one means one row in BOARDS and a test.
 
 Run it:  python -m agent.signals
 """
@@ -58,6 +58,15 @@ def _trakstar(text: str) -> list[str]:
     return [html.unescape(n).strip() for n in names]
 
 
+def _kula(text: str) -> list[str]:
+    """Each job is a card whose first paragraph is the title and which links to /<company>/<id>-<slug>."""
+    titles = []
+    for card in text.split('class="chakra-card')[1:]:
+        if re.search(r'href="/[\w-]+/\d+-', card) and (m := re.search(r"<p[^>]*>(.*?)</p>", card, re.S)):
+            titles.append(html.unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip())
+    return titles
+
+
 BOARDS = {
     "ashby": Board(
         lambda i: f"https://api.ashbyhq.com/posting-api/job-board/{i}",
@@ -79,6 +88,11 @@ BOARDS = {
         lambda i: f"https://{i}.hire.trakstar.com/",
         _trakstar,
         r"([\w-]+)\.hire\.trakstar\.com",
+        "html"),
+    "kula": Board(
+        lambda i: f"https://careers.kula.ai/{i}",
+        _kula,
+        r"careers\.kula\.ai/([\w-]+)",
         "html"),
 }
 
@@ -191,7 +205,7 @@ def hiring_for(row: dict, icp: ICP, pages: Path = PAGES, refetch: bool = False) 
 
 
 def read_rows(file: str) -> list[dict]:
-    with (DATA / file).open(encoding="utf-8", newline="") as f:
+    with (DATA / file).open(encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
 
 

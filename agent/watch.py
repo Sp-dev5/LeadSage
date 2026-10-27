@@ -5,7 +5,8 @@ what is new since the last look.
 A lead's first successful watch of each kind (hiring, news) is its baseline: everything seen is
 stored and nothing fires, or every lead would "fire" on day one. After that, a role or news item
 not seen before fires, except a news item dated more than fresh_days ago (an old post first
-spotted today is not news).
+spotted today is not news) or a plain blog post (the same rule as email hooks: a post is never
+a reason to write). Posts are still stored, so the history stays complete.
 
 A job board or news page that can't be read is unknown, never "no roles": nothing is recorded,
 nothing is compared and the lead is not rescored. A lead is rescored only when a board that was
@@ -28,7 +29,7 @@ from datetime import date
 from pathlib import Path
 
 from agent import store
-from agent.hooks import NewsItem
+from agent.hooks import HOOK_KINDS, NewsItem
 from agent.outreach import OutreachConfig, load_outreach, news_for
 from agent.pipeline import score_one, signal_rows
 from agent.score_lead import ICP, SalesRole, load_icp
@@ -102,8 +103,10 @@ def watch_news(lead: StoredLead, cfg: OutreachConfig, today: date, result: Watch
     if not search.pages_read:
         result.failed.append(f"{lead.name}: no news page could be read")
         return
-    result.fired += [(lead.name, e) for e in record(lead.name, "news", news_events(search.items),
-                                                    lambda e: is_recent(e.item_date, today, cfg.fresh_days), db)]
+    newsworthy = {event_key(i.headline, i.date) for i in search.items if i.kind in HOOK_KINDS}
+    result.fired += [(lead.name, e) for e in record(
+        lead.name, "news", news_events(search.items),
+        lambda e: e.key in newsworthy and is_recent(e.item_date, today, cfg.fresh_days), db)]
 
 
 def leads_to_watch(db: Path, names: set[str] | None = None) -> list[StoredLead]:

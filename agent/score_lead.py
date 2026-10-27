@@ -113,7 +113,7 @@ class Settings(BaseModel):
     """The customer's numbers. All required, no defaults: a missing one stops the load
     with a message naming it, so no hidden value decides a lead."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     min_headcount: int = Field(ge=0, description="fewer employees than this is a hard fail")
     max_size_factor: float = Field(
@@ -167,8 +167,8 @@ class ICP(BaseModel):
     pain_solved: str
     notes: str = ""
     sales_roles: SalesRolesConfig
-    company_size_min: int
-    company_size_max: int
+    company_size_min: int = Field(ge=0)
+    company_size_max: int = Field(ge=0)
     geography_countries: list[str]
     gates: list[str]
     industry_map: list[IndustryRule]
@@ -193,6 +193,12 @@ class ICP(BaseModel):
         if unknown:
             raise ValueError(f"Unknown gate criteria {unknown}; use names from {ALL_CRITERIA}")
         return v
+
+    @model_validator(mode="after")
+    def _size_range(self) -> ICP:
+        if self.company_size_min > self.company_size_max:
+            raise ValueError("company_size_min can't be bigger than company_size_max")
+        return self
 
 
 class SalesRole(BaseModel):

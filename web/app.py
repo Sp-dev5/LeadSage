@@ -529,8 +529,14 @@ def icp_save(request: Request, buyer_persona: str = Form(""), pain_solved: str =
 
 @app.post("/icp/suggest")
 async def icp_suggest(request: Request):
-    data = await request.json()
-    field, context = data.get("field", ""), data.get("context", {})
+    try:
+        data = await request.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return JSONResponse({"error": "send a JSON object"}, status_code=400)
+    field, context = data.get("field", ""), data.get("context")
+    context = context if isinstance(context, dict) else {}
     if field not in TEXT_FIELDS:
         return JSONResponse({"error": "unknown field"}, status_code=400)
     try:

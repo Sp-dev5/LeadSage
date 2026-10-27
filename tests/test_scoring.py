@@ -309,6 +309,20 @@ def test_bad_weights_are_rejected(tmp_path):
         _load(tmp_path, raw)
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_weights_must_be_finite(value):
+    raw = json.loads(json.dumps(BASE_ICP))
+    raw["settings"]["weights"]["pain match"] = value
+    with pytest.raises(ValueError, match="finite"):
+        sl.ICP.model_validate(raw)
+
+
+@pytest.mark.parametrize("low, high", [(-5, 50), (500, 50)])
+def test_size_range_must_be_a_real_range(low, high):
+    with pytest.raises(ValueError, match="company_size_m"):
+        sl.ICP.model_validate(BASE_ICP | {"company_size_min": low, "company_size_max": high})
+
+
 def test_every_fact_requires_a_quote():
     defs = sl.CompanyFacts.model_json_schema()["$defs"]
     assert all("quote" in d.get("required", []) for d in defs.values())
