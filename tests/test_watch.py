@@ -21,9 +21,9 @@ def role(title: str) -> SalesRole:
     return SalesRole(title=title, match="exact", source="https://jobs.example/board", fetched_at="2026-10-27T00:00:00+00:00")
 
 
-def item(headline: str, days_ago: int) -> NewsItem:
+def item(headline: str, days_ago: int, kind: str = "launch") -> NewsItem:
     day = (TODAY - timedelta(days=days_ago)).isoformat()
-    return NewsItem(headline=headline, date_text=day, date=day, kind="launch", source="https://acme.example/news",
+    return NewsItem(headline=headline, date_text=day, date=day, kind=kind, source="https://acme.example/news",
                     fetched_at="2026-10-27T00:00:00+00:00")
 
 
@@ -107,6 +107,16 @@ def test_old_news_first_seen_today_does_not_fire_but_recent_news_does(w):
     w.news["Acme"] = [item("Acme opens an office in Singapore", 60), item("Acme launches a billing module", 3)]
     result = run(w)
     assert fired(result) == [("Acme", "news", "Acme launches a billing module")]
+
+
+def test_a_plain_blog_post_is_stored_but_does_not_fire(w):
+    add(w)
+    run(w)
+    w.news["Acme"] = [item("4 features I can't live without", 2, kind="post"),
+                      item("Acme partners with Zoho", 2, kind="partnership")]
+    result = run(w)
+    assert fired(result) == [("Acme", "news", "Acme partners with Zoho")]
+    assert len(store.known_events("Acme", "news", w.db)) == 2
 
 
 @pytest.mark.parametrize("stage", ["lost", "replied", "meeting"])

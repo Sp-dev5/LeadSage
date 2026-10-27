@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
 from agent import store
-from agent.fetch import fetch_page, load_or_fetch, slug
+from agent.fetch import MAX_CHARS, fetch_page, load_or_fetch, slug
 from agent.llm import second_model_name
 from agent.logos import fetch_logo
 from agent.score_lead import ICP, Company, LeadScore, is_borderline, load_icp, score_lead, with_second_opinion
@@ -32,7 +33,7 @@ def lead_files() -> list[str]:
     """CSV files in data/ that have every lead column."""
     found = []
     for path in sorted(DATA.glob("*.csv")):
-        with path.open(encoding="utf-8", newline="") as f:
+        with path.open(encoding="utf-8-sig", newline="") as f:
             header = set(next(csv.reader(f), []))
         if LEAD_COLUMNS <= header:
             found.append(path.name)
@@ -40,7 +41,7 @@ def lead_files() -> list[str]:
 
 
 def read_leads(file: str) -> list[dict]:
-    with (DATA / file).open(encoding="utf-8", newline="") as f:
+    with (DATA / file).open(encoding="utf-8-sig", newline="") as f:
         return [r for r in csv.DictReader(f) if (r.get("name") or "").strip()]
 
 
@@ -54,8 +55,8 @@ def signal_rows(file: str = SIGNALS_FILE) -> dict[str, dict]:
 def lead_text(row: dict, mode: str, pages: Path = PAGES, refetch: bool = False) -> tuple[str, str]:
     """The text to score for one lead, and where it came from: the typed description, or the
     lead's website (cached in `pages`) when `mode` is "fetched" and the row has a url. A failed
-    fetch falls back to the typed description."""
-    typed = row["description"]
+    fetch falls back to the typed description. Typed text is cut at the same length as a page."""
+    typed = (row.get("description") or "")[:MAX_CHARS]
     url = (row.get("url") or "").strip()
     if mode == "typed" or not url:
         return typed, "typed"
@@ -138,6 +139,7 @@ def main() -> None:
     ap.add_argument("--file", default="real_leads.csv", help="lead CSV in data/ (default: real_leads.csv)")
     ap.add_argument("--names", help="comma-separated company names to score (default: all)")
     args = ap.parse_args()
+    sys.stdout.reconfigure(encoding="utf-8")
 
     icp = load_icp()
     rows = read_leads(args.file)

@@ -10,6 +10,20 @@ def lead_score(fit, verdict, model):
                      disqualifier_reason="", summary="", model=model)
 
 
+def test_a_csv_saved_by_excel_is_still_read(tmp_path, monkeypatch):
+    header = "name,industry,size,location,url,description,my_label,why\r\n"
+    (tmp_path / "excel_leads.csv").write_bytes(("﻿" + header + "Acme,SaaS,120,Pune,https://acme.dev,CRM,,\r\n")
+                                               .encode("utf-8"))
+    monkeypatch.setattr(pipeline, "DATA", tmp_path)
+    assert pipeline.lead_files() == ["excel_leads.csv"]
+    assert pipeline.read_leads("excel_leads.csv")[0]["name"] == "Acme"
+
+
+def test_a_very_long_typed_description_is_cut_like_a_page():
+    text, source = pipeline.lead_text({"name": "Long", "description": "CRM software. " * 10_000}, "typed")
+    assert source == "typed" and len(text) == pipeline.MAX_CHARS
+
+
 def test_main_model_scores_every_lead_before_the_second_model_runs(tmp_path, monkeypatch):
     main = {"Clear": lead_score(85, "qualify", "main"), "Edge": lead_score(55, "review", "main"),
             "Dropped": lead_score(30, "disqualify", "main")}

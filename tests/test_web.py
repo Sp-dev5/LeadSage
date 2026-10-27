@@ -238,6 +238,22 @@ def test_scoring_refuses_a_cutoff_order_that_cannot_work(client, tmp_path, monke
     assert json.loads(before)["settings"]["qualify_at"] != 30
 
 
+@pytest.mark.parametrize("weight", ["nan", "inf", "-inf"])
+def test_scoring_refuses_a_weight_that_is_not_a_number(client, tmp_path, monkeypatch, weight):
+    path = icp_file(tmp_path, monkeypatch)
+    before = path.read_text(encoding="utf-8")
+    r = client.post("/icp/scoring", data=scoring_form(path, **{"weight:pain match": weight}), follow_redirects=True)
+    assert r.status_code == 200 and "Not saved" in r.text
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_suggest_refuses_a_body_that_is_not_a_json_object(client):
+    for body in ("not json", "[]", '"text"'):
+        r = client.post("/icp/suggest", content=body, headers={"X-CSRF-Token": client.token(),
+                                                               "content-type": "application/json"}, csrf=False)
+        assert r.status_code == 400, body
+
+
 def test_scoring_refuses_a_missing_or_wrong_number(client, tmp_path, monkeypatch):
     path = icp_file(tmp_path, monkeypatch)
     before = path.read_text(encoding="utf-8")
