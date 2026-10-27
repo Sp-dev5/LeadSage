@@ -455,3 +455,53 @@ def test_a_mixed_answer_is_refused_before_dialling(monkeypatch):
     monkeypatch.setattr(fetch, "create_connection", lambda *a, **k: pytest.fail("dialled"))
     with pytest.raises(fetch._Refused):
         fetch._connect_public("acme.test", 80, 5, None, None)
+
+
+def _pages(monkeypatch, answers):
+    tried = []
+
+    def fake(url):
+        tried.append(url)
+        error = answers.get(url, "could not connect (site down or no such domain)")
+        if error == "":
+            return fetch.Page(url=url, text="Acme makes payroll software.", fetched_at="t", ok=True)
+        return fetch.Page(url=url, fetched_at="t", ok=False, error=error)
+
+    monkeypatch.setattr(fetch, "fetch_page", fake)
+    return tried
+
+
+@pytest.mark.parametrize("url, variants", [
+    ("http://acme.example/app", ["http://acme.example/", "https://acme.example/", "https://www.acme.example/"]),
+    ("https://www.acme.example", ["https://acme.example/"]),
+    ("https://acme.example/", ["https://www.acme.example/"]),
+])
+def test_site_variants(url, variants):
+    assert fetch.site_variants(url) == variants
+
+
+def test_a_broken_address_falls_back_to_the_same_sites_other_spelling(monkeypatch):
+    tried = _pages(monkeypatch, {"https://www.acme.example/": ""})
+    page = fetch.fetch_homepage("https://acme.example")
+    assert page.ok and page.url == "https://www.acme.example/"
+    assert tried == ["https://acme.example", "https://www.acme.example/"]
+
+
+def test_a_missing_deep_page_falls_back_to_the_homepage(monkeypatch):
+    tried = _pages(monkeypatch, {"http://acme.example/app": "HTTP 404", "http://acme.example/": ""})
+    assert fetch.fetch_homepage("http://acme.example/app").ok
+    assert tried == ["http://acme.example/app", "http://acme.example/"]
+
+
+@pytest.mark.parametrize("refusal", ["HTTP 403", "HTTP 429", "blocked by robots.txt", "no readable text"])
+def test_a_refusal_is_final(monkeypatch, refusal):
+    tried = _pages(monkeypatch, {"https://acme.example": refusal})
+    page = fetch.fetch_homepage("https://acme.example")
+    assert not page.ok and page.error == refusal and tried == ["https://acme.example"]
+
+
+def test_a_variant_that_refuses_stops_the_search(monkeypatch):
+    tried = _pages(monkeypatch, {"http://acme.example/app": "HTTP 404", "http://acme.example/": "HTTP 403"})
+    page = fetch.fetch_homepage("http://acme.example/app")
+    assert not page.ok and page.error == "HTTP 404"
+    assert tried == ["http://acme.example/app", "http://acme.example/"]

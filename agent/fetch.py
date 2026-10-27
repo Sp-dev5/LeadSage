@@ -343,6 +343,41 @@ def fetch_page(url: str) -> Page:
         return _fail(url, _reason(e))
 
 
+UNREACHABLE = ("could not connect", "HTTP 404", "HTTP 410", "HTTP 5")
+
+
+def site_variants(url: str) -> list[str]:
+    """Other spellings of the same site's homepage: the root instead of a deep path, with or
+    without "www.", https instead of http. A lead list often has the one that is broken."""
+    parts = urlsplit(url)
+    host = parts.netloc
+    other = host[4:] if host.lower().startswith("www.") else f"www.{host}"
+    candidates = [f"{parts.scheme}://{host}/", f"https://{host}/", f"https://{other}/"]
+    if parts.path in ("", "/") and not parts.query:
+        candidates = candidates[1:]
+    found: list[str] = []
+    for c in candidates:
+        if c not in found and c.rstrip("/") != url.rstrip("/"):
+            found.append(c)
+    return found
+
+
+def fetch_homepage(url: str) -> Page:
+    """A company's homepage. When the address can't be reached or the page is missing, the same
+    site's other spellings are tried. A refusal (robots.txt, 403, 429) is final: the site said no.
+    Never raises."""
+    page = fetch_page(url)
+    if page.ok or not page.error.startswith(UNREACHABLE):
+        return page
+    for other in site_variants(url):
+        again = fetch_page(other)
+        if again.ok:
+            return again
+        if not again.error.startswith(UNREACHABLE):
+            break
+    return page
+
+
 def fetch_full_text(url: str, max_chars: int = FULL_MAX_CHARS) -> Page:
     """Every visible line of a page, not only the main article. Team and leadership blocks
     sit outside the main article, so fetch_page drops them. Never raises."""

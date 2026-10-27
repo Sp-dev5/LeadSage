@@ -19,7 +19,7 @@ def page(ok: bool = True) -> Page:
 
 
 class Calls(list):
-    """URLs fetch_page was asked for; set `result` to change the page it returns."""
+    """URLs fetch_homepage was asked for; set `result` to change the page it returns."""
     result: Page | None = None
 
 
@@ -31,7 +31,7 @@ def fetch_calls(monkeypatch):
         calls.append(url)
         return calls.result or page()
 
-    monkeypatch.setattr(pipeline, "fetch_page", fake)
+    monkeypatch.setattr(pipeline, "fetch_homepage", fake)
     return calls
 
 
