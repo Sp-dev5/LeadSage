@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from agent import store
-from agent.fetch import MAX_CHARS, fetch_page, load_or_fetch, slug
+from agent.fetch import MAX_CHARS, fetch_homepage, load_or_fetch, slug
 from agent.llm import second_model_name
 from agent.logos import fetch_logo
 from agent.score_lead import ICP, Company, LeadScore, is_borderline, load_icp, score_lead, with_second_opinion
@@ -61,7 +61,7 @@ def lead_text(row: dict, mode: str, pages: Path = PAGES, refetch: bool = False) 
     if mode == "typed" or not url:
         return typed, "typed"
 
-    page = load_or_fetch(url, pages / f"{slug(row['name'])}.json", fetch_page, refetch)
+    page = load_or_fetch(url, pages / f"{slug(row['name'])}.json", fetch_homepage, refetch)
     if not page.ok:
         print(f"  fetch failed for {row['name']}: {page.error}, using typed", flush=True)
         return typed, "typed (fetch failed)"
