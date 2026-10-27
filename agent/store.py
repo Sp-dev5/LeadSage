@@ -12,8 +12,10 @@ not yet sent are marked stopped.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -82,6 +84,10 @@ CREATE TABLE IF NOT EXISTS replies (
     message_id TEXT NOT NULL,
     reply TEXT NOT NULL,
     PRIMARY KEY (lead, message_id)
+);
+CREATE TABLE IF NOT EXISTS logins (
+    id TEXT PRIMARY KEY,
+    started TEXT NOT NULL
 );"""
 
 
@@ -477,6 +483,35 @@ def save_reply(lead: str, reply: Reply, path: Path = DB_PATH) -> bool:
         cur = conn.execute("INSERT OR IGNORE INTO replies (lead, message_id, reply) VALUES (?, ?, ?)",
                            (lead, reply.message_id, stamped.model_dump_json()))
         return cur.rowcount == 1
+
+
+def _login_key(login_id: str) -> str:
+    return hashlib.sha256(login_id.encode()).hexdigest()
+
+
+def _login_cutoff(max_age_seconds: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)).isoformat(timespec="seconds")
+
+
+def start_login(login_id: str, max_age_seconds: int, path: Path = DB_PATH) -> None:
+    """Remember a new web login (only a hash of its id), and forget logins too old to be used."""
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("DELETE FROM logins WHERE started < ?", (_login_cutoff(max_age_seconds),))
+        conn.execute("INSERT OR REPLACE INTO logins (id, started) VALUES (?, ?)", (_login_key(login_id), now()))
+
+
+def login_alive(login_id: str, max_age_seconds: int, path: Path = DB_PATH) -> bool:
+    """True while the login exists, was not logged out, and is younger than `max_age_seconds`."""
+    if not login_id:
+        return False
+    with closing(_connect(path)) as conn:
+        r = conn.execute("SELECT started FROM logins WHERE id = ?", (_login_key(login_id),)).fetchone()
+    return r is not None and r["started"] >= _login_cutoff(max_age_seconds)
+
+
+def end_login(login_id: str, path: Path = DB_PATH) -> None:
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("DELETE FROM logins WHERE id = ?", (_login_key(login_id),))
 
 
 def load_replies(lead: str, path: Path = DB_PATH) -> list[Reply]:

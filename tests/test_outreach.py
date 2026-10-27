@@ -389,12 +389,30 @@ def test_every_email_ends_with_the_signature_address_and_opt_out_line(model_writ
 
 
 def test_sending_problems_are_named():
-    ok = "Hi.\n\nSam\n\nReply \"no thanks\" to stop."
+    ok = "Hi.\n\nSam\n1 Test Street, Pune\n\nReply \"no thanks\" to stop."
     assert outreach.sending_problems(ok, CFG) == []
-    assert outreach.sending_problems("Hi.", CFG) == ["the opt-out line is missing: put it back at the end"]
+    assert outreach.sending_problems("Hi.\n\n1 Test Street, Pune", CFG) == [
+        "the opt-out line is missing: put it back at the end"]
     unset = CFG.model_copy(update={"sender_name": "Your name", "sender_address": " "})
     problems = outreach.sending_problems(ok, unset)
     assert len(problems) == 2 and "your name" in problems[0] and "business address" in problems[1]
+
+
+@pytest.mark.parametrize("address", ["Demo address: replace with your business address before sending",
+                                     "Your business address", "  "])
+def test_a_placeholder_address_blocks_approval(address):
+    cfg = CFG.model_copy(update={"sender_address": address})
+    body = f"Hi.\n\nSam\n{address}\n\n{CFG.opt_out_line}"
+    assert any("business address is not set" in p for p in outreach.sending_problems(body, cfg))
+    assert outreach.setup_problems(cfg) == ["your business address is not set (Sender and follow-ups in the sidebar)"]
+
+
+def test_a_draft_signed_with_an_older_address_is_blocked():
+    old = "Hi.\n\nSam\nDemo address: replace with your business address before sending\n\n" + CFG.opt_out_line
+    assert outreach.sending_problems(old, CFG) == [
+        "the signature does not have your current business address: draft it again or edit it in"]
+    moved = "Hi.\n\nSam\n1 Test Street,\n  Pune\n\n" + CFG.opt_out_line
+    assert outreach.sending_problems(moved, CFG) == []
 
 
 def test_closest_match_is_flagged_on_the_draft(model_writes, tmp_path):

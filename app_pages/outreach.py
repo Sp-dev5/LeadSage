@@ -7,7 +7,7 @@ import app_ui as ui
 from agent import export, store
 from agent.contacts import typed_contact
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
-                            save_outreach, saved_search, sending_problems)
+                            save_outreach, saved_search, sending_problems, setup_problems)
 from agent.readiness import QUEUES, in_queue, todo
 from agent.score_lead import load_icp
 
@@ -95,7 +95,7 @@ with st.sidebar:
 if error := st.session_state.pop("outreach_error", None):
     st.error(error, icon=":material/error:")
 
-setup = sending_problems(cfg.opt_out_line, cfg)
+setup = setup_problems(cfg)
 if setup:
     st.warning("Before you can approve an email: " + "; ".join(setup) + ".", icon=":material/lock:")
 

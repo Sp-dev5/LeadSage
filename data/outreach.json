@@ -1,5 +1,5 @@
 {
-  "sender_name": "Shaivi",
+  "sender_name": "Your name",
   "sender_company": "LeadSage",
   "draft_verdicts": ["qualify", "review"],
   "follow_up_days": [3, 7, 14],
@@ -16,7 +16,7 @@
                              "head of growth", "chief growth officer", "chief business officer",
                              "chief operating officer", "head of operations", "chief marketing officer",
                              "head of marketing", "ceo", "chief executive officer", "founder", "co-founder"],
-  "sender_address": "Demo address: replace with your business address before sending",
+  "sender_address": "",
   "opt_out_line": "If this isn't for you, just let me know and I won't email again.",
   "max_sends_per_day": 20,
   "avoid_phrases": ["I hope this finds you well", "brief conversation", "brief chat", "quick chat", "touch base",

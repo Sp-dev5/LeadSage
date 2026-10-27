@@ -8,7 +8,7 @@ import pytest
 from agent import contacts, mailer, store
 from tests.test_outreach import CFG, COMPANY, LEAD, SCORE
 
-BODY = "Hi Priya,\n\nYou are hiring an Account Executive.\n\nSam\nLeadSage\n\n" + CFG.opt_out_line
+BODY = "Hi Priya,\n\nYou are hiring an Account Executive.\n\nSam\nLeadSage\n1 Test Street, Pune\n\n" + CFG.opt_out_line
 PRIYA = contacts.Contact(name="Priya Rao", title="VP Sales", matches_buyer="yes", source="https://acme.example/team",
                          fetched_at="2026-10-24T00:00:00+00:00", email="priya@acme.example")
 

@@ -46,7 +46,7 @@ def seed(emails=True):
         cited = Citation(sentence="Acme builds payroll software.", quote="payroll software",
                          source="https://acme.example", fetched_at="2026-10-24T00:00:00+00:00")
         store.save_email("Acme", Email(step=0, subject="Hello", body="Hi there,\n\nAcme builds payroll software.\n\n"
-                                       + CFG.opt_out_line, hook="they have open sales roles: AE",
+                                       + outreach._footer(CFG), hook="they have open sales roles: AE",
                                        hook_kind="open sales roles", citations=[cited], rejected=["You won an award."],
                                        drafted_at="2026-10-24T00:00:00+00:00"), path=views.DB)
 
@@ -600,18 +600,60 @@ def test_hsts_only_when_served_over_https(client, monkeypatch):
     assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
 
 
-def test_the_session_cookie_is_https_only_when_leadsage_https_is_set():
+def _reload_with(monkeypatch, **env):
     import importlib
-    import os
-    old = os.environ.get("LEADSAGE_HTTPS")
-    try:
-        os.environ["LEADSAGE_HTTPS"] = "1"
-        fresh = importlib.reload(web_app)
-        session = next(m for m in fresh.app.user_middleware if m.cls.__name__ == "SessionMiddleware")
-        assert session.kwargs["https_only"] is True
-    finally:
-        if old is None:
-            os.environ.pop("LEADSAGE_HTTPS", None)
-        else:
-            os.environ["LEADSAGE_HTTPS"] = old
-        importlib.reload(web_app)
+    for key in ("LEADSAGE_HTTPS", "LEADSAGE_PASSWORD", "LEADSAGE_SECRET"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
+    return importlib.reload(web_app)
+
+
+@pytest.fixture
+def restore_app(monkeypatch):
+    import importlib
+    yield
+    monkeypatch.undo()
+    importlib.reload(web_app)
+
+
+def test_the_session_cookie_is_https_only_when_leadsage_https_is_set(monkeypatch, restore_app):
+    fresh = _reload_with(monkeypatch, LEADSAGE_HTTPS="1", LEADSAGE_PASSWORD="pw", LEADSAGE_SECRET="s" * 64)
+    session = next(m for m in fresh.app.user_middleware if m.cls.__name__ == "SessionMiddleware")
+    assert session.kwargs["https_only"] is True
+
+
+def test_a_server_without_a_password_refuses_to_start(monkeypatch, restore_app):
+    with pytest.raises(RuntimeError, match="LEADSAGE_PASSWORD is not set"):
+        _reload_with(monkeypatch, LEADSAGE_HTTPS="1")
+
+
+def _logged_in(client, monkeypatch, password="open sesame"):
+    monkeypatch.setattr(web_app, "PASSWORD", password)
+    assert client.post("/login", data={"password": password}, follow_redirects=False).status_code == 303
+    assert client.get("/", follow_redirects=False).status_code == 200
+
+
+def test_a_copied_cookie_stops_working_at_logout(client, monkeypatch):
+    _logged_in(client, monkeypatch)
+    copy = PageClient(web_app.app)
+    copy.cookies.update(dict(client.cookies))
+    assert copy.get("/", follow_redirects=False).status_code == 200
+    client.post("/logout")
+    assert copy.get("/", follow_redirects=False).headers["location"] == "/login"
+
+
+def test_changing_the_password_ends_every_session(client, monkeypatch):
+    _logged_in(client, monkeypatch)
+    monkeypatch.setattr(web_app, "PASSWORD", "a new password")
+    assert client.get("/", follow_redirects=False).headers["location"] == "/login"
+
+
+def test_a_login_older_than_the_session_limit_is_refused(tmp_path):
+    db = tmp_path / "leads.db"
+    store.start_login("abc", 3600, db)
+    assert store.login_alive("abc", 3600, db) and not store.login_alive("abc", -1, db)
+    assert not store.login_alive("", 3600, db) and not store.login_alive("other", 3600, db)
+    store.end_login("abc", db)
+    assert not store.login_alive("abc", 3600, db)

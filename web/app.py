@@ -35,7 +35,7 @@ from agent.evaluate import grade_rows, grade_summary
 from agent.files import write_text_atomic
 from agent.icp_assist import suggest, suggest_buyer
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
-                            save_outreach, saved_contact, saved_search, sending_problems)
+                            save_outreach, saved_contact, saved_search, sending_problems, setup_problems)
 from agent.pipeline import lead_files, read_leads, score_all, signal_rows
 from agent.readiness import QUEUES, group, hook_label, in_queue, todo
 from agent.score_lead import ALL_CRITERIA, FACT_VALUES, ICP, ICP_PATH, load_icp
@@ -53,6 +53,10 @@ log = logging.getLogger("leadsage")
 if PASSWORD and not SECRET:
     raise RuntimeError("LEADSAGE_PASSWORD is set but LEADSAGE_SECRET is not. Add a long random LEADSAGE_SECRET to .env "
                        "so logins survive a restart and the session cookie cannot be forged.")
+if HTTPS and not PASSWORD:
+    raise RuntimeError("LEADSAGE_HTTPS=1 means the app is on a server, but LEADSAGE_PASSWORD is not set, so anyone "
+                       "could open it and send email from your mailbox. Add LEADSAGE_PASSWORD to .env.")
+SESSION_SECONDS = 14 * 24 * 3600
 OPEN_PATHS = ("/login", "/static/")
 STOP_STAGES = {"replied": "Replied", "meeting": "Meeting booked", "lost": "Lost"}
 PAGE_SIZE = 10
@@ -89,16 +93,30 @@ templates.env.filters.update(plain=views.plain, domain=views.domain, bare=views.
 templates.env.globals.update(is_link=views.is_link, share=views.share)
 
 
+def _password_mark() -> str:
+    """A fingerprint of today's password, kept in the session: change the password and every
+    older session stops working."""
+    return hmac.new(SECRET.encode(), PASSWORD.encode(), "sha256").hexdigest()[:32]
+
+
+def _signed_in(request: Request) -> bool:
+    """The session says logged in, was made with today's password, and was not logged out. The
+    cookie alone is not enough: a copy of it stops working at logout."""
+    s = request.session
+    return (bool(s.get("in")) and hmac.compare_digest(str(s.get("pw", "")), _password_mark())
+            and store.login_alive(str(s.get("sid", "")), SESSION_SECONDS, views.DB))
+
+
 @app.middleware("http")
 async def need_login(request: Request, call_next):
     path = request.url.path
-    if PASSWORD and not request.session.get("in") and not path.startswith(OPEN_PATHS):
+    if PASSWORD and not path.startswith(OPEN_PATHS) and not _signed_in(request):
         return RedirectResponse("/login", status_code=303)
     return await call_next(request)
 
 
 app.add_middleware(SessionMiddleware, secret_key=SECRET or secrets.token_hex(32),
-                   same_site="strict", https_only=HTTPS, max_age=14 * 24 * 3600)
+                   same_site="strict", https_only=HTTPS, max_age=SESSION_SECONDS)
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": "; ".join([
@@ -158,7 +176,9 @@ def login(request: Request, password: str = Form("")):
     if PASSWORD and hmac.compare_digest(password.encode(), PASSWORD.encode()):
         failed_logins.pop(who, None)
         request.session.clear()
-        request.session["in"] = True
+        login_id = secrets.token_urlsafe(32)
+        store.start_login(login_id, SESSION_SECONDS, views.DB)
+        request.session.update({"in": True, "sid": login_id, "pw": _password_mark()})
         return RedirectResponse("/", status_code=303)
     failed_logins[who] = [*tries, moment]
     return page(request, "login.html", wrong=True)
@@ -166,6 +186,7 @@ def login(request: Request, password: str = Form("")):
 
 @app.post("/logout")
 def logout(request: Request):
+    store.end_login(str(request.session.get("sid", "")), views.DB)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -365,7 +386,7 @@ def outreach_page(request: Request):
     return page(request, "outreach.html", nav="outreach", in_play=in_play, table=table, queue=queue, queues=QUEUES,
                 at=at, pages=pages, total=len(matching), first=(at - 1) * PAGE_SIZE + 1,
                 counts={q: sum(in_queue(r.ready, q) for r in in_play) for q in QUEUES}, to_do=to_do, stats=stats,
-                undrafted=undrafted, cfg=cfg, setup=sending_problems(cfg.opt_out_line, cfg),
+                undrafted=undrafted, cfg=cfg, setup=setup_problems(cfg),
                 suppressed=store.suppressed(views.DB), d=detail, stop_stages=STOP_STAGES, stages=store.STAGES,
                 can_read=mailer.can_read(),
                 query=lambda **kw: _query(request, **kw))
