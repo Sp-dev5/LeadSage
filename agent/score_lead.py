@@ -389,6 +389,33 @@ def quote_in(quote: str, text: str) -> bool:
     return _quote_found(quote, _norm(text))
 
 
+RETRY_NOTE = (
+    "\n\nYour last answer was checked against the text and these answers were dropped "
+    "because their quote is not in the company details: {names}. Answer every question "
+    "again. A quote is one continuous passage copied exactly as written, never two parts "
+    "joined with \"...\" and never reordered. If no single passage supports an answer, "
+    "give \"no\" or \"unknown\" with an empty quote."
+)
+
+
+def _unquoted(facts: CompanyFacts, company: Company) -> list[str]:
+    """Names of the facts whose answer needs a quote the company's text does not contain."""
+    source = _source(company)
+    return [name for name in REPORTED_FACTS
+            if getattr(facts, name).value not in NO_QUOTE_NEEDED
+            and not _quote_found(getattr(facts, name).quote, source)]
+
+
+def _take_requoted(first: CompanyFacts, again: CompanyFacts, names: list[str],
+                   company: Company) -> tuple[CompanyFacts, list[str]]:
+    """Replace only the dropped facts with the second answer, and only where the quote
+    check now passes or the second answer needs no quote. Returns the facts and the
+    names that were fixed. Facts that were fine the first time are never touched."""
+    still_bad = set(_unquoted(again, company))
+    fixed = [name for name in names if name not in still_bad]
+    return first.model_copy(update={name: getattr(again, name) for name in fixed}), fixed
+
+
 def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str], list[str]]:
     """Apply the quote rule, fill an unknown sales motion from hiring, then derive `offering`.
 
@@ -686,15 +713,25 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
     size_fail = _size_fail(icp, headcount)
     used: list[str] = []
 
-    raw_facts = generate_structured(
-        system=FACTS_PROMPT,
-        user_prompt=_company_text(company),
-        schema=CompanyFacts,
-        model=model,
-        temperature=EXTRACT_TEMPERATURE,
-        used=used,
-    )
+    def ask_facts(system: str) -> CompanyFacts:
+        return generate_structured(
+            system=system,
+            user_prompt=_company_text(company),
+            schema=CompanyFacts,
+            model=model,
+            temperature=EXTRACT_TEMPERATURE,
+            used=used,
+        )
+
+    raw_facts = ask_facts(FACTS_PROMPT)
+    unquoted = _unquoted(raw_facts, company)
+    if unquoted:
+        asked_again = ask_facts(FACTS_PROMPT + RETRY_NOTE.format(names=", ".join(unquoted)))
+        raw_facts, fixed = _take_requoted(raw_facts, asked_again, unquoted, company)
+    else:
+        fixed = []
     facts, rejected = _check_facts(raw_facts, company)
+    rejected += [f"{name}: first quote was not in the company details, fixed on a second ask" for name in fixed]
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
     disqualified, review_flags = _apply_rules(icp, facts)
     unknown = icp.settings.unknown_score

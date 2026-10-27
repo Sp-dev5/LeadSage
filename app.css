@@ -1,9 +1,5 @@
 .stApp {
-  background-color: #000000;
-  background-image:
-    radial-gradient(1100px 560px at 50% -12%, rgba(45, 129, 93, 0.42), rgba(0, 0, 0, 0) 70%),
-    radial-gradient(700px 420px at 88% 0%, rgba(88, 242, 227, 0.07), rgba(0, 0, 0, 0) 70%);
-  background-attachment: fixed;
+  background-color: #0F1110;
 }
 
 [data-testid="stHeader"] {
@@ -23,7 +19,7 @@ h1 {
 
 [data-testid="stCaptionContainer"],
 [data-testid="stCaptionContainer"] p {
-  color: #AEBDB8;
+  color: #A7ADA8;
 }
 
 [data-testid="stMetricValue"],
@@ -44,10 +40,9 @@ h1 {
 [class*="st-key-stats"],
 [class*="st-key-tiles"],
 [class*="st-key-rise"] {
-  background: linear-gradient(180deg, rgba(120, 255, 210, 0.055) 0%, rgba(120, 255, 210, 0.014) 100%);
-  border: 1px solid rgba(150, 255, 220, 0.10) !important;
+  background: #161917;
+  border: 1px solid rgba(236, 238, 235, 0.10) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(16px) saturate(120%);
 }
 
 .st-key-navpills {
@@ -62,16 +57,15 @@ h1 {
 }
 
 .st-key-navpills [data-testid="stPageLink"] a:hover {
-  background: rgba(150, 255, 220, 0.08);
+  background: rgba(236, 238, 235, 0.08);
 }
 
 .st-key-navactive [data-testid="stPageLink"] a {
-  background: linear-gradient(180deg, #FFFFFF 0%, #DDF9F2 100%);
-  box-shadow: inset 0 1px 0 #FFFFFF;
+  background: #A8D5BA;
 }
 
 .st-key-navactive [data-testid="stPageLink"] a p {
-  color: #062520;
+  color: #0E2418;
   font-weight: 600;
 }
 
@@ -79,13 +73,13 @@ h1 {
   font-size: 0.72rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #8FA19B;
+  color: #767D78;
   margin: 0;
 }
 
 [class*="st-key-stats"] [data-testid="stColumn"] + [data-testid="stColumn"],
 [class*="st-key-tiles"] [data-testid="stColumn"] + [data-testid="stColumn"] {
-  border-left: 1px solid rgba(150, 255, 220, 0.08);
+  border-left: 1px solid rgba(236, 238, 235, 0.08);
   padding-left: 1.25rem;
 }
 
@@ -101,55 +95,53 @@ h1 {
 }
 
 [class*="st-key-tiles"] [data-testid="stColumn"]:hover {
-  background-color: rgba(150, 255, 220, 0.05);
+  background-color: rgba(236, 238, 235, 0.05);
 }
 
 [data-testid^="stBaseButton-primary"] {
-  background: linear-gradient(180deg, #8CF8DF 0%, #4BEDBD 55%, #2CCB9E 100%);
+  background: #A8D5BA;
   border: 0;
-  color: #04241B;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 0 0 1px rgba(88, 242, 227, 0.25),
-    0 10px 30px -12px rgba(75, 237, 189, 0.6);
+  color: #0E2418;
 }
 
 [data-testid^="stBaseButton-primary"] p {
-  color: #04241B;
+  color: #0E2418;
   font-weight: 600;
 }
 
 [data-testid^="stBaseButton-primary"]:hover {
-  background: linear-gradient(180deg, #A6FBE8 0%, #62F2CA 55%, #3AD9AE 100%);
-  color: #04241B;
+  background: #ECEEEB;
+  color: #0E2418;
 }
 
 [data-testid^="stBaseButton-primary"]:disabled {
-  background: rgba(150, 255, 220, 0.06);
+  background: rgba(236, 238, 235, 0.06);
   box-shadow: none;
 }
 
 [data-testid^="stBaseButton-primary"]:disabled p {
-  color: #5E706A;
+  color: #767D78;
 }
 
 [data-testid="stBaseButton-secondary"] {
-  background: rgba(150, 255, 220, 0.03);
-  border-color: rgba(150, 255, 220, 0.14);
+  background: rgba(236, 238, 235, 0.03);
+  border-color: rgba(236, 238, 235, 0.14);
 }
 
 [data-testid="stBaseButton-secondary"]:hover {
-  border-color: #4BEDBD;
-  color: #EAF4F1;
+  border-color: #A8D5BA;
+  color: #ECEEEB;
 }
 
 [data-testid="stMultiSelectTagsContainer"] [data-tag] {
-  background: rgba(75, 237, 189, 0.12) !important;
-  border: 1px solid rgba(75, 237, 189, 0.30);
-  color: #CFFBEE !important;
+  background: rgba(168, 213, 186, 0.12) !important;
+  border: 1px solid rgba(168, 213, 186, 0.30);
+  color: #ECEEEB !important;
 }
 
 [data-testid="stMultiSelectTagsContainer"] [data-tag] * {
-  color: #D4FBF2 !important;
-  fill: #D4FBF2 !important;
+  color: #ECEEEB !important;
+  fill: #ECEEEB !important;
 }
 
 [data-testid="stButtonGroup"] button {
@@ -195,7 +187,7 @@ h1 {
 }
 
 [class*="st-key-panel"]:hover {
-  border-color: rgba(75, 237, 189, 0.30) !important;
+  border-color: rgba(168, 213, 186, 0.30) !important;
 }
 
 [data-testid="stProgress"] [role="progressbar"] > div > div > div {
