@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Label · LeadSage{% endblock %}
+{% block body %}
+<section class="pagehead">
+  <div class="t"><p class="kick">Blind labels · saved in data/{{ file }}</p>
+    <h1>Label</h1>
+    <p class="lede">Your own verdict on each company, before you see the score. <b>{{ done }} of {{ rows | length }}</b> labelled.</p></div>
+</section>
+
+{% if not rows %}
+<section class="pane"><p class="muted">No companies to label: data/{{ file }} is missing or empty.</p></section>
+{% elif row %}
+<section class="pane label-card">
+  <header><div><h2>{{ row.name }}</h2><h3>{{ i + 1 }} of {{ rows | length }}{% if row.my_label %} · labelled {{ row.my_label }}{% endif %}</h3></div>
+    {% if is_link(row.url) %}<a href="{{ row.url }}" target="_blank" rel="noopener noreferrer">{{ row.url | bare }}</a>{% endif %}</header>
+  <dl class="kv mb-18">
+    <dt>Industry</dt><dd>{{ row.industry or '-' }}</dd>
+    <dt>Size</dt><dd>{{ row.size or '-' }}</dd>
+    <dt>Location</dt><dd>{{ row.location or '-' }}</dd>
+    <dt>What they do</dt><dd>{{ row.description or '-' }}</dd>
+  </dl>
+  <form method="post" action="/label" data-label-form><input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="i" value="{{ i }}"><input type="hidden" name="name" value="{{ row.name }}">
+    <fieldset class="label-pick"><legend class="small faint">Your verdict (keys 1, 2, 3)</legend>
+      {% for l in labels %}<label class="check"><input type="radio" name="label" value="{{ l }}" required {{ 'checked' if row.my_label == l }}> <span class="mono faint">{{ loop.index }}</span> {{ l | capitalize }}</label>{% endfor %}
+    </fieldset>
+    <label>Why (optional) <input type="text" name="why" maxlength="500" value="{{ row.why }}" autocomplete="off"></label>
+    <div class="row-btns">
+      <button class="b" type="submit">Save and next</button>
+      {% if i > 0 %}<a class="b ghost" href="/label?i={{ i - 1 }}">Back</a>{% endif %}
+      {% if i + 1 < rows | length %}<a class="b ghost" href="/label?i={{ i + 1 }}">Skip</a>{% endif %}
+    </div>
+  </form>
+</section>
+{% else %}
+<section class="pane">
+  <h2>All {{ rows | length }} labelled</h2>
+  <p class="muted">Score every company again with today's code and compare with your labels. It takes about 15 minutes and needs the local models.</p>
+  <div class="row-btns">
+    <form method="post" action="/label/grade"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="b" type="submit">Score against my labels</button></form>
+    <a class="b ghost" href="/label?i=0">Review my labels</a>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

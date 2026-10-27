@@ -88,6 +88,7 @@ def _ollama_client(host: str) -> ollama.Client:
 EXTRACT_TEMPERATURE = 0.0
 JUDGE_TEMPERATURE = 0.0
 WRITE_TEMPERATURE = 0.4
+WRITE_CONTEXT = 8192
 
 
 class OllamaUnreachable(RuntimeError):
@@ -97,8 +98,10 @@ class OllamaUnreachable(RuntimeError):
 FALLBACK_ERRORS = (ollama.ResponseError, httpx.TimeoutException, ValidationError, RuntimeError)
 
 
-def _ask_ollama(system: str, user_prompt: str, schema: type[T], model: str, temperature: float) -> T:
+def _ask_ollama(system: str, user_prompt: str, schema: type[T], model: str, temperature: float,
+                context: int | None = None) -> T:
     host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+    options = {"temperature": temperature} | ({"num_ctx": context} if context else {})
     try:
         response = _ollama_client(host).chat(
             model=model,
@@ -107,7 +110,7 @@ def _ask_ollama(system: str, user_prompt: str, schema: type[T], model: str, temp
                 {"role": "user", "content": user_prompt},
             ],
             format=schema.model_json_schema(),
-            options={"temperature": temperature},
+            options=options,
             think=False,
         )
     except ConnectionError as e:
@@ -119,7 +122,8 @@ def _ask_ollama(system: str, user_prompt: str, schema: type[T], model: str, temp
 
 
 def generate_structured(system: str, user_prompt: str, schema: type[T], model: str | None = None,
-                        temperature: float = JUDGE_TEMPERATURE, used: list[str] | None = None) -> T:
+                        temperature: float = JUDGE_TEMPERATURE, used: list[str] | None = None,
+                        context: int | None = None) -> T:
     """Ask the model a question and get back clean, validated data (not prose).
 
     `schema` is a Pydantic model describing the shape we want back. Ollama is told
@@ -130,10 +134,13 @@ def generate_structured(system: str, user_prompt: str, schema: type[T], model: s
     If the model crashes, times out or answers with broken JSON, the question goes once to
     the fallback model. Ollama being down is not retried. The model that answered is
     appended to `used`, so a caller can say which one it was.
+
+    `context` sets the model's window in tokens; left out, Ollama's own default (4,096) holds, and
+    a longer prompt is cut from the start without a word.
     """
     first = model or model_name()
     try:
-        result, answered = _ask_ollama(system, user_prompt, schema, first, temperature), first
+        result, answered = _ask_ollama(system, user_prompt, schema, first, temperature, context), first
     except OllamaUnreachable:
         raise
     except FALLBACK_ERRORS as e:
@@ -141,7 +148,7 @@ def generate_structured(system: str, user_prompt: str, schema: type[T], model: s
         if second == first:
             raise
         log.warning("%s failed (%s); asking %s instead", first, str(e)[:120], second)
-        result, answered = _ask_ollama(system, user_prompt, schema, second, temperature), second
+        result, answered = _ask_ollama(system, user_prompt, schema, second, temperature, context), second
     if used is not None:
         used.append(answered)
     return result
@@ -222,5 +229,5 @@ def generate_writing(system: str, user_prompt: str, schema: type[T]) -> Written:
             return Written(_groq(system, user_prompt, schema), cloud_model_id(), "")
         except Exception as e:
             reason = f"{type(e).__name__}: {str(e).replace(os.environ['GROQ_API_KEY'].strip(), '***')[:90]}"
-    return Written(generate_structured(system, user_prompt, schema, temperature=WRITE_TEMPERATURE),
-                   model_name(), reason)
+    return Written(generate_structured(system, user_prompt, schema, temperature=WRITE_TEMPERATURE,
+                                       context=WRITE_CONTEXT), model_name(), reason)

@@ -12,8 +12,10 @@ not yet sent are marked stopped.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -76,6 +78,16 @@ CREATE TABLE IF NOT EXISTS watched (
     first_watched TEXT NOT NULL,
     last_watched TEXT NOT NULL,
     PRIMARY KEY (lead, kind)
+);
+CREATE TABLE IF NOT EXISTS replies (
+    lead TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    reply TEXT NOT NULL,
+    PRIMARY KEY (lead, message_id)
+);
+CREATE TABLE IF NOT EXISTS logins (
+    id TEXT PRIMARY KEY,
+    started TEXT NOT NULL
 );"""
 
 
@@ -128,6 +140,20 @@ class Email(BaseModel):
     approved_at: str = ""
     sent_at: str = ""
     edited: bool = False
+    message_id: str = ""
+
+
+class Reply(BaseModel):
+    """A message in the rep's inbox that answers one of our emails. Only these fields are kept:
+    the start of the text, without the quoted email below it."""
+
+    message_id: str
+    received_at: str
+    sender: str
+    subject: str
+    snippet: str
+    opt_out: bool = False
+    found_at: str = ""
 
 
 class SignalEvent(BaseModel):
@@ -255,6 +281,7 @@ def delete_lead(lead: str, path: Path = DB_PATH) -> None:
     """Remove everything stored about a company: its score, contacts, news, emails and watched
     signals. The do-not-contact list is kept, so a company that asked to be left alone stays left alone."""
     with closing(_connect(path)) as conn, conn:
+        conn.execute("DELETE FROM replies WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM signal_events WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM watched WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
@@ -417,14 +444,77 @@ def approve_email(lead: str, step: int, path: Path = DB_PATH) -> None:
             _advance(conn, lead, "approved")
 
 
-def mark_sent(lead: str, step: int, path: Path = DB_PATH) -> None:
-    """The rep sent it from their own mailbox. Only an approved email can be sent."""
+def _sendable(conn: sqlite3.Connection, lead: str, step: int) -> Email:
+    old = _email(conn, lead, step)
+    if old is None or old.status != "approved":
+        raise ValueError(f"{lead}: email {step} is not approved")
+    if step > 0 and not any(e.step == step - 1 and e.status == "sent" for e in _emails(conn, lead)):
+        raise ValueError(f"{lead}: email {step - 1} has not been sent")
+    return old
+
+
+def check_sendable(lead: str, step: int, path: Path = DB_PATH) -> Email:
+    """The approved email, if it may be sent now; raises the reason otherwise. Checked before the
+    app sends, so a refusal never comes after the email has gone out."""
+    with closing(_connect(path)) as conn:
+        return _sendable(conn, lead, step)
+
+
+def mark_sent(lead: str, step: int, path: Path = DB_PATH, message_id: str = "") -> None:
+    """The email went out: sent by the rep from their own mailbox, or by the app (with the
+    `message_id` it was sent under). Only an approved email can be sent."""
     with closing(_connect(path)) as conn, conn:
-        old = _email(conn, lead, step)
-        if old is None or old.status != "approved":
-            raise ValueError(f"{lead}: email {step} is not approved")
-        if step > 0 and not any(e.step == step - 1 and e.status == "sent" for e in _emails(conn, lead)):
-            raise ValueError(f"{lead}: email {step - 1} has not been sent")
-        _put_email(conn, lead, old.model_copy(update={"status": "sent", "sent_at": now()}))
+        old = _sendable(conn, lead, step)
+        _put_email(conn, lead, old.model_copy(update={"status": "sent", "sent_at": now(), "message_id": message_id}))
         if step == 0:
             _advance(conn, lead, "contacted")
+
+
+def sent_by_app_since(since: str, path: Path = DB_PATH) -> int:
+    """How many emails the app itself has sent since `since` (an ISO time)."""
+    return sum(1 for emails in load_all_emails(path).values() for e in emails
+               if e.status == "sent" and e.message_id and e.sent_at >= since)
+
+
+def save_reply(lead: str, reply: Reply, path: Path = DB_PATH) -> bool:
+    """Keep a reply; False if it was already kept, so a second look at the inbox changes nothing."""
+    with closing(_connect(path)) as conn, conn:
+        stamped = reply.model_copy(update={"found_at": reply.found_at or now()})
+        cur = conn.execute("INSERT OR IGNORE INTO replies (lead, message_id, reply) VALUES (?, ?, ?)",
+                           (lead, reply.message_id, stamped.model_dump_json()))
+        return cur.rowcount == 1
+
+
+def _login_key(login_id: str) -> str:
+    return hashlib.sha256(login_id.encode()).hexdigest()
+
+
+def _login_cutoff(max_age_seconds: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)).isoformat(timespec="seconds")
+
+
+def start_login(login_id: str, max_age_seconds: int, path: Path = DB_PATH) -> None:
+    """Remember a new web login (only a hash of its id), and forget logins too old to be used."""
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("DELETE FROM logins WHERE started < ?", (_login_cutoff(max_age_seconds),))
+        conn.execute("INSERT OR REPLACE INTO logins (id, started) VALUES (?, ?)", (_login_key(login_id), now()))
+
+
+def login_alive(login_id: str, max_age_seconds: int, path: Path = DB_PATH) -> bool:
+    """True while the login exists, was not logged out, and is younger than `max_age_seconds`."""
+    if not login_id:
+        return False
+    with closing(_connect(path)) as conn:
+        r = conn.execute("SELECT started FROM logins WHERE id = ?", (_login_key(login_id),)).fetchone()
+    return r is not None and r["started"] >= _login_cutoff(max_age_seconds)
+
+
+def end_login(login_id: str, path: Path = DB_PATH) -> None:
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("DELETE FROM logins WHERE id = ?", (_login_key(login_id),))
+
+
+def load_replies(lead: str, path: Path = DB_PATH) -> list[Reply]:
+    with closing(_connect(path)) as conn:
+        rows = conn.execute("SELECT reply FROM replies WHERE lead = ?", (lead,)).fetchall()
+    return sorted((Reply.model_validate_json(r["reply"]) for r in rows), key=lambda r: r.received_at)

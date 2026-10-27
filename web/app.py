@@ -29,12 +29,13 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
-from agent import export, logos, store
+from agent import export, labels, logos, mailer, store
 from agent.contacts import typed_contact
+from agent.evaluate import grade_rows, grade_summary
 from agent.files import write_text_atomic
 from agent.icp_assist import suggest, suggest_buyer
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
-                            save_outreach, saved_search, sending_problems)
+                            save_outreach, saved_contact, saved_search, sending_problems, setup_problems)
 from agent.pipeline import lead_files, read_leads, score_all, signal_rows
 from agent.readiness import QUEUES, group, hook_label, in_queue, todo
 from agent.score_lead import ALL_CRITERIA, FACT_VALUES, ICP, ICP_PATH, load_icp
@@ -52,6 +53,10 @@ log = logging.getLogger("leadsage")
 if PASSWORD and not SECRET:
     raise RuntimeError("LEADSAGE_PASSWORD is set but LEADSAGE_SECRET is not. Add a long random LEADSAGE_SECRET to .env "
                        "so logins survive a restart and the session cookie cannot be forged.")
+if HTTPS and not PASSWORD:
+    raise RuntimeError("LEADSAGE_HTTPS=1 means the app is on a server, but LEADSAGE_PASSWORD is not set, so anyone "
+                       "could open it and send email from your mailbox. Add LEADSAGE_PASSWORD to .env.")
+SESSION_SECONDS = 14 * 24 * 3600
 OPEN_PATHS = ("/login", "/static/")
 STOP_STAGES = {"replied": "Replied", "meeting": "Meeting booked", "lost": "Lost"}
 PAGE_SIZE = 10
@@ -88,16 +93,30 @@ templates.env.filters.update(plain=views.plain, domain=views.domain, bare=views.
 templates.env.globals.update(is_link=views.is_link, share=views.share)
 
 
+def _password_mark() -> str:
+    """A fingerprint of today's password, kept in the session: change the password and every
+    older session stops working."""
+    return hmac.new(SECRET.encode(), PASSWORD.encode(), "sha256").hexdigest()[:32]
+
+
+def _signed_in(request: Request) -> bool:
+    """The session says logged in, was made with today's password, and was not logged out. The
+    cookie alone is not enough: a copy of it stops working at logout."""
+    s = request.session
+    return (bool(s.get("in")) and hmac.compare_digest(str(s.get("pw", "")), _password_mark())
+            and store.login_alive(str(s.get("sid", "")), SESSION_SECONDS, views.DB))
+
+
 @app.middleware("http")
 async def need_login(request: Request, call_next):
     path = request.url.path
-    if PASSWORD and not request.session.get("in") and not path.startswith(OPEN_PATHS):
+    if PASSWORD and not path.startswith(OPEN_PATHS) and not _signed_in(request):
         return RedirectResponse("/login", status_code=303)
     return await call_next(request)
 
 
 app.add_middleware(SessionMiddleware, secret_key=SECRET or secrets.token_hex(32),
-                   same_site="strict", https_only=HTTPS, max_age=14 * 24 * 3600)
+                   same_site="strict", https_only=HTTPS, max_age=SESSION_SECONDS)
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": "; ".join([
@@ -110,6 +129,7 @@ SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy": "same-origin",
 }
+HSTS = "max-age=31536000"
 LOGO_HEADERS = {"Cache-Control": "max-age=3600",
                 "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"}
 
@@ -122,6 +142,8 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
+    if HTTPS:
+        response.headers.setdefault("Strict-Transport-Security", HSTS)
     return response
 
 
@@ -154,7 +176,9 @@ def login(request: Request, password: str = Form("")):
     if PASSWORD and hmac.compare_digest(password.encode(), PASSWORD.encode()):
         failed_logins.pop(who, None)
         request.session.clear()
-        request.session["in"] = True
+        login_id = secrets.token_urlsafe(32)
+        store.start_login(login_id, SESSION_SECONDS, views.DB)
+        request.session.update({"in": True, "sid": login_id, "pw": _password_mark()})
         return RedirectResponse("/", status_code=303)
     failed_logins[who] = [*tries, moment]
     return page(request, "login.html", wrong=True)
@@ -162,6 +186,7 @@ def login(request: Request, password: str = Form("")):
 
 @app.post("/logout")
 def logout(request: Request):
+    store.end_login(str(request.session.get("sid", "")), views.DB)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -210,7 +235,7 @@ def leads_page(request: Request):
     return page(request, "leads.html", nav="leads", rows=rows, f=f, d=data, current=current,
                 files=files, default_file="real_leads.csv" if "real_leads.csv" in files else (files or [""])[0],
                 suppressed=store.suppressed(views.DB), qualify_at=icp.settings.qualify_at,
-                weights=icp.settings.weights, query=lambda **kw: _query(request, **kw))
+                weights=icp.settings.weights, stages=store.STAGES, query=lambda **kw: _query(request, **kw))
 
 
 @app.get("/leads.csv")
@@ -219,6 +244,18 @@ def leads_csv(request: Request):
     shown = views.leads(views.lead_rows(icp, cfg), _filters(request))["shown"]
     body = export.leads_csv([r.lead for r in shown], {r.lead.name: r.ready.contact for r in shown})
     return Response(body, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="leads.csv"'})
+
+
+@app.get("/crm.csv")
+def crm_csv(request: Request):
+    cfg = load_outreach()
+    verdicts = [v for v in request.query_params.getlist("verdict") if v in ("qualify", "review", "disqualify")]
+    stage = request.query_params.get("stage", "")
+    chosen = [lead for lead in store.load_all(views.DB) if lead.score.verdict in (verdicts or ["qualify"])
+              and (stage not in store.STAGES or lead.stage == stage)]
+    chosen.sort(key=lambda lead: (-lead.score.fit, lead.name))
+    body = export.crm_csv(chosen, {lead.name: saved_contact(lead, cfg, views.DB) for lead in chosen})
+    return Response(body, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="crm-import.csv"'})
 
 
 @app.post("/leads/score")
@@ -250,6 +287,46 @@ def watch(request: Request):
 
     jobs.start("Checking for new signals", work)
     return back(request, "/leads")
+
+
+@app.get("/label", response_class=HTMLResponse)
+def label_page(request: Request):
+    rows = labels.read_rows(views.BLIND)
+    asked = request.query_params.get("i", "")
+    i = int(asked) if asked.isdigit() and int(asked) < len(rows) else labels.first_unlabelled(rows)
+    done = sum(1 for r in rows if r.get("my_label", "").strip())
+    return page(request, "label.html", nav="label", rows=rows, i=i, row=rows[i] if rows and i >= 0 else None,
+                done=done, labels=labels.LABELS, file=views.BLIND.name)
+
+
+@app.post("/label")
+def label_save(request: Request, i: int = Form(...), name: str = Form(...), label: str = Form(""),
+               why: str = Form("")):
+    try:
+        labels.save_label(i, name, label, why, views.BLIND)
+    except ValueError as e:
+        return back(request, f"/label?i={i}", str(e), "error")
+    except OSError:
+        return back(request, f"/label?i={i}", f"Could not save: close {views.BLIND.name} in Excel and try again.", "error")
+    nxt = labels.first_unlabelled(labels.read_rows(views.BLIND), after=i)
+    return back(request, f"/label?i={nxt}" if nxt >= 0 else "/label", f"Saved: {name} is {label.strip().lower()}.")
+
+
+@app.post("/label/grade")
+def label_grade(request: Request):
+    rows = labels.read_rows(views.BLIND)
+    if labels.first_unlabelled(rows) >= 0:
+        return back(request, "/label", "Label every company first, then score against your labels.", "error")
+    icp = load_icp()
+
+    def work(report):
+        report(f"Scoring {len(rows)} companies from {views.BLIND.name} with today's code, then comparing with your labels")
+        results = grade_rows(rows, icp, report)
+        for line in grade_summary(results):
+            report(line)
+
+    jobs.start("Scoring against your labels", work)
+    return back(request, "/label")
 
 
 @app.get("/jobs/{job_id}")
@@ -309,8 +386,9 @@ def outreach_page(request: Request):
     return page(request, "outreach.html", nav="outreach", in_play=in_play, table=table, queue=queue, queues=QUEUES,
                 at=at, pages=pages, total=len(matching), first=(at - 1) * PAGE_SIZE + 1,
                 counts={q: sum(in_queue(r.ready, q) for r in in_play) for q in QUEUES}, to_do=to_do, stats=stats,
-                undrafted=undrafted, cfg=cfg, setup=sending_problems(cfg.opt_out_line, cfg),
+                undrafted=undrafted, cfg=cfg, setup=setup_problems(cfg),
                 suppressed=store.suppressed(views.DB), d=detail, stop_stages=STOP_STAGES, stages=store.STAGES,
+                can_read=mailer.can_read(),
                 query=lambda **kw: _query(request, **kw))
 
 
@@ -340,6 +418,7 @@ def _detail(name: str, icp: ICP, cfg: OutreachConfig, now: datetime) -> dict:
         "next": next_step(lead.stage, list(emails.values()), cfg, now).text,
         "news": store.load_news(name, views.DB), "first": emails.get(0), "hook_label": hook_label(emails.get(0)),
         "others": [p for p in search.people if p != search.contact] if search else [],
+        "replies": store.load_replies(name, views.DB), "can_send": mailer.can_send(),
     }
 
 
@@ -351,7 +430,8 @@ def _lead_url(lead: str, step: int | None = None) -> str:
 @app.post("/outreach/act")
 def outreach_act(request: Request, lead: str = Form(...), do: str = Form(...), step: int = Form(0),
                  subject: str = Form(""), body: str = Form(""), reason: str = Form(""), stage: str = Form(""),
-                 sure: str = Form(""), person: int = Form(-1), name: str = Form(""), title: str = Form("")):
+                 sure: str = Form(""), person: int = Form(-1), name: str = Form(""), title: str = Form(""),
+                 address: str = Form("")):
     icp, cfg = load_icp(), load_outreach()
     try:
         current = store.load(lead, views.DB)
@@ -370,10 +450,23 @@ def outreach_act(request: Request, lead: str = Form(...), do: str = Form(...), s
             if email and (problems := sending_problems(email.body, cfg)):
                 raise ValueError("can't approve yet: " + "; ".join(problems))
             store.approve_email(lead, step, views.DB)
-            return back(request, _lead_url(lead, step), "Approved. Send it from your own mailbox, then mark it sent.")
+            return back(request, _lead_url(lead, step), "Approved. Send it now, or send it yourself and mark it sent."
+                        if mailer.can_send() else "Approved. Send it from your own mailbox, then mark it sent.")
         if do == "sent":
             store.mark_sent(lead, step, views.DB)
             return back(request, _lead_url(lead, step), "Marked sent.")
+        if do == "send":
+            to = mailer.send(current, step, cfg, views.DB)
+            return back(request, _lead_url(lead, step), f"Sent to {to} from your mailbox.")
+        if do == "address":
+            search = saved_search(current, cfg, views.DB)
+            if search is None or search.contact is None:
+                raise ValueError("choose who to write to first")
+            email = mailer.valid_address(address) if address.strip() else ""
+            store.save_contacts(lead, search.model_copy(update={"contact": search.contact.model_copy(
+                update={"email": email})}), views.DB)
+            return back(request, _lead_url(lead), f"Email address for {search.contact.name} saved." if email
+                        else f"Email address for {search.contact.name} removed.")
         if do == "stage":
             store.set_stage(lead, stage, views.DB)
             return back(request, _lead_url(lead), f"Stage set to {stage}.")
@@ -404,12 +497,26 @@ def outreach_act(request: Request, lead: str = Form(...), do: str = Form(...), s
                                                                 "chosen_by": "rep"}), views.DB)
             return back(request, _lead_url(lead), f"Writing to {name.strip()}.")
     except ValueError as e:
-        return back(request, _lead_url(lead, step if do in ("draft", "edit", "approve", "sent") else None),
+        return back(request, _lead_url(lead, step if do in ("draft", "edit", "approve", "sent", "send") else None),
                     str(e), "error")
     except Exception:
         log.exception("outreach action %s failed for %s", do, lead)
         return back(request, _lead_url(lead), "That did not work. The details are in the app's log.", "error")
     return back(request, _lead_url(lead), "Unknown action.", "error")
+
+
+@app.post("/outreach/replies")
+def check_replies(request: Request):
+    if not mailer.can_read():
+        return back(request, "/outreach", "Reply checking is not set up: add the SMTP and IMAP settings to .env.", "error")
+    cfg = load_outreach()
+
+    def work(report):
+        report("Looking in your inbox for replies to contacted leads (read-only)")
+        mailer.check_replies(cfg, views.DB, report)
+
+    jobs.start("Checking for replies", work)
+    return back(request, "/outreach")
 
 
 @app.post("/outreach/unsuppress")

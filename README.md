@@ -10,15 +10,15 @@ Salespeople waste most of their day on busywork: reading up on each company, fin
 
 ## How it works (the loop everything serves)
 
-Steps 1 to 6 are built. Step 7 is planned.
+All seven steps are built. Step 7 hands leads to a CRM by import file, not by a live sync.
 
 1. **Describe the ideal customer**: industry, size, location, the problem you solve.
 2. **Find companies and the right person** at each one. Companies come from the open Y Combinator list, or from a list you supply.
 3. **Research** each company, with sources and dates.
 4. **Score the lead and explain why** it's worth chasing.
 5. **Write a personalised email** that references something real about them.
-6. **A human approves** each email and sends it. Follow-ups are drafted for 3, 7 and 14 days later and stop if the lead replies, books a meeting or is lost.
-7. **The best leads rise to the top**, and everything syncs to a CRM. (Planned.)
+6. **A human approves** each email, then sends it with one click from their own mailbox (or sends it themselves). Follow-ups are drafted for 3, 7 and 14 days later and stop when the lead replies, books a meeting or is lost; with reply checking on, a reply is noticed on its own.
+7. **The best leads rise to the top**, and move to a CRM through an import file (HubSpot's columns; Zoho and Pipedrive map them).
 
 ## What's built so far
 
@@ -28,7 +28,11 @@ Steps 1 to 6 are built. Step 7 is planned.
 - **Website** (`site/index.html`): a one-page site that explains the product and links to the web app (port 8000). Same notebook look and colours as the app (neutral black, sage-mint highlighter), with a dot spotlight that follows the cursor; fonts stored in `site/assets/fonts/`. Plain HTML, CSS and a little JavaScript, no build step.
 - **Finding companies** (`agent/find.py`): pulls real companies from the open Y Combinator company list (free, no key) into a lead CSV with every column filled: name, industry, team size, location, website and a one-line description. It keeps active companies whose team size is inside the ICP's range (`--any-size` turns that off) and skips any company already in the lead store or in a lead CSV. `--in-region` keeps only companies with a location in the ICP's countries, and `--hiring` only those the list marks as hiring now. The sample is repeatable (`--seed`), and an existing file is never overwritten, so labels can't be lost. The list leans to young, US-based startups.
 - **Pipeline and lead store** (`agent/pipeline.py`, `agent/store.py`): reads each company's website, finds open sales roles, scores it and saves the result in a local SQLite file the app reads.
-- **Outreach** (`agent/outreach.py`, `agent/contacts.py`, the Outreach page): finds the person to write to on the company's own about and team pages, drafts a short first email and up to 3 follow-ups, and tracks each lead's stage (new, drafted, approved, contacted, replied, meeting, lost). Every sentence about the prospect must quote their own website or job posts; sentences without a real quote are cut, and each kept one shows its source and date. A first email should open with a hook, a timely reason to write: the company is hiring salespeople, or its own news page shows something recent (a launch, a partnership, a new hire). Drafts with no hook are flagged so a person adds one before sending. A person approves every email and sends it from their own mailbox; a reply stops the follow-ups. Sender, follow-up days and which leads get emails live in `data/outreach.json`.
+- **Outreach** (`agent/outreach.py`, `agent/contacts.py`, the Outreach page): finds the person to write to on the company's own about and team pages, drafts a short first email and up to 3 follow-ups, and tracks each lead's stage (new, drafted, approved, contacted, replied, meeting, lost). Every sentence about the prospect must quote their own website or job posts; sentences without a real quote are cut, and each kept one shows its source and date. A first email should open with a hook, a timely reason to write: the company is hiring salespeople, or its own news page shows something recent (a launch, a partnership, a new hire). Drafts with no hook are flagged so a person adds one before sending. A person approves every email and sends it from their own mailbox; a reply stops the follow-ups. Sender, follow-up days, the daily sending cap and which leads get emails live in `data/outreach.json`.
+- **Sending and replies** (`agent/mailer.py`, the Outreach page): with your mailbox settings in `.env` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`; a Gmail or Outlook app password works), an approved email gets a Send button. It goes out exactly as approved, from your address, to the contact's address that you typed in (LeadSage never guesses one), one at a time and at most `max_sends_per_day` a day; follow-ups stay in the same thread. With `IMAP_HOST` as well, Check for replies (and every full `python -m agent.watch` run) searches your inbox, read-only, for answers from contacted leads only. A reply stops the follow-ups; one that says unsubscribe, stop, remove me or not interested also puts the company on the do-not-contact list. Out-of-office replies are ignored. Only the start of each reply (500 characters) is kept. Without these settings nothing changes: you send from your own mail program and click I sent it myself.
+- **CRM import** (Leads page, Move to a CRM): a CSV of the leads you pick (verdicts, stage) with HubSpot's import column names: Company name, Company domain name, First name, Last name, Job title, Email, Lifecycle stage, plus LeadSage fit, verdict, stage, why and source. HubSpot imports it as is (Contacts, Import, file from computer); in Zoho CRM or Pipedrive, map the same columns by hand on import. LeadSage stores no CRM password.
+- **Blind labels** (the Label page): one company at a time from `data/blind_leads.csv`, with no score shown. Press 1, 2 or 3 (qualify, review, disqualify), add a reason, Enter to save. When every company is labelled, Score against my labels scores them all again and reports OK, near and MISS, with each miss named.
+- **Hosting** (`deploy/`): a guide and a setup script to put the website and web app on a free Ubuntu server behind HTTPS, with the models staying on your laptop over Tailscale. See `deploy/README.md`.
 
 - **Lead scoring** (`agent/score_lead.py`): scores a company against the ICP with evidence for every number. Facts like size and country are checked in code; the model only judges buyer and pain. A company under the minimum headcount, or above the largest size times `max_size_factor` (both in `data/icp.json`), is dropped without asking the model for buyer and pain. The fit weights and cut-offs in that file are plain numbers for the fit average: the model never sees them. Reading facts out of a company's text (what it sells, who it sells to, whether it is a non-profit or a government body) and the buyer and pain judgement both run at temperature 0, so the same text gives the same score. Freelancers and sole proprietors who buy as a business count as businesses, and a non-profit or government body goes to review, not to disqualify.
 - **Model layer** (`agent/llm.py`): local open-source models through Ollama do the scoring, so nothing leaves your machine. Optional: with a free Groq key in `.env` (`GROQ_API_KEY`), the email drafts are written by a larger model on Groq's free tier; only the drafting prompt (public website text about the company, the contact's name and title, and your pitch) is sent. Without a key, or if Groq fails, the local model writes them. If a local model crashes, times out or returns broken output, the question goes once to the other local model (`OLLAMA_FALLBACK_MODEL` to choose); a lead scored that way says which model scored it and stays at review. The ideal-customer suggestions use the main model unless `OLLAMA_SUGGEST_MODEL` is set.
@@ -41,10 +45,11 @@ Steps 1 to 6 are built. Step 7 is planned.
 ## Roadmap
 
 1. Lead scoring (done)
-2. Walking skeleton: research, score, contact, cited email, follow-ups (done; sending stays manual)
+2. Walking skeleton: research, score, contact, cited email, follow-ups (done)
 3. Scoring engine: add intent and engagement on top of fit
 4. Signal watcher: new sales roles and news move a lead up the queue (done; runs when you start it, or on a schedule you set up)
-5. Approval pause: the agent stops for a human to approve before "sending"
+5. Approval before sending, one-click send from your own mailbox, reply detection (done)
+6. CRM: import file today; a live sync would need a CRM account and key
 
 ## Run it
 

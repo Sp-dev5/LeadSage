@@ -7,7 +7,7 @@ Most lead tools return the same shape: a multi-agent loop, RAG, a 3-step cadence
 Built today:
 - Two timing signals, each with its source and date: open sales roles on a company's job board, and recent items (a launch, a partnership, a new hire) from its own news page.
 - Every email opens with one of those as its hook, and every sentence about the company must quote its own text. Drafts with no hook are flagged.
-- A person approves every email. Nothing is sent by the app.
+- A person approves every email, then sends it with one click from their own mailbox or sends it themselves. Nothing is sent without that click.
 - Each email ends with an opt-out line and the sender's address; a do-not-contact list and a delete-lead button remove a company's data.
 
 Not built yet: re-checking companies on a schedule, funding and leadership signals from other sites, "act now" cards that move a lead up the queue, tracking replies, an audit log and auto-send. The rest of this page describes where it is going.
@@ -45,7 +45,7 @@ It's **RAG** (grounded in real sources) and **agentic** (keeps watching on its o
 Timing only matters if the system is one a real client could switch on:
 
 - **Verified before surfaced**: no signal reaches you without a real source. The agent won't invent a reason to act.
-- **Human approves the send**: nothing goes out on its own. Auto-send is not built; if it is added, it would only apply above a score you set.
+- **Human approves the send**: nothing goes out on its own. The rep approves each email and clicks send; the app sends one at a time, under a daily cap. Auto-send and bulk send are not built.
 - **Audit log**: today each email keeps the source and date behind every line about the company. A full log of every signal, score and action is planned.
-- **Privacy by default**: minimal personal data (a name and title taken from the company's own site), every email carries an opt-out line, a do-not-contact list keeps a company from being drafted for, and deleting a lead wipes its data and saved pages. The app does not send mail, so it cannot enforce unsubscribes itself.
+- **Privacy by default**: minimal personal data (a name and title taken from the company's own site), every email carries an opt-out line, a do-not-contact list keeps a company from being drafted for, and deleting a lead wipes its data and saved pages. When reply checking is set up, a reply asking not to be emailed puts the company on the do-not-contact list on its own.
 - **Honest scoring**: the score explains itself today and is built to tune on reps' real decisions as they use it. No invented ground truth claimed.

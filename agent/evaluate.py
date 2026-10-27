@@ -30,6 +30,7 @@ from collections import Counter
 from pathlib import Path
 from typing import NamedTuple
 
+from agent.llm import OllamaUnreachable
 from agent.pipeline import lead_text
 from agent.score_lead import Company, load_icp, locate, score_lead, score_with_second_opinion
 from agent.signals import hiring_for, rows_by_name
@@ -52,6 +53,42 @@ def _grade(label: str, verdict: str) -> str:
         return "ERR"
     gap = abs(ORDER[label] - ORDER[verdict])
     return "OK" if gap == 0 else "near" if gap == 1 else "MISS"
+
+
+def grade_rows(rows: list[dict], icp, report=print) -> list[dict]:
+    """Score each labelled row the way the app does (website text, second opinion on borderline
+    leads) and grade it against the label. Ollama being down stops the run; any other failure
+    is graded ERR and the run goes on."""
+    labelled = [r for r in rows if r.get("my_label", "").strip()]
+    results = []
+    for i, r in enumerate(labelled, 1):
+        label = r["my_label"].strip().lower()
+        description, _ = lead_text(r, "fetched")
+        company = Company(name=r["name"], industry=r["industry"], size=r["size"], location=r["location"],
+                          description=description)
+        try:
+            score = score_with_second_opinion(icp, company)
+            verdict, fit = score.verdict, score.fit
+        except OllamaUnreachable:
+            raise
+        except Exception as e:
+            verdict, fit = "error", None
+            report(f"  failed on {r['name']}: {str(e)[:90]}")
+        grade = _grade(label, verdict)
+        report(f"[{i}/{len(labelled)}] {r['name']}: you {label}, scorer {verdict}"
+               + (f" {fit}" if fit is not None else "") + f" ({grade})")
+        results.append({"name": r["name"], "label": label, "verdict": verdict, "fit": fit, "grade": grade})
+    return results
+
+
+def grade_summary(results: list[dict]) -> list[str]:
+    """The totals line, then one line per opposite verdict."""
+    grades = [r["grade"] for r in results]
+    lines = [f"OK {grades.count('OK')}  near {grades.count('near')}  MISS {grades.count('MISS')}  "
+             f"errors {grades.count('ERR')}  (of {len(results)})"]
+    lines += [f"MISS: {r['name']}: you {r['label']}, scorer {r['verdict']} {r['fit']}"
+              for r in results if r["grade"] == "MISS"]
+    return lines
 
 
 def main() -> None:

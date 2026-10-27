@@ -18,6 +18,7 @@
                              "head of marketing", "ceo", "chief executive officer", "founder", "co-founder"],
   "sender_address": "",
   "opt_out_line": "If this isn't for you, just let me know and I won't email again.",
+  "max_sends_per_day": 20,
   "avoid_phrases": ["I hope this finds you well", "brief conversation", "brief chat", "quick chat", "touch base",
                     "circle back", "reach out", "game-changer", "leverage", "synergy",
                     "this shows", "this tells me", "this indicates", "this suggests",

@@ -205,7 +205,7 @@ ul.list li strong { color: var(--ink); font-weight: 600; display: block; }
 .cta .s { padding: 40px 40px; display: grid; gap: 18px; align-content: center; }
 
 footer { max-width: 1320px; margin: 0 auto 30px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 2px; font: 500 11.5px var(--mono); color: var(--faint); letter-spacing: .06em; }
-footer a { color: var(--soft); }
+footer a { color: var(--soft); display: inline-flex; align-items: center; min-height: 24px; }
 .motion-toggle { font: 500 11.5px var(--mono); color: var(--soft); border: 1px solid var(--rule-soft); padding: 6px 12px; }
 .motion-toggle:hover { color: var(--ink); border-color: var(--hl); }
 

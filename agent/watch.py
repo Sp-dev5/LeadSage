@@ -13,6 +13,9 @@ nothing is compared and the lead is not rescored. A lead is rescored only when a
 read shows a different set of sales roles, because roles are part of the score. News never
 changes a score; it only moves the lead up its tab.
 
+When reply checking is set up (IMAP settings in .env, see agent/mailer.py), a full run also looks
+for replies to contacted leads; a reply stops their follow-ups.
+
 Run it:  python -m agent.watch
          python -m agent.watch --names "Atlan,Fyle"
          python -m agent.watch --hiring-only          job boards only, no news (no GPU for news)
@@ -28,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from agent import store
+from agent import mailer, store
 from agent.hooks import HOOK_KINDS, NewsItem
 from agent.outreach import OutreachConfig, load_outreach, news_for
 from agent.pipeline import score_one, signal_rows
@@ -139,6 +142,11 @@ def watch_leads(icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH, report:
                 watch_news(lead, cfg, today, result, db)
             except Exception as e:
                 result.failed.append(f"{lead.name}: news check failed ({str(e)[:90]})")
+    if mailer.can_read() and names is None:
+        try:
+            mailer.check_replies(cfg, db, report)
+        except Exception as e:
+            result.failed.append(f"reply check failed ({str(e)[:90]})")
     for line in summary(result):
         report(line)
     return result

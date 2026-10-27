@@ -5,7 +5,7 @@
 <section class="pagehead">
   <div class="t"><p class="kick">Pipeline · <b>{{ in_play | length }}</b> leads in play</p>
     <h1>Outreach</h1>
-    <p class="lede">Read each draft, check where every line about the company comes from, then send it from your own mailbox and mark it sent.</p></div>
+    <p class="lede">Read each draft, check where every line about the company comes from, approve it, then send it. Nothing is sent until you approve it and click send.</p></div>
   {% if in_play %}<a class="b ghost" href="/emails.csv">Export emails as CSV</a>{% endif %}
 </section>
 
@@ -28,6 +28,14 @@
       <form method="post" action="/outreach/draft-all" data-busy="Starting"><input type="hidden" name="csrf" value="{{ csrf }}">
         <button class="b wide" type="submit" {{ 'disabled' if job or not undrafted }}>Find contacts and draft</button></form>
     </section>
+    {% if can_read %}
+    <section>
+      <h3>Replies</h3>
+      <p class="small muted m-0-0-14">Looks in your inbox, read-only, for answers from contacted leads. A reply stops the follow-ups; "unsubscribe" or "not interested" also adds the company to the do-not-contact list.</p>
+      <form method="post" action="/outreach/replies" data-busy="Starting"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="b wide ghost" type="submit" {{ 'disabled' if job }}>Check for replies</button></form>
+    </section>
+    {% endif %}
     <section id="settings">
       <details {{ 'open' if setup }}><summary>Sender and follow-ups</summary><div>
         <form method="post" action="/outreach/settings"><input type="hidden" name="csrf" value="{{ csrf }}">
@@ -141,8 +149,13 @@
                 <button class="b ghost" type="button" data-toggle="edit-{{ s.n }}">Edit the wording</button>
                 {% endif %}
                 {% if e.status == 'approved' %}
+                {% set to = d.search.contact.email if d.search and d.search.contact else '' %}
+                {% if d.can_send and to %}
+                <form method="post" action="/outreach/act" data-busy="Sending"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="send"><input type="hidden" name="step" value="{{ s.n }}">
+                  <button class="b" type="submit">Send to {{ to }}</button></form>
+                {% endif %}
                 <form method="post" action="/outreach/act"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="sent"><input type="hidden" name="step" value="{{ s.n }}">
-                  <button class="b" type="submit">I sent it</button></form>
+                  <button class="b {{ 'ghost' if d.can_send and to }}" type="submit">I sent it myself</button></form>
                 {% endif %}
                 {% if s.can_draft and e.status != 'sent' %}
                 <form method="post" action="/outreach/act" data-busy="Drafting"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="draft"><input type="hidden" name="step" value="{{ s.n }}">
@@ -191,7 +204,10 @@
             {% if c %}
               <p class="m-0-0-4"><b>{{ c.name }}</b>, {{ c.title }}</p>
               <p class="small muted m-0">{{ {'buyer': 'Matches your buyer', 'rep': 'Chosen by you', 'startup_ceo': 'Startup of ' ~ lead.company.size ~ ': no buyer named, so the chief executive', 'closest': 'Closest match on their site, not a sales leader: check it fits'}.get(d.search.chosen_by, 'Chosen') }} ·
-                {% if c.matches_buyer == 'typed' %}typed by you{% else %}<a href="{{ c.source }}" target="_blank" rel="noopener">source</a>, {{ c.fetched_at | day }}{% endif %}</p>
+                {% if c.matches_buyer == 'typed' %}typed by you{% elif is_link(c.source) %}<a href="{{ c.source }}" target="_blank" rel="noopener">source</a>, {{ c.fetched_at | day }}{% else %}{{ c.source }}, {{ c.fetched_at | day }}{% endif %}</p>
+              <form method="post" action="/outreach/act" class="mt-14"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="address">
+                <label>Their email address <input type="email" name="address" value="{{ c.email }}" placeholder="Type it in: LeadSage never guesses one" autocomplete="off"></label>
+                <button class="b ghost" type="submit">Save address</button></form>
             {% else %}
               <div class="flag mt-0"><b>No contact</b>No one matching your buyer is named on their website. Pick someone below or type a contact in.</div>
             {% endif %}
@@ -227,6 +243,11 @@
               {% for dropped in d.news.rejected %}<li class="muted"><span class="mono faint">dropped</span> {{ dropped }}</li>{% endfor %}</ul>
             {% if not d.news.items %}<p class="small muted">Nothing dated recently. Pages read: {{ d.news.pages_tried | length }}.</p>{% endif %}
           </div></details>
+          {% endif %}
+
+          {% if d.replies %}
+          <header class="mt-30"><div><h2>Replies</h2><h3>Found in your inbox</h3></div></header>
+          <ul class="plain small">{% for r in d.replies %}<li><span class="mono faint">{{ r.received_at | day }}</span> {{ r.sender }}{% if r.opt_out %} <span class="tag cut">Asked not to be emailed</span>{% endif %}<br><b>{{ r.subject }}</b><br><span class="muted">{{ r.snippet }}</span></li>{% endfor %}</ul>
           {% endif %}
 
           <header class="mt-30"><div><h2>Stage and privacy</h2></div></header>
