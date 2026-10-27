@@ -389,6 +389,62 @@ def test_live_lead_gets_both_calls(fake_model):
     assert [c.score for c in result.criteria[2:]] == [4, 4]
 
 
+@pytest.fixture
+def facts_in_turn(monkeypatch):
+    """Fake model whose facts call returns the queued answers one after another."""
+    prompts, queue = [], []
+
+    def fake(system, user_prompt, schema, model=None, temperature=None, used=None):
+        if schema is sl.CompanyFacts:
+            prompts.append(system)
+            return queue.pop(0)
+        return ratings((3, ""), (3, ""))
+
+    monkeypatch.setattr(sl, "generate_structured", fake)
+    return prompts, queue
+
+
+def test_dropped_quote_is_asked_again_once_and_the_fix_is_used(facts_in_turn):
+    prompts, queue = facts_in_turn
+    queue.append(facts(customers=("businesses", "small businesses... Sells a CRM")))
+    queue.append(facts(customers=("businesses", "Sells a CRM to small businesses")))
+    result = sl.score_lead(make_icp(), COMPANY)
+    assert result.facts["customers"] == "businesses"
+    assert len(prompts) == 2 and sl.RETRY_NOTE[:30] in prompts[1] and "customers" in prompts[1]
+    assert sl.RETRY_NOTE[:30] not in prompts[0]
+    assert [r for r in result.rejected_quotes if r.startswith("customers")] == [
+        "customers: first quote was not in the company details, fixed on a second ask"]
+
+
+def test_second_ask_that_still_has_a_bad_quote_stays_dropped(facts_in_turn):
+    prompts, queue = facts_in_turn
+    queue.append(facts(customers=("businesses", "invented one")))
+    queue.append(facts(customers=("businesses", "invented two")))
+    result = sl.score_lead(make_icp(), COMPANY)
+    assert result.facts["customers"] == "unknown"
+    assert len(prompts) == 2
+    dropped = [r for r in result.rejected_quotes if r.startswith("customers")]
+    assert len(dropped) == 1 and "invented one" in dropped[0]
+
+
+def test_second_ask_changes_only_the_dropped_facts(facts_in_turn):
+    prompts, queue = facts_in_turn
+    queue.append(facts(customers=("businesses", "invented"), builds_own_software=("yes", "Sells a CRM")))
+    queue.append(facts(customers=("unknown", ""), builds_own_software=("no", ""), is_services=("yes", "Sells a CRM")))
+    result = sl.score_lead(make_icp(), COMPANY)
+    assert result.facts["customers"] == "unknown"
+    assert result.facts["builds_own_software"] == "yes"
+    assert result.facts["is_services"] == "no"
+
+
+def test_all_quotes_good_means_one_facts_call(facts_in_turn):
+    prompts, queue = facts_in_turn
+    queue.append(facts(customers=("businesses", "small businesses")))
+    result = sl.score_lead(make_icp(), COMPANY)
+    assert len(prompts) == 1
+    assert not [r for r in result.rejected_quotes if r.startswith("customers")]
+
+
 def lead_score(fit, verdict, model="main", hit=False):
     return sl.LeadScore(fit=fit, verdict=verdict, criteria=[], disqualifier_hit=hit,
                         disqualifier_reason="", summary="", model=model)
