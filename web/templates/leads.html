@@ -46,6 +46,15 @@
       </form>
       <p class="faint small m-12-0-0">Reads job boards and news pages again and flags what's new since the last check. The first check only records what's there.</p>
     </section>
+    <section>
+      <h3>Move to a CRM</h3>
+      <form method="get" action="/crm.csv">
+        <div class="m-n6-0-14">{% for v in ['qualify', 'review', 'disqualify'] %}<label class="check m-0-0-6"><input type="checkbox" name="verdict" value="{{ v }}" {{ 'checked' if v == 'qualify' }}> {{ v | capitalize }}</label>{% endfor %}</div>
+        <label>Stage <select name="stage"><option value="">Any</option>{% for st in stages %}<option value="{{ st }}">{{ st | capitalize }}</option>{% endfor %}</select></label>
+        <button class="b wide ghost" type="submit">Download CRM import file</button>
+      </form>
+      <p class="faint small m-12-0-0">A CSV with HubSpot's column names: company, domain, contact name, title and email, fit and why. Import it into HubSpot, Zoho or Pipedrive. No CRM password is stored here.</p>
+    </section>
     {% endif %}
   </aside>
 

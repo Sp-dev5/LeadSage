@@ -28,7 +28,7 @@ from typing import Literal, NamedTuple
 from pydantic import BaseModel, Field, field_validator
 
 from agent import logos, store
-from agent.contacts import Contact, ContactSearch, closest_match, find_contact, startup_fallback
+from agent.contacts import Contact, ContactSearch, closest_match, find_contact, startup_fallback, with_site_data
 from agent.fetch import Page, site_links, slug
 from agent.files import write_text_atomic
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
@@ -75,6 +75,8 @@ class OutreachConfig(BaseModel):
                                             "countries require one in marketing email")
     opt_out_line: str = Field(min_length=1, description="the line at the end of every email that tells the reader "
                                                         "how to stop hearing from you")
+    max_sends_per_day: int = Field(gt=0, description="most emails the app itself may send in a day, from your "
+                                                     "mailbox; a cap so a mistake can't send hundreds")
     avoid_phrases: list[str] = Field(description="stock phrases the emails must not use; a draft with one is flagged")
     examples: list[Example] = Field(description="sample emails shown to the model for tone, length and shape")
 
@@ -523,6 +525,7 @@ def contact_for(lead: StoredLead, icp: ICP, cfg: OutreachConfig, db: Path = stor
     fresh = search is None
     if fresh:
         search = find_contact(lead.name, lead.url, icp, with_site_links(lead.url, CONTACT_LINK_WORDS, cfg.contact_pages))
+        search = with_site_data(search, lead.name, lead.url)
     chosen = with_fallbacks(search, lead, cfg)
     if fresh or chosen is not search:
         store.save_contacts(lead.name, chosen, db)

@@ -1,13 +1,16 @@
 """
 Leads and emails as CSV, for a CRM import or a spreadsheet. Plain columns, one row per lead
-or per email; nothing here talks to a model or the network.
+or per email; nothing here talks to a model or the network. The CRM file uses HubSpot's import
+column names, so it imports into its free CRM without mapping; LeadSage holds no CRM password.
 """
 
 from __future__ import annotations
 
 import csv
 import io
+from urllib.parse import urlsplit
 
+from agent.contacts import Contact
 from agent.readiness import held_back_by
 from agent.store import Email, StoredLead
 
@@ -17,12 +20,62 @@ EMAIL_COLUMNS = ["company", "website", "contact", "step", "status", "subject", "
                  "drafted_at", "sent_at"]
 
 
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def plain_cell(value):
+    """A text cell a spreadsheet would read as a formula ("=HYPERLINK(...)" in a company's own
+    one-liner) gets a leading apostrophe, so Excel shows it as text instead of running it."""
+    return f"'{value}" if isinstance(value, str) and value.startswith(FORMULA_START) else value
+
+
 def _csv(columns: list[str], rows: list[dict]) -> str:
     out = io.StringIO()
     writer = csv.DictWriter(out, fieldnames=columns)
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows({k: plain_cell(v) for k, v in row.items()} for row in rows)
     return out.getvalue()
+
+
+CRM_COLUMNS = ["Company name", "Company domain name", "First name", "Last name", "Job title", "Email",
+               "Lifecycle stage", "LeadSage fit", "LeadSage verdict", "LeadSage stage", "Why", "Source"]
+
+
+def split_name(name: str) -> tuple[str, str]:
+    """First word, then the rest: "Rohit Taneja" -> ("Rohit", "Taneja"); one word is a first name."""
+    first, _, last = " ".join(name.split()).partition(" ")
+    return first, last
+
+
+def lifecycle(lead: StoredLead) -> str:
+    """HubSpot's lifecycle stage (its internal value, which its import accepts) for a lead."""
+    if lead.stage == "meeting":
+        return "opportunity"
+    return "salesqualifiedlead" if lead.score.verdict == "qualify" else "lead"
+
+
+def crm_csv(leads: list[StoredLead], people: dict[str, Contact | None]) -> str:
+    """One row per lead, with HubSpot's import column names (Zoho and Pipedrive map them by hand).
+    `people` maps a company name to the person to write to, or None."""
+    rows = []
+    for lead in leads:
+        person = people.get(lead.name)
+        first, last = split_name(person.name) if person else ("", "")
+        rows.append({
+            "Company name": lead.name,
+            "Company domain name": urlsplit(lead.url).netloc.lower().removeprefix("www.") if lead.url else "",
+            "First name": first,
+            "Last name": last,
+            "Job title": person.title if person else "",
+            "Email": person.email if person else "",
+            "Lifecycle stage": lifecycle(lead),
+            "LeadSage fit": lead.score.fit,
+            "LeadSage verdict": lead.score.verdict,
+            "LeadSage stage": lead.stage,
+            "Why": lead.score.summary,
+            "Source": person.source if person and person.source.startswith("http") else lead.url,
+        })
+    return _csv(CRM_COLUMNS, rows)
 
 
 def leads_csv(leads: list[StoredLead], contacts: dict[str, str]) -> str:

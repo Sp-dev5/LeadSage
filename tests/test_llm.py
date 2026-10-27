@@ -183,6 +183,22 @@ def test_ollama_down_is_not_retried_with_another_model(ollama_calls):
     assert calls == ["qwen3.5:9b"]
 
 
+def test_local_writing_gets_a_wider_window_and_scoring_keeps_the_default(monkeypatch):
+    sent = []
+
+    class Client:
+        def chat(self, model, options, **kw):
+            sent.append(options)
+            return OllamaReply('{"value": "yes"}')
+
+    monkeypatch.setattr(llm, "_ollama_client", lambda host: Client())
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    llm.generate_structured("s", "u", Fact)
+    llm.generate_writing("s", "u", Fact)
+    assert sent == [{"temperature": llm.JUDGE_TEMPERATURE},
+                    {"temperature": llm.WRITE_TEMPERATURE, "num_ctx": llm.WRITE_CONTEXT}]
+
+
 def test_when_both_models_fail_the_error_comes_through(ollama_calls):
     calls, plan = ollama_calls
     plan["qwen3.5:9b"] = llm.ollama.ResponseError("crash", 500)

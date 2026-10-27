@@ -41,3 +41,26 @@ def test_emails_csv_one_row_per_email_in_step_order():
 
 def test_leads_without_emails_add_no_email_rows():
     assert rows(export.emails_csv([lead()], {}, {})) == []
+
+
+def test_a_cell_a_spreadsheet_would_run_as_a_formula_is_kept_as_text():
+    out = rows(export.leads_csv([lead()], {"Acme, Inc.": '=HYPERLINK("http://evil.example","x")'}))
+    assert out[0]["contact"] == '\'=HYPERLINK("http://evil.example","x")' and out[0]["fit"] == "75"
+    assert [export.plain_cell(v) for v in ("+1", "-x", "@a", "Priya", 5)] == ["'+1", "'-x", "'@a", "Priya", 5]
+
+
+def test_crm_file_splits_the_name_and_uses_hubspot_columns():
+    from agent.contacts import Contact
+    person = Contact(name="Rohit  Taneja", title="Co-Founder & CEO", matches_buyer="unsure",
+                     source="https://acme.example/about", fetched_at="t", email="rohit@acme.example")
+    out = rows(export.crm_csv([lead("qualify")], {"Acme, Inc.": person}))
+    assert list(out[0]) == export.CRM_COLUMNS
+    assert (out[0]["Company domain name"], out[0]["First name"], out[0]["Last name"], out[0]["Email"],
+            out[0]["Lifecycle stage"], out[0]["Source"]) == ("acme.example", "Rohit", "Taneja", "rohit@acme.example",
+                                                             "salesqualifiedlead", "https://acme.example/about")
+
+
+def test_crm_file_without_a_contact_keeps_the_company_row():
+    out = rows(export.crm_csv([lead("review")], {}))
+    assert (out[0]["First name"], out[0]["Lifecycle stage"], out[0]["Source"]) == ("", "lead", "https://acme.example")
+    assert export.split_name("Madonna") == ("Madonna", "")

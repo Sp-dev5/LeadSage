@@ -20,6 +20,7 @@
       <a href="/leads" class="{{ 'on' if nav == 'leads' }}">Leads</a>
       <a href="/outreach" class="{{ 'on' if nav == 'outreach' }}">Outreach</a>
       <a href="/icp" class="{{ 'on' if nav == 'icp' }}">Ideal customer</a>
+      <a href="/label" class="{{ 'on' if nav == 'label' }}">Label</a>
     </nav>
     <div class="act">
       {% if password_set %}<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="out" type="submit">Log out</button></form>{% endif %}
@@ -40,7 +41,7 @@
   {% block body %}{% endblock %}
 </div>
 <footer class="foot">
-  <span>Nothing is sent from this app. You send from your own mailbox.</span>
+  <span>Nothing is sent until you approve it and click send.</span>
   <button type="button" class="motion-toggle" id="motion" hidden>Play animations</button>
   <span>{{ now.strftime('%d %b %Y') }}</span>
 </footer>

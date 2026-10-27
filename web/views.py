@@ -13,12 +13,13 @@ from typing import NamedTuple
 
 from markupsafe import Markup
 
-from agent import store
+from agent import labels, store
 from agent.outreach import OutreachConfig, with_fallbacks
 from agent.readiness import GROUPS, Readiness, funnel, group, held_back_by, readiness
 from agent.score_lead import ICP, _parse_headcount
 
 DB = store.DB_PATH
+BLIND = labels.BLIND
 UNKNOWN = "Unknown"
 VERDICT_ORDER = ["Qualify", "Strong fit", "Review", "Disqualify"]
 
@@ -178,4 +179,4 @@ def letter(email: store.Email) -> Markup:
 
 
 def is_link(source: str) -> bool:
-    return source.startswith("http") and " " not in source
+    return source.lower().startswith(("http://", "https://")) and " " not in source

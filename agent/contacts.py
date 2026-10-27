@@ -3,7 +3,8 @@ Find the person to write to at a company, from the company's own website.
 
 Reads the company's about, team and leadership pages (robots.txt respected, pages cached
 in data/pages/), asks the model for the people named there, and keeps a person only if
-both the name and the title really appear on the page. LinkedIn is never read.
+both the name and the title really appear on the page. When those pages name no buyer, the
+founders and staff the homepage declares in its structured data are added. LinkedIn is never read.
 
 The contact is whoever the model says matches our ICP buyer persona. If nobody does and
 the company is a startup, its chief executive or a founder. If it is bigger, the closest
@@ -14,6 +15,7 @@ contact in.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -23,7 +25,7 @@ from urllib.parse import urljoin
 
 from pydantic import BaseModel
 
-from agent.fetch import FULL_MAX_CHARS, Page, fetch_full_text, load_or_fetch, now, slug
+from agent.fetch import FULL_MAX_CHARS, Page, fetch_full_text, fetch_html, load_or_fetch, now, slug
 from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import ICP, quote_in
 from agent.signals import exact_match
@@ -38,6 +40,13 @@ LEADER_TITLE = re.compile(
     r"Chief(?: [A-Z][\w&-]*)+ Officer|Head of [A-Z]\w+|Managing Director|General Manager|Director)\b")
 STAND_IN = re.compile(r"\b(assistant|to the|office of)\b", re.IGNORECASE)
 ELSEWHERE = re.compile(r"(?:@|\bat\s)\s*(.+)$", re.IGNORECASE)
+JSON_LD = re.compile(r"<script[^>]+application/ld\+json[^>]*>(.*?)</script>", re.S | re.I)
+ORG_TYPES = ("Organization", "Corporation", "LocalBusiness", "OnlineBusiness")
+SITE_DATA_ROLES = {"founder": "Founder", "founders": "Founder", "employee": "", "employees": "",
+                   "member": "", "members": ""}
+SITE_DATA = "site data"
+MAX_NAME_CHARS = 80
+MAX_TITLE_CHARS = 120
 
 PAGES = Path(__file__).resolve().parent.parent / "data" / "pages"
 TYPED = "typed by rep"
@@ -61,6 +70,7 @@ class Contact(BaseModel):
     matches_buyer: Literal["yes", "no", "unsure", "typed"]
     source: str
     fetched_at: str
+    email: str = ""
 
 
 class ContactSearch(BaseModel):
@@ -188,6 +198,71 @@ def find_contact(name: str, url: str, icp: ICP, contact_pages: list[str], pages:
             search.contact, search.chosen_by = buyer, "buyer"
             break
     return search
+
+
+def _org_nodes(data) -> list[dict]:
+    """The organisation entries in one block of structured data, at the top or in its @graph."""
+    nodes = data if isinstance(data, list) else data.get("@graph", [data]) if isinstance(data, dict) else []
+    out = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        kinds = node.get("@type", [])
+        kinds = kinds if isinstance(kinds, list) else [kinds]
+        if any(isinstance(k, str) and (k in ORG_TYPES or k.endswith("Organization")) for k in kinds):
+            out.append(node)
+    return out
+
+
+def _named(entry, default_title: str) -> tuple[str, str]:
+    """Name and title of one person entry: a plain name, or a Person with name and jobTitle."""
+    if isinstance(entry, str):
+        return " ".join(entry.split()), default_title
+    if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+        title = entry.get("jobTitle")
+        return " ".join(entry["name"].split()), " ".join(title.split()) if isinstance(title, str) else default_title
+    return "", ""
+
+
+def declared_people(page: Page, company: str = "") -> list[Contact]:
+    """People the site's own structured data (schema.org, in the page's HTML) names as the
+    organisation's founders or staff. A founder with no job title is titled Founder, because that
+    is what the site says; staff with no title are skipped. Only organisation entries are read, so
+    review authors and quoted customers are not, and a title naming another employer is dropped."""
+    people: list[Contact] = []
+    for block in JSON_LD.findall(page.text):
+        try:
+            data = json.loads(block)
+        except ValueError:
+            continue
+        for org in _org_nodes(data):
+            for key, default_title in SITE_DATA_ROLES.items():
+                value = org.get(key)
+                for entry in value if isinstance(value, list) else [value]:
+                    name, title = _named(entry, default_title)
+                    if not (name and title) or works_elsewhere(title, company):
+                        continue
+                    if len(name) > MAX_NAME_CHARS or len(title) > MAX_TITLE_CHARS:
+                        continue
+                    if name.lower() not in {p.name.lower() for p in people}:
+                        people.append(Contact(name=name, title=title, matches_buyer="unsure", source=page.url,
+                                              fetched_at=page.fetched_at))
+    return people
+
+
+def with_site_data(search: ContactSearch, name: str, url: str, pages: Path = PAGES,
+                   fetch: Callable[[str], Page] = fetch_html) -> ContactSearch:
+    """No buyer named on the people pages: add the founders and staff the homepage's structured
+    data declares, after the people already found. Never chooses a contact itself."""
+    if search.contact or not url:
+        return search
+    page = load_or_fetch(url, pages / f"{slug(name)}-home-html.json", fetch)
+    if not page.ok:
+        return search
+    known = {p.name.lower() for p in search.people}
+    added = [p for p in declared_people(page, name) if p.name.lower() not in known]
+    return search.model_copy(update={"people": search.people + added,
+                                     "pages_tried": search.pages_tried + [f"{page.url} ({SITE_DATA})"]})
 
 
 def _first_holding(search: ContactSearch, titles: list[str]) -> Contact | None:
