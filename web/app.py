@@ -29,9 +29,8 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
-from agent import export, labels, logos, mailer, store
+from agent import export, logos, mailer, store
 from agent.contacts import typed_contact
-from agent.evaluate import grade_rows, grade_summary
 from agent.files import write_text_atomic
 from agent.icp_assist import suggest, suggest_buyer
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
@@ -287,46 +286,6 @@ def watch(request: Request):
 
     jobs.start("Checking for new signals", work)
     return back(request, "/leads")
-
-
-@app.get("/label", response_class=HTMLResponse)
-def label_page(request: Request):
-    rows = labels.read_rows(views.BLIND)
-    asked = request.query_params.get("i", "")
-    i = int(asked) if asked.isdigit() and int(asked) < len(rows) else labels.first_unlabelled(rows)
-    done = sum(1 for r in rows if r.get("my_label", "").strip())
-    return page(request, "label.html", nav="label", rows=rows, i=i, row=rows[i] if rows and i >= 0 else None,
-                done=done, labels=labels.LABELS, file=views.BLIND.name)
-
-
-@app.post("/label")
-def label_save(request: Request, i: int = Form(...), name: str = Form(...), label: str = Form(""),
-               why: str = Form("")):
-    try:
-        labels.save_label(i, name, label, why, views.BLIND)
-    except ValueError as e:
-        return back(request, f"/label?i={i}", str(e), "error")
-    except OSError:
-        return back(request, f"/label?i={i}", f"Could not save: close {views.BLIND.name} in Excel and try again.", "error")
-    nxt = labels.first_unlabelled(labels.read_rows(views.BLIND), after=i)
-    return back(request, f"/label?i={nxt}" if nxt >= 0 else "/label", f"Saved: {name} is {label.strip().lower()}.")
-
-
-@app.post("/label/grade")
-def label_grade(request: Request):
-    rows = labels.read_rows(views.BLIND)
-    if labels.first_unlabelled(rows) >= 0:
-        return back(request, "/label", "Label every company first, then score against your labels.", "error")
-    icp = load_icp()
-
-    def work(report):
-        report(f"Scoring {len(rows)} companies from {views.BLIND.name} with today's code, then comparing with your labels")
-        results = grade_rows(rows, icp, report)
-        for line in grade_summary(results):
-            report(line)
-
-    jobs.start("Scoring against your labels", work)
-    return back(request, "/label")
 
 
 @app.get("/jobs/{job_id}")
@@ -589,6 +548,13 @@ SETTING_FIELDS = [
     ("size_tolerance", "Size still scores 3 this far outside the range (0.1 = 10%)", float, 0, 1, 0.05),
     ("unknown_score", "Score when unknown", int, 0, 5, 1),
     ("disagree_gap", "Models disagree at a fit gap of", int, 0, 100, 1),
+    ("min_quote_words", "A quote needs at least this many words (a whole job title also counts)", int, 1, None, 1),
+]
+
+EVIDENCE_CHOICES = [
+    ("buyer", "A quote showing the right buyer"),
+    ("both", "Quotes showing the right buyer and the problem we solve"),
+    ("off", "Nothing: the fit score alone decides"),
 ]
 
 
@@ -601,6 +567,7 @@ def icp_page(request: Request):
                 weights=[(n, w, round(100 * w / total)) for n, w in s["weights"].items()],
                 setting_fields=[(k, label, kind is int, lo, hi, step, s[k])
                                 for k, label, kind, lo, hi, step in SETTING_FIELDS],
+                evidence_choices=EVIDENCE_CHOICES, evidence=s["qualify_needs_evidence"],
                 facts={name: list(values) for name, values in FACT_VALUES.items()}, criteria=ALL_CRITERIA,
                 labels={c: views.plain(c) for name, values in FACT_VALUES.items() for c in (name, *values)})
 
@@ -667,6 +634,7 @@ async def icp_scoring(request: Request):
     try:
         for key, label, kind, *_ in SETTING_FIELDS:
             settings[key] = kind(form[key])
+        settings["qualify_needs_evidence"] = str(form["qualify_needs_evidence"])
         settings["weights"] = {name: float(form[f"weight:{name}"]) for name in raw["settings"]["weights"]}
     except (KeyError, ValueError):
         return back(request, "/icp", "Not saved. Every number needs a value, and the cut-offs are whole numbers.",

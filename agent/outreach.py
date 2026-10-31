@@ -33,7 +33,7 @@ from agent.fetch import Page, site_links, slug
 from agent.files import write_text_atomic
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
 from agent.llm import generate_writing
-from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, quote_in
+from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, long_enough_quote, quote_in
 from agent.store import Citation, Email, StoredLead
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -129,8 +129,8 @@ them to us. Never tell them what their own product does, how many people use it 
 it: they know that, and it reads like their own website read back to them. If nothing else \
 is in the text, say who their customers are. Write to the reader in the second person, saying "you" and "your", never "the \
 company" or their company's name as the subject ("Your platform lets reps see what they will \
-earn before a deal closes."). For each, first copy a quote of under 15 words \
-from COMPANY DETAILS, OPEN ROLES or RECENT NEWS, character for character, from one place in the text \
+earn before a deal closes."). For each, first copy a quote of {min_words} to 15 words (or one \
+whole job title) from COMPANY DETAILS, OPEN ROLES or RECENT NEWS, character for character, from one place in the text \
 (never join pieces, never add the company name), then write the sentence: a plain restatement of what the \
 quote says, in your own words. Don't copy their slogans. Don't add conclusions, opinions \
 or guesses about their business, and don't start with "This shows" or "This tells me". \
@@ -283,17 +283,21 @@ def _allowed(cfg: OutreachConfig, contact: Contact | None) -> set[str]:
 
 def check_claims(claims: list[ClaimOut], lead: StoredLead, pages: Path = PAGES,
                  allowed: set[str] = PLAIN_CAPS,
-                 extra: list[tuple[str, str, str]] = ()) -> tuple[list[Citation], list[str]]:
+                 extra: list[tuple[str, str, str]] = (), min_words: int = 1) -> tuple[list[Citation], list[str]]:
     """The quote rule for emails: a claim stays only if its quote is in the company's own text
-    (or in `extra`, such as a news item from their site), and every name, place, number or short
-    form in the sentence is in that text too."""
+    (or in `extra`, such as a news item from their site), is at least `min_words` long (a whole
+    job title also passes), and every name, place, number or short form in the sentence is in
+    that text too."""
     url, fetched_at = _source_page(lead, pages)
     about = f"{lead.company.industry}. {lead.company.description}"
     source = " ".join([_company_source(lead), *(e[0] for e in extra)])
+    titles = [r.title for r in lead.company.sales_roles]
     kept, rejected = [], []
     for claim in claims:
         if not claim.quote.strip() or not claim.sentence.strip():
             rejected.append(f"{claim.sentence!r}: no quote")
+        elif not long_enough_quote(claim.quote, min_words, titles):
+            rejected.append(f"{claim.sentence!r}: quote {claim.quote!r} is under {min_words} words")
         elif missing := unsupported_specifics(claim.sentence, source, allowed):
             rejected.append(f"{claim.sentence!r}: {', '.join(missing)} not in the company's text")
         elif quote_in(claim.quote, about):
@@ -387,11 +391,11 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
     avoid = ", ".join(f'"{p}"' for p in cfg.avoid_phrases) or "none"
     if step == 0:
         system = FIRST_PROMPT.format(sender=cfg.sender_name, company=cfg.sender_company, max_words=cfg.max_words,
-                                     avoid=avoid, examples=_examples(cfg))
+                                     avoid=avoid, examples=_examples(cfg), min_words=icp.settings.min_quote_words)
     elif step <= total:
         system = FOLLOW_UP_PROMPT.format(n=step, total=total, sender=cfg.sender_name, company=cfg.sender_company,
                                          last=LAST_NOTE if step == total else "", max_words=cfg.max_words,
-                                         avoid=avoid, examples=_examples(cfg))
+                                         avoid=avoid, examples=_examples(cfg), min_words=icp.settings.min_quote_words)
     else:
         raise ValueError(f"step {step}: only {total} follow-ups are set in outreach.json")
     user_prompt = _prompt(lead, icp, contact, earlier, news)
@@ -408,13 +412,14 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
         out, written_by, cloud_failed = write(
             f"It used {', '.join(used)}. Write it again without those phrases, in fresh words.", out)
     allowed = _allowed(cfg, contact)
-    citations, rejected = check_claims(out.claims, lead, pages, allowed, extra)
+    citations, rejected = check_claims(out.claims, lead, pages, allowed, extra, icp.settings.min_quote_words)
     if not citations and rejected:
         again, again_by, again_failed = write(
             f"Every claim was cut by the quote check: {' | '.join(rejected)}\nWrite it again. Copy each quote "
-            f"exactly as written in COMPANY DETAILS, OPEN ROLES or RECENT NEWS: under 15 words, from one place, "
+            f"exactly as written in COMPANY DETAILS, OPEN ROLES or RECENT NEWS: {icp.settings.min_quote_words} to 15 "
+            f"words or one whole job title, from one place, "
             f"character for character.", out)
-        again_citations, again_rejected = check_claims(again.claims, lead, pages, allowed, extra)
+        again_citations, again_rejected = check_claims(again.claims, lead, pages, allowed, extra, icp.settings.min_quote_words)
         if again_citations:
             out, written_by, cloud_failed = again, again_by, again_failed
             citations, rejected = again_citations, again_rejected
@@ -424,7 +429,7 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
             f"The first claim must be about the HOOK ({hook.text}). Quote it from "
             f"{'OPEN ROLES' if hook.kind == 'open sales roles' else 'RECENT NEWS'}, under 15 words, character "
             f"for character, and write the email again around it.", out)
-        again_citations, again_rejected = check_claims(again.claims, lead, pages, allowed, extra)
+        again_citations, again_rejected = check_claims(again.claims, lead, pages, allowed, extra, icp.settings.min_quote_words)
         if _hook_used(lead, again_citations, news):
             out, written_by, cloud_failed = again, again_by, again_failed
             citations, rejected = again_citations, again_rejected

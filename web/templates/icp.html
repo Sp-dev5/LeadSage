@@ -51,6 +51,12 @@
           <td class="r"><input type="number" name="{{ key }}" value="{{ value }}" min="{{ lo }}"{% if hi is not none %} max="{{ hi }}"{% endif %} step="{{ step }}" required aria-label="{{ label }}"></td></tr>
         {% endfor %}
       </table>
+      <label class="mt-26">Before a lead can qualify, it needs
+        <select name="qualify_needs_evidence">
+          {% for value, text in evidence_choices %}<option value="{{ value }}"{% if value == evidence %} selected{% endif %}>{{ text }}</option>{% endfor %}
+        </select>
+      </label>
+      <p class="small faint m-0">A lead without it stays at review, and its card says what quote is missing.</p>
       <p class="small faint m-14-0-16">Changing a number changes the verdict of every lead, so rescore after saving.</p>
       <button class="b" type="submit">Save scoring</button>
     </form>

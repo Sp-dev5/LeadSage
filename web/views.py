@@ -13,13 +13,12 @@ from typing import NamedTuple
 
 from markupsafe import Markup
 
-from agent import labels, store
+from agent import store
 from agent.outreach import OutreachConfig, with_fallbacks
 from agent.readiness import GROUPS, Readiness, funnel, group, held_back_by, readiness
 from agent.score_lead import ICP, _parse_headcount
 
 DB = store.DB_PATH
-BLIND = labels.BLIND
 UNKNOWN = "Unknown"
 VERDICT_ORDER = ["Qualify", "Strong fit", "Review", "Disqualify"]
 
