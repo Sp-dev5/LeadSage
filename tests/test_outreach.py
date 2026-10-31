@@ -74,6 +74,14 @@ def test_claim_without_a_real_quote_is_rejected(tmp_path, quote):
     assert kept == [] and len(rejected) == 1
 
 
+def test_claim_with_a_short_quote_is_cut_but_a_whole_job_title_passes(tmp_path):
+    kept, rejected = outreach.check_claims([claim("payroll software")], LEAD, tmp_path, min_words=3)
+    assert kept == [] and "is under 3 words" in rejected[0]
+    sdr = LEAD.model_copy(update={"company": COMPANY.model_copy(update={"sales_roles": [ROLE.model_copy(update={"title": "SDR"})]})})
+    kept, _ = outreach.check_claims([claim("SDR", "You're hiring an SDR.")], sdr, tmp_path, min_words=3)
+    assert kept[0].source == ROLE.source
+
+
 SOURCE = "Acme builds payroll software for mid-size firms in India. Account Executive, APAC. Series A."
 
 

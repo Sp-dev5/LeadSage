@@ -84,7 +84,9 @@
       "company size match": 1,
       "buyer persona fit": 1,
       "pain match": 1
-    }
+    },
+    "qualify_needs_evidence": "buyer",
+    "min_quote_words": 3
   },
   "fact_rules": [
     {

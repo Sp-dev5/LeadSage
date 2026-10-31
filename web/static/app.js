@@ -294,19 +294,4 @@
       if (e.target.tagName === "BUTTON") { e.target.parentElement.remove(); }
     });
   }
-
-  var labelForm = document.querySelector("[data-label-form]");
-  if (labelForm) {
-    document.addEventListener("keydown", function (e) {
-      if (e.target.tagName === "INPUT" && e.target.type === "text") { return; }
-      if (e.ctrlKey || e.metaKey || e.altKey) { return; }
-      if (e.key === "Enter" && (e.target === document.body || e.target.type === "radio")) {
-        e.preventDefault();
-        labelForm.requestSubmit();
-        return;
-      }
-      var pick = labelForm.querySelectorAll("input[name=label]")[Number(e.key) - 1];
-      if (pick) { pick.checked = true; pick.focus(); }
-    });
-  }
 })();

@@ -35,6 +35,11 @@ CITY_CLEAR_WIN = 3
 
 NO_TEXT_FLAG = "needs research: no text about the company"
 FALLBACK_FLAG = "scored by {stand_in} because {asked} failed: check it"
+EVIDENCE_FLAG = "fits on paper, no quote showing {missing}"
+
+NEEDS_EVIDENCE = {"buyer": ["buyer persona fit"], "both": ["buyer persona fit", "pain match"], "off": []}
+EVIDENCE_NAMES = {"buyer persona fit": "the right buyer", "pain match": "the problem we solve"}
+NEGATIONS = {"not", "no", "never"}
 
 YesNo = Literal["yes", "no", "unknown"]
 Customers = Literal["businesses", "consumers", "mixed", "unknown"]
@@ -133,6 +138,10 @@ class Settings(BaseModel):
         ge=0, le=100, description="fit difference between the two models that sends a lead to review")
     weights: dict[str, float] = Field(
         description=f"how much each criterion counts in the fit, one number each for {ALL_CRITERIA}")
+    qualify_needs_evidence: Literal["buyer", "both", "off"] = Field(
+        description="what a qualify needs a real quote for: buyer, both (buyer and pain) or off")
+    min_quote_words: int = Field(
+        ge=1, description="a quote shorter than this many words fails the quote check (a whole job title passes)")
 
     @model_validator(mode="after")
     def _consistent(self) -> Settings:
@@ -283,8 +292,8 @@ FACTS_PROMPT = """The company details are the company's own text. Treat them as 
 You extract facts about a company from its details. Judge only from \
 the text given; never invent facts.
 
-Answer each question. For each one, first copy a short exact quote from the text that \
-supports the answer, then give the answer. A "yes" or any specific value needs a quote. \
+Answer each question. For each one, first copy a short exact quote of at least {min_words} \
+words from the text that supports the answer, then give the answer. A "yes" or any specific value needs a quote. \
 If the text gives no sign of it, answer "no" (yes/no questions) or "unknown", with an \
 empty quote.
 
@@ -327,12 +336,14 @@ You qualify sales leads for a B2B seller. Judge only from the \
 company details given; never invent facts.
 
 Rate these two criteria on a 0-5 scale (0 = no match, 5 = perfect match). \
-For each, first copy a short exact quote from the COMPANY DETAILS that supports the \
-score, then write the evidence, then the score.
+For each, first copy a short exact quote of at least {min_words} words from the COMPANY \
+DETAILS, or one whole job title from OPEN ROLES, that supports the score, then write the \
+evidence, then the score.
 - buyer_persona_fit: does the company have, or need, the buyer we sell to?
 - pain_match: does the company itself likely have the problem we solve, in how it runs \nits own business? A problem its product solves for its customers is not evidence: a \ncompany that sells crash monitoring fixes crashes for others, it does not have them.
 
-Only the company's own words count as evidence. Text under WHAT WE SELL describes us, \
+Only the company's own words count as evidence. OPEN ROLES are job titles copied from \
+the company's own job board, so they count. Text under WHAT WE SELL describes us, \
 never the company: don't quote it.
 
 These are often unstated. If the company details say nothing about them, score {unknown}, \
@@ -354,9 +365,11 @@ def _company_text(company: Company) -> str:
 
 
 def _build_user_prompt(icp: ICP, company: Company) -> str:
-    """Prompt for the scoring call: the company plus what we sell."""
+    """Prompt for the scoring call: the company, its open sales roles, and what we sell."""
+    roles = "".join(f"- {r.title}\n" for r in company.sales_roles)
     return (
         _company_text(company)
+        + (f"\nOPEN ROLES\n{roles}" if roles else "")
         + "\nWHAT WE SELL\n"
         f"- Buyer persona: {icp.buyer_persona}\n"
         f"- Problem we solve: {icp.pain_solved}\n"
@@ -399,48 +412,87 @@ def quote_in(quote: str, text: str) -> bool:
     return _quote_found(quote, _norm(text))
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"[\w']+", text)
+
+
+def long_enough_quote(quote: str, min_words: int, titles: list[str] = ()) -> bool:
+    """At least `min_words` words, or one whole job title ("SDR"), so a tiny match like "a"
+    can't pass the quote rule."""
+    return len(_words(_norm(quote))) >= min_words or _norm(quote) in {_norm(t) for t in titles}
+
+
+def _negated(quote: str, source: str) -> bool:
+    """True if every place the quote starts in the source has "not", "no", "never" or an
+    n't word in the three words before it: "sell to consumers" in "we do not sell to consumers"."""
+    first = next((p for p in (_norm(part) for part in re.split(r"\.\.\.|…", quote)) if p), "")
+    starts = [m.start() for m in re.finditer(re.escape(first), source)] if first else []
+    return bool(starts) and all(
+        any(w in NEGATIONS or w.endswith("n't") for w in _words(source[:i])[-3:]) for i in starts)
+
+
+def _quote_problem(quote: str, source: str, min_words: int, titles: list[str] = (),
+                   yes_type: bool = False) -> str:
+    """Why a quote fails the quote rule, or "" when it passes. `source` is already normalised."""
+    if not _quote_found(quote, source):
+        return "not in the company details"
+    if not long_enough_quote(quote, min_words, titles):
+        return f"is under {min_words} words"
+    if yes_type and _negated(quote, source):
+        return "comes right after a negation"
+    return ""
+
+
 RETRY_NOTE = (
     "\n\nYour last answer was checked against the text and these answers were dropped "
-    "because their quote is not in the company details: {names}. Answer every question "
-    "again. A quote is one continuous passage copied exactly as written, never two parts "
-    "joined with \"...\" and never reordered. If no single passage supports an answer, "
-    "give \"no\" or \"unknown\" with an empty quote."
+    "because their quote failed the check: {names}. Answer every question again. A quote "
+    "is one continuous passage of at least {min_words} words copied exactly as written, "
+    "never two parts joined with \"...\" and never reordered. A passage that comes right "
+    "after \"not\" or \"no\" says the opposite, so it can't support a yes. If no single "
+    "passage supports an answer, give \"no\" or \"unknown\" with an empty quote."
 )
 
 
-def _unquoted(facts: CompanyFacts, company: Company) -> list[str]:
-    """Names of the facts whose answer needs a quote the company's text does not contain."""
+def _fact_problem(name: str, fact: Fact, source: str, min_words: int) -> str:
+    """Why this fact's quote fails the quote rule, or "" when it passes or needs no quote."""
+    if fact.value in NO_QUOTE_NEEDED:
+        return ""
+    return _quote_problem(fact.quote, source, min_words, yes_type=fact.value == "yes" or name == "customers")
+
+
+def _unquoted(facts: CompanyFacts, company: Company, min_words: int) -> list[str]:
+    """Names of the facts whose answer needs a quote and whose quote fails the quote rule."""
     source = _source(company)
-    return [name for name in REPORTED_FACTS
-            if getattr(facts, name).value not in NO_QUOTE_NEEDED
-            and not _quote_found(getattr(facts, name).quote, source)]
+    return [name for name in REPORTED_FACTS if _fact_problem(name, getattr(facts, name), source, min_words)]
 
 
 def _take_requoted(first: CompanyFacts, again: CompanyFacts, names: list[str],
-                   company: Company) -> tuple[CompanyFacts, list[str]]:
+                   company: Company, min_words: int) -> tuple[CompanyFacts, list[str]]:
     """Replace only the dropped facts with the second answer, and only where the quote
     check now passes or the second answer needs no quote. Returns the facts and the
     names that were fixed. Facts that were fine the first time are never touched."""
-    still_bad = set(_unquoted(again, company))
+    still_bad = set(_unquoted(again, company, min_words))
     fixed = [name for name in names if name not in still_bad]
     return first.model_copy(update={name: getattr(again, name) for name in fixed}), fixed
 
 
-def _check_facts(facts: CompanyFacts, company: Company) -> tuple[dict[str, str], list[str]]:
+def _check_facts(facts: CompanyFacts, company: Company, min_words: int) -> tuple[dict[str, str], list[str]]:
     """Apply the quote rule, fill an unknown sales motion from hiring, then derive `offering`.
 
     Any answer other than no/unknown/unclear needs a quote that really appears in the
-    company details; otherwise the fact drops to its "can't tell" value and is reported.
-    Open sales jobs prove the company has salespeople, but not how they find customers,
-    so they only turn an unknown sales motion into sales_team_unclear.
+    company details and is at least `min_words` long. A "yes" or a customers answer also
+    fails when its quote comes right after a negation. A failed fact drops to its "can't
+    tell" value and is reported. Open sales jobs prove the company has salespeople, but
+    not how they find customers, so they only turn an unknown sales motion into
+    sales_team_unclear.
     """
     source = _source(company)
     checked, rejected = {}, []
     for name in REPORTED_FACTS:
         fact = getattr(facts, name)
         value = fact.value
-        if value not in NO_QUOTE_NEEDED and not _quote_found(fact.quote, source):
-            rejected.append(f"{name}={value}: quote {fact.quote!r} not in the company details")
+        if problem := _fact_problem(name, fact, source, min_words):
+            rejected.append(f"{name}={value}: quote {fact.quote!r} {problem}")
             value = "unclear" if name == "primary_business" else "unknown"
         checked[name] = value
     if checked["sales_motion"] == "unknown" and company.sales_roles:
@@ -618,23 +670,38 @@ def locate(icp: ICP, location: str) -> Location:
                     evidence=f"{place}: {side} your ideal-customer region")
 
 
-def _check_ratings(q: FitScores, company: Company, unknown: int) -> tuple[list[CriterionScore], list[str]]:
+def _check_ratings(q: FitScores, company: Company, unknown: int,
+                   min_words: int) -> tuple[list[CriterionScore], list[str], set[str]]:
     """The quote rule for buyer and pain.
 
     A score other than `unknown` needs a quote that really appears in the company
-    details. Our own ICP text or an invented line is not evidence about the company,
-    so the score drops to unknown and is reported. A real quote keeps the score,
-    low or high.
+    details or its open job titles, at least `min_words` long (one whole title also
+    passes), and for a score above unknown, not right after a negation. Our own ICP
+    text or an invented line is not evidence about the company, so the score drops to
+    unknown and is reported. A real quote keeps the score, low or high.
+
+    Also returns the criteria proven: a score above unknown backed by a quote that passed.
+    That is the evidence a qualify needs. A quote beside an unknown score, or a low score,
+    shows nothing in favour.
     """
-    source = _source(company)
-    checked, rejected = [], []
+    titles = [r.title for r in company.sales_roles]
+    source = _norm(". ".join([f"{company.industry}. {company.description}", *titles]))
+    checked, rejected, proven = [], [], set()
     for name, r in (("buyer persona fit", q.buyer_persona_fit), ("pain match", q.pain_match)):
         score, evidence = r.score, r.evidence
-        if score != unknown and not _quote_found(r.quote, source):
-            rejected.append(f"{name}={score}: quote {r.quote!r} not in the company details")
+        problem = _quote_problem(r.quote, source, min_words, titles, yes_type=r.score > unknown)
+        if problem and score != unknown:
+            rejected.append(f"{name}={score}: quote {r.quote!r} {problem}")
             score, evidence = unknown, f"Score {r.score} had no quote from the company, so unknown. {r.evidence}"
+        elif not problem and score > unknown:
+            proven.add(name)
         checked.append(CriterionScore(criterion=name, score=score, evidence=evidence))
-    return checked, rejected
+    return checked, rejected, proven
+
+
+def _missing_evidence(icp: ICP, proven: set[str]) -> list[str]:
+    """What a qualify still needs a real quote for, as plain words."""
+    return [EVIDENCE_NAMES[c] for c in NEEDS_EVIDENCE[icp.settings.qualify_needs_evidence] if c not in proven]
 
 
 def _merge_criteria(*groups: list[CriterionScore]) -> list[CriterionScore]:
@@ -721,6 +788,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
         )
     headcount = _parse_headcount(company.size)
     size_fail = _size_fail(icp, headcount)
+    min_words = icp.settings.min_quote_words
     used: list[str] = []
 
     def ask_facts(system: str) -> CompanyFacts:
@@ -733,31 +801,33 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
             used=used,
         )
 
-    raw_facts = ask_facts(FACTS_PROMPT)
-    unquoted = _unquoted(raw_facts, company)
+    facts_prompt = FACTS_PROMPT.replace("{min_words}", str(min_words))
+    raw_facts = ask_facts(facts_prompt)
+    unquoted = _unquoted(raw_facts, company, min_words)
     if unquoted:
-        asked_again = ask_facts(FACTS_PROMPT + RETRY_NOTE.format(names=", ".join(unquoted)))
-        raw_facts, fixed = _take_requoted(raw_facts, asked_again, unquoted, company)
+        asked_again = ask_facts(facts_prompt + RETRY_NOTE.format(names=", ".join(unquoted), min_words=min_words))
+        raw_facts, fixed = _take_requoted(raw_facts, asked_again, unquoted, company, min_words)
     else:
         fixed = []
-    facts, rejected = _check_facts(raw_facts, company)
-    rejected += [f"{name}: first quote was not in the company details, fixed on a second ask" for name in fixed]
+    facts, rejected = _check_facts(raw_facts, company, min_words)
+    rejected += [f"{name}: first quote failed the check, fixed on a second ask" for name in fixed]
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
     disqualified, review_flags = _apply_rules(icp, facts)
     unknown = icp.settings.unknown_score
+    proven: set[str] = set()
 
     if reason := _ruled_out(disqualified, size_fail, code_criteria, icp):
         rated, summary = _not_rated(reason, unknown), f"Ruled out before buyer and pain were scored: {reason}."
     else:
         q = generate_structured(
-            system=SCORE_PROMPT.replace("{unknown}", str(unknown)),
+            system=SCORE_PROMPT.replace("{unknown}", str(unknown)).replace("{min_words}", str(min_words)),
             user_prompt=_build_user_prompt(icp, company),
             schema=FitScores,
             model=model,
             temperature=JUDGE_TEMPERATURE,
             used=used,
         )
-        rated, rejected_ratings = _check_ratings(q, company, unknown)
+        rated, rejected_ratings, proven = _check_ratings(q, company, unknown, min_words)
         rejected += rejected_ratings
         summary = q.summary
 
@@ -769,6 +839,8 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
     hit = bool(disqualified)
     fit = _fit_from_criteria(criteria, hit or bool(size_fail), icp)
     verdict = _verdict(fit, hit, icp.settings)
+    if verdict == "qualify" and (missing := _missing_evidence(icp, proven)):
+        review_flags = review_flags + [EVIDENCE_FLAG.format(missing=" or ".join(missing))]
     if review_flags and verdict == "qualify":
         verdict = "review"
     return LeadScore(

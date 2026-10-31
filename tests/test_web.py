@@ -6,7 +6,7 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-from agent import contacts, labels, logos, outreach, store
+from agent import contacts, logos, outreach, store
 from agent.store import Citation, Email
 from tests.test_outreach import CFG, COMPANY, SCORE
 from web import app as web_app
@@ -31,7 +31,6 @@ class PageClient(TestClient):
 def client(tmp_path, monkeypatch):
     db = tmp_path / "leads.db"
     monkeypatch.setattr(views, "DB", db)
-    monkeypatch.setattr(views, "BLIND", tmp_path / "blind_leads.csv")
     monkeypatch.setattr(web_app, "load_outreach", lambda: CFG)
     monkeypatch.setattr(web_app, "PASSWORD", "")
     monkeypatch.setattr(web_app, "forget_lead", lambda lead, db: outreach.forget_lead(
@@ -204,7 +203,7 @@ def scoring_form(path, **change):
     import json
     s = json.loads(path.read_text(encoding="utf-8"))["settings"]
     data = {k: s[k] for k, *_ in web_app.SETTING_FIELDS} | {f"weight:{n}": w for n, w in s["weights"].items()}
-    return data | change
+    return data | {"qualify_needs_evidence": s["qualify_needs_evidence"]} | change
 
 
 def test_icp_page_names_facts_in_words(client):
@@ -227,6 +226,27 @@ def test_scoring_numbers_save(client, tmp_path, monkeypatch):
     assert "Saved" in r.text
     saved = json.loads(path.read_text(encoding="utf-8"))["settings"]
     assert saved["qualify_at"] == 75 and saved["weights"]["pain match"] == 2
+
+
+def test_icp_page_says_what_a_qualify_needs(client, tmp_path, monkeypatch):
+    path = icp_file(tmp_path, monkeypatch)
+    html = client.get("/icp").text
+    current = scoring_form(path)["qualify_needs_evidence"]
+    assert 'name="qualify_needs_evidence"' in html and f'value="{current}" selected' in html
+    assert 'name="min_quote_words"' in html and "Before a lead can qualify, it needs" in html
+
+
+def test_evidence_choice_saves_and_a_made_up_one_is_refused(client, tmp_path, monkeypatch):
+    import json
+    path = icp_file(tmp_path, monkeypatch)
+    r = client.post("/icp/scoring", data=scoring_form(path, qualify_needs_evidence="both", min_quote_words=4),
+                    follow_redirects=True)
+    assert "Saved" in r.text
+    saved = json.loads(path.read_text(encoding="utf-8"))["settings"]
+    assert (saved["qualify_needs_evidence"], saved["min_quote_words"]) == ("both", 4)
+    before = path.read_text(encoding="utf-8")
+    r = client.post("/icp/scoring", data=scoring_form(path, qualify_needs_evidence="always"), follow_redirects=True)
+    assert "Not saved" in r.text and path.read_text(encoding="utf-8") == before
 
 
 def test_scoring_refuses_a_cutoff_order_that_cannot_work(client, tmp_path, monkeypatch):
@@ -474,71 +494,6 @@ def test_logos_are_sandboxed_and_a_stored_svg_is_never_served(client, tmp_path, 
     r = client.get("/logo/Acme")
     assert r.content == b"png" and r.headers["content-type"] == "image/png"
     assert "sandbox" in r.headers["Content-Security-Policy"]
-
-
-BLIND_CSV = ("name,industry,size,location,url,description,my_label,why\n"
-             "Acme,B2B,120 employees,India,https://acme.example,Payroll software,,\n"
-             "Bolt,Fintech,80 employees,Singapore,javascript:alert(1),Cards,review,unsure\n"
-             "Cove,B2B,60 employees,India,https://cove.example,Expense tool,,\n")
-
-
-def blind():
-    views.BLIND.write_text(BLIND_CSV, encoding="utf-8")
-    return views.BLIND
-
-
-def test_label_page_shows_the_first_unlabelled_company_and_never_a_score(client):
-    blind()
-    seed()
-    text = client.get("/label").text
-    assert "<h2>Acme</h2>" in text and "<b>1 of 3</b> labelled" in text
-    assert not re.search(r"\bfit\b|\b80\b", text, re.I)
-
-
-def test_saving_a_label_writes_only_that_row_and_moves_to_the_next_unlabelled(client):
-    path = blind()
-    r = client.post("/label", data={"i": "0", "name": "Acme", "label": "Qualify", "why": "  sells   to sales teams "},
-                    follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/label?i=2"
-    rows = labels.read_rows(path)
-    assert (rows[0]["my_label"], rows[0]["why"]) == ("qualify", "sells to sales teams")
-    assert rows[1]["my_label"] == "review" and rows[2]["my_label"] == ""
-
-
-@pytest.mark.parametrize("data", [{"i": "0", "name": "Acme", "label": "maybe"},
-                                  {"i": "1", "name": "Acme", "label": "qualify"},
-                                  {"i": "9", "name": "Acme", "label": "qualify"}])
-def test_a_bad_label_or_a_moved_row_is_refused_and_nothing_is_written(client, data):
-    path = blind()
-    client.post("/label", data=data)
-    assert path.read_text(encoding="utf-8") == BLIND_CSV
-
-
-def test_label_save_needs_the_csrf_token(client):
-    blind()
-    assert client.post("/label", data={"i": "0", "name": "Acme", "label": "qualify"}, csrf=False).status_code == 403
-
-
-def test_a_website_that_is_not_a_web_address_is_not_a_link(client):
-    blind()
-    assert "javascript:" not in client.get("/label?i=1").text
-
-
-def test_scoring_against_labels_waits_until_every_company_is_labelled(client, monkeypatch):
-    blind()
-    started = []
-    monkeypatch.setattr(web_app.jobs, "start", lambda title, work: started.append(title))
-    client.post("/label/grade")
-    assert started == []
-    for i, name in ((0, "Acme"), (2, "Cove")):
-        client.post("/label", data={"i": str(i), "name": name, "label": "review"})
-    assert "All 3 labelled" in client.get("/label").text
-    client.post("/label/grade")
-    assert started == ["Scoring against your labels"]
-
-
-def test_label_page_without_the_file_says_so(client):
-    assert "missing or empty" in client.get("/label").text
 
 
 def with_contact(email=""):

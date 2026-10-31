@@ -33,7 +33,7 @@ BASE_ICP = {
     "settings": {
         "min_headcount": 10, "max_size_factor": 3, "size_tolerance": 0.1, "unknown_score": 2, "gate_fail_max": 1,
         "fail_cap": 20, "disqualify_below": 40, "qualify_at": 70, "disagree_gap": 15,
-        "weights": {n: 1 for n in NAMES},
+        "weights": {n: 1 for n in NAMES}, "qualify_needs_evidence": "off", "min_quote_words": 1,
     },
 }
 
@@ -141,7 +141,7 @@ def facts(**values):
 def test_quote_in_text_is_kept():
     checked, rejected = sl._check_facts(
         facts(builds_own_software=("yes", "Sells a CRM"), customers=("businesses", "to small businesses")),
-        COMPANY)
+        COMPANY, 1)
     assert checked["builds_own_software"] == "yes"
     assert checked["customers"] == "businesses"
     assert checked["offering"] == "own_software"
@@ -149,13 +149,13 @@ def test_quote_in_text_is_kept():
 
 
 def test_quote_not_in_text_drops_to_unknown():
-    checked, rejected = sl._check_facts(facts(sales_motion=("no_sales", "they have no sales team")), COMPANY)
+    checked, rejected = sl._check_facts(facts(sales_motion=("no_sales", "they have no sales team")), COMPANY, 1)
     assert checked["sales_motion"] == "unknown"
     assert len(rejected) == 1
 
 
 def test_quote_match_ignores_case_and_dash_style():
-    checked, _ = sl._check_facts(facts(builds_own_software=("yes", "b2b saas — crm")), COMPANY)
+    checked, _ = sl._check_facts(facts(builds_own_software=("yes", "b2b saas — crm")), COMPANY, 1)
     assert checked["builds_own_software"] == "yes"
 
 
@@ -163,30 +163,30 @@ def test_quote_match_ignores_case_and_dash_style():
     "b2b saas ‑ crm", "B2B SaaS — CRM", "B2B SaaS – CRM", "b2b saas - crm",
 ])
 def test_quote_match_ignores_dash_and_space_variants(quote):
-    checked, _ = sl._check_facts(facts(builds_own_software=("yes", quote)), COMPANY)
+    checked, _ = sl._check_facts(facts(builds_own_software=("yes", quote)), COMPANY, 1)
     assert checked["builds_own_software"] == "yes"
 
 
 def test_quote_match_ignores_curly_quote_marks():
     company = COMPANY.model_copy(update={"description": "It's the founders' CRM, built for \"small\" teams."})
     quote = "It’s the founders’ CRM, built for “small” teams"
-    checked, rejected = sl._check_facts(facts(sales_motion=("founder_led", quote)), company)
+    checked, rejected = sl._check_facts(facts(sales_motion=("founder_led", quote)), company, 1)
     assert (checked["sales_motion"], rejected) == ("founder_led", [])
 
 
 def test_a_different_word_still_fails_after_typography_is_unified():
-    checked, _ = sl._check_facts(facts(builds_own_software=("yes", "b2b saas ‑ erp")), COMPANY)
+    checked, _ = sl._check_facts(facts(builds_own_software=("yes", "b2b saas ‑ erp")), COMPANY, 1)
     assert checked["builds_own_software"] == "unknown"
 
 
 def test_quote_shortened_with_dots_is_kept():
-    checked, rejected = sl._check_facts(facts(sales_motion=("founder_led", "Sells a CRM... Founders do all")), COMPANY)
+    checked, rejected = sl._check_facts(facts(sales_motion=("founder_led", "Sells a CRM... Founders do all")), COMPANY, 1)
     assert checked["sales_motion"] == "founder_led"
     assert rejected == []
 
 
 def test_quote_pieces_out_of_order_are_rejected():
-    checked, _ = sl._check_facts(facts(sales_motion=("founder_led", "Founders do all… Sells a CRM")), COMPANY)
+    checked, _ = sl._check_facts(facts(sales_motion=("founder_led", "Founders do all… Sells a CRM")), COMPANY, 1)
     assert checked["sales_motion"] == "unknown"
 
 
@@ -196,23 +196,23 @@ ROLE = sl.SalesRole(title="Account Executive", match="exact",
 
 def test_sales_roles_fill_an_unknown_sales_motion():
     hiring = COMPANY.model_copy(update={"sales_roles": [ROLE]})
-    checked, _ = sl._check_facts(facts(), hiring)
+    checked, _ = sl._check_facts(facts(), hiring, 1)
     assert checked["sales_motion"] == "sales_team_unclear"
 
 
 def test_sales_roles_never_override_what_the_text_says():
     hiring = COMPANY.model_copy(update={"sales_roles": [ROLE]})
-    checked, _ = sl._check_facts(facts(sales_motion=("founder_led", "Founders do all the selling")), hiring)
+    checked, _ = sl._check_facts(facts(sales_motion=("founder_led", "Founders do all the selling")), hiring, 1)
     assert checked["sales_motion"] == "founder_led"
 
 
 def test_no_sales_roles_leaves_sales_motion_unknown():
-    checked, _ = sl._check_facts(facts(), COMPANY)
+    checked, _ = sl._check_facts(facts(), COMPANY, 1)
     assert checked["sales_motion"] == "unknown"
 
 
 def test_rejected_primary_business_falls_back_to_unclear():
-    checked, _ = sl._check_facts(facts(primary_business=("software", "invented quote")), COMPANY)
+    checked, _ = sl._check_facts(facts(primary_business=("software", "invented quote")), COMPANY, 1)
     assert checked["primary_business"] == "unclear"
 
 
@@ -427,7 +427,7 @@ def test_dropped_quote_is_asked_again_once_and_the_fix_is_used(facts_in_turn):
     assert len(prompts) == 2 and sl.RETRY_NOTE[:30] in prompts[1] and "customers" in prompts[1]
     assert sl.RETRY_NOTE[:30] not in prompts[0]
     assert [r for r in result.rejected_quotes if r.startswith("customers")] == [
-        "customers: first quote was not in the company details, fixed on a second ask"]
+        "customers: first quote failed the check, fixed on a second ask"]
 
 
 def test_second_ask_that_still_has_a_bad_quote_stays_dropped(facts_in_turn):
@@ -527,26 +527,26 @@ def test_failed_second_model_keeps_the_main_score(two_models):
 
 
 def test_rating_quoting_our_icp_drops_to_unknown():
-    checked, rejected = sl._check_ratings(
-        ratings((2, ""), (0, "Sales reps spend hours researching")), COMPANY, 2)
+    checked, rejected, _ = sl._check_ratings(
+        ratings((2, ""), (0, "Sales reps spend hours researching")), COMPANY, 2, 1)
     assert [c.score for c in checked] == [2, 2]
     assert len(rejected) == 1 and "pain match=0" in rejected[0]
 
 
 def test_rating_with_a_real_quote_is_kept():
-    checked, rejected = sl._check_ratings(
-        ratings((1, "Founders do all the selling"), (4, "Sells a CRM to small businesses")), COMPANY, 2)
+    checked, rejected, _ = sl._check_ratings(
+        ratings((1, "Founders do all the selling"), (4, "Sells a CRM to small businesses")), COMPANY, 2, 1)
     assert [c.score for c in checked] == [1, 4]
     assert rejected == []
 
 
 def test_unsupported_high_rating_drops_to_unknown():
-    checked, _ = sl._check_ratings(ratings((5, "They hire SDRs"), (2, "")), COMPANY, 2)
+    checked, _, _ = sl._check_ratings(ratings((5, "They hire SDRs"), (2, "")), COMPANY, 2, 1)
     assert checked[0].score == 2
 
 
 def test_unknown_rating_needs_no_quote():
-    checked, rejected = sl._check_ratings(ratings((3, ""), (3, "")), COMPANY, 3)
+    checked, rejected, _ = sl._check_ratings(ratings((3, ""), (3, "")), COMPANY, 3, 1)
     assert [c.score for c in checked] == [3, 3]
     assert rejected == []
 
@@ -616,3 +616,155 @@ def test_a_lead_scored_by_the_fallback_model_says_so_and_stays_at_review(fake_mo
     assert result.model == f"stand-in:1b (fallback: {sl.model_name()} failed)"
     assert any("stand-in:1b" in f for f in result.review_flags)
     assert result.verdict != "qualify"
+
+
+HIRING = COMPANY.model_copy(update={"sales_roles": [ROLE]})
+CRM_FACTS = {"builds_own_software": ("yes", "Sells a CRM"), "customers": ("businesses", "to small businesses")}
+
+
+def test_scoring_prompt_lists_open_roles_only_when_there_are_some():
+    assert "OPEN ROLES\n- Account Executive\n" in sl._build_user_prompt(make_icp(), HIRING)
+    assert "OPEN ROLES" not in sl._build_user_prompt(make_icp(), COMPANY)
+
+
+def test_a_whole_job_title_is_evidence_for_buyer():
+    checked, rejected, proven = sl._check_ratings(ratings((4, "Account Executive"), (2, "")), HIRING, 2, 3)
+    assert [c.score for c in checked] == [4, 2]
+    assert (rejected, proven) == ([], {"buyer persona fit"})
+
+
+def test_a_job_title_the_company_does_not_have_is_not_evidence():
+    checked, rejected, proven = sl._check_ratings(ratings((4, "Account Executive"), (2, "")), COMPANY, 2, 3)
+    assert checked[0].score == 2 and len(rejected) == 1 and proven == set()
+
+
+@pytest.mark.parametrize("quote, titles, ok", [
+    ("Sells a CRM", [], True), ("a", [], False), ("Sells a", [], False),
+    ("Account Executive", ["Account Executive"], True), ("SDR", ["SDR"], True),
+    ("Account", ["Account Executive"], False), ("a", ["Account Executive"], False),
+])
+def test_long_enough_quote(quote, titles, ok):
+    assert sl.long_enough_quote(quote, 3, titles) is ok
+
+
+def test_a_short_fact_quote_is_dropped():
+    checked, rejected = sl._check_facts(facts(builds_own_software=("yes", "a CRM")), COMPANY, 3)
+    assert checked["builds_own_software"] == "unknown"
+    assert rejected == ["builds_own_software=yes: quote 'a CRM' is under 3 words"]
+
+
+def test_a_short_rating_quote_drops_to_unknown():
+    checked, rejected, proven = sl._check_ratings(ratings((4, "a CRM"), (2, "")), COMPANY, 2, 3)
+    assert checked[0].score == 2 and "is under 3 words" in rejected[0] and proven == set()
+
+
+NOT_B2C = COMPANY.model_copy(update={"description": "We do not sell to consumers. Founders do all the selling."})
+
+
+@pytest.mark.parametrize("description", [
+    "We do not sell to consumers.", "We never sell to consumers.", "It doesn't sell to consumers.",
+    "There's no way it'll sell to consumers.",
+])
+def test_a_yes_type_quote_right_after_a_negation_is_dropped(description):
+    company = COMPANY.model_copy(update={"description": description})
+    checked, rejected = sl._check_facts(facts(customers=("consumers", "sell to consumers")), company, 3)
+    assert checked["customers"] == "unknown"
+    assert rejected == ["customers=consumers: quote 'sell to consumers' comes right after a negation"]
+
+
+def test_a_negation_further_back_does_not_count():
+    company = COMPANY.model_copy(update={"description": "Not a startup any more, the firm now sells to consumers."})
+    checked, rejected = sl._check_facts(facts(customers=("consumers", "sells to consumers")), company, 3)
+    assert (checked["customers"], rejected) == ("consumers", [])
+
+
+def test_the_same_words_without_a_negation_elsewhere_pass():
+    company = COMPANY.model_copy(update={"description": "We do not sell to consumers yet. In 2027 we sell to consumers."})
+    checked, _ = sl._check_facts(facts(customers=("consumers", "sell to consumers")), company, 3)
+    assert checked["customers"] == "consumers"
+
+
+def test_a_no_sales_answer_may_follow_a_negation():
+    company = COMPANY.model_copy(update={"description": "We have no dedicated sales team at all."})
+    checked, rejected = sl._check_facts(facts(sales_motion=("no_sales", "dedicated sales team")), company, 3)
+    assert (checked["sales_motion"], rejected) == ("no_sales", [])
+
+
+def test_a_high_rating_after_a_negation_drops_but_a_low_one_stays():
+    high, rejected, _ = sl._check_ratings(ratings((5, "sell to consumers"), (2, "")), NOT_B2C, 2, 3)
+    assert high[0].score == 2 and "negation" in rejected[0]
+    low, rejected, proven = sl._check_ratings(ratings((1, "sell to consumers"), (2, "")), NOT_B2C, 2, 3)
+    assert low[0].score == 1 and rejected == [] and proven == set()
+
+
+def test_a_real_quote_beside_an_unknown_or_low_score_is_not_proof():
+    _, _, proven = sl._check_ratings(
+        ratings((2, "Sells a CRM to small businesses"), (1, "Founders do all the selling")), COMPANY, 2, 3)
+    assert proven == set()
+
+
+def test_unknown_scores_with_quotes_do_not_get_a_lead_past_the_evidence_rule(fake_model):
+    result = evidence_lead(fake_model, "buyer", (2, "Sells a CRM to small businesses"),
+                           (2, "Founders do all the selling"), company=COMPANY)
+    assert (result.verdict, result.fit) == ("review", 70)
+    assert result.review_flags == ["fits on paper, no quote showing the right buyer"]
+
+
+def evidence_lead(fake_model, mode, buyer, pain, company=HIRING):
+    _, answers = fake_model
+    answers[sl.CompanyFacts] = facts(**CRM_FACTS)
+    answers[sl.FitScores] = ratings(buyer, pain)
+    return sl.score_lead(make_icp(qualify_needs_evidence=mode, min_quote_words=3), company)
+
+
+def test_acme_hiring_aes_with_no_pain_quote_still_qualifies_on_buyer(fake_model):
+    result = evidence_lead(fake_model, "buyer", (4, "Account Executive"), (2, ""))
+    assert (result.verdict, result.fit, result.review_flags) == ("qualify", 80, [])
+
+
+def test_both_holds_a_lead_with_no_pain_quote_at_review(fake_model):
+    result = evidence_lead(fake_model, "both", (4, "Account Executive"), (2, ""))
+    assert (result.verdict, result.fit) == ("review", 80)
+    assert result.review_flags == ["fits on paper, no quote showing the problem we solve"]
+
+
+def test_buyer_holds_a_high_fit_with_no_buyer_quote_at_review(fake_model):
+    result = evidence_lead(fake_model, "buyer", (2, ""), (5, "Founders do all the selling"))
+    assert (result.verdict, result.fit) == ("review", 85)
+    assert result.review_flags == ["fits on paper, no quote showing the right buyer"]
+
+
+def test_both_names_everything_missing(fake_model):
+    result = evidence_lead(fake_model, "both", (5, "Sells a CRM"), (5, "a CRM"), company=COMPANY)
+    assert result.review_flags == ["fits on paper, no quote showing the problem we solve"]
+    result = evidence_lead(fake_model, "both", (5, "invented"), (5, "invented"), company=COMPANY)
+    assert result.verdict == "review" and result.fit == 70
+    assert result.review_flags == ["fits on paper, no quote showing the right buyer or the problem we solve"]
+
+
+def test_off_keeps_the_old_behaviour(fake_model):
+    result = evidence_lead(fake_model, "off", (5, "invented"), (5, "invented"), company=COMPANY)
+    assert (result.verdict, result.review_flags) == ("qualify", [])
+
+
+def test_no_evidence_flag_on_a_lead_that_would_not_qualify_anyway(fake_model):
+    result = evidence_lead(fake_model, "both", (2, ""), (2, ""), company=COMPANY.model_copy(update={"size": "500k"}))
+    assert not any("fits on paper" in f for f in result.review_flags)
+
+
+def test_prompts_carry_the_minimum_quote_length(fake_model):
+    prompts = []
+    _, answers = fake_model
+    original = sl.generate_structured
+
+    def spy(system, **kw):
+        prompts.append(system)
+        return original(system=system, **kw)
+
+    sl.generate_structured = spy
+    try:
+        evidence_lead(fake_model, "buyer", (4, "Account Executive"), (2, ""))
+    finally:
+        sl.generate_structured = original
+    assert all("{min_words}" not in p for p in prompts)
+    assert "at least 3 words" in prompts[0] and "at least 3 words" in prompts[1] and "OPEN ROLES" in prompts[1]
