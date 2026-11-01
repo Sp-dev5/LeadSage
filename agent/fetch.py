@@ -416,6 +416,11 @@ def fetch_html(url: str) -> Page:
     return _fetch_raw(url, "html")
 
 
+def fetch_xml(url: str) -> Page:
+    """A news feed or sitemap as raw XML. Never raises."""
+    return _fetch_raw(url, "xml")
+
+
 MAX_IMAGE_BYTES = 300_000
 
 

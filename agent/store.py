@@ -159,9 +159,10 @@ class Reply(BaseModel):
 class SignalEvent(BaseModel):
     """One signal the watcher saw: an open sales role or a dated news item, with where it was read.
     `quote` is the role title or headline as the source writes it; `detail` is the whole item as JSON.
-    `fired` is set once, when the event is first stored, and never changes."""
+    `fired` is set once, when the event is first stored, and never changes. `press_unconfirmed` is a
+    headline whose article did not show the lead's domain or city: kept so it is not read again."""
 
-    kind: Literal["hiring", "news"]
+    kind: Literal["hiring", "news", "press", "press_unconfirmed"]
     key: str
     detail: str
     source: str
@@ -360,10 +361,21 @@ def fresh_events(since: str, path: Path = DB_PATH) -> dict[str, list[SignalEvent
                             "ORDER BY first_seen DESC", (since,)).fetchall()
     found: dict[str, list[SignalEvent]] = {}
     for r in rows:
-        found.setdefault(r["lead"], []).append(SignalEvent(
-            kind=r["kind"], key=r["key"], detail=r["detail"], source=r["source"], quote=r["quote"],
-            item_date=r["item_date"], first_seen=r["first_seen"], last_seen=r["last_seen"], fired=bool(r["fired"])))
+        found.setdefault(r["lead"], []).append(_event(r))
     return found
+
+
+def _event(r: sqlite3.Row) -> SignalEvent:
+    return SignalEvent(kind=r["kind"], key=r["key"], detail=r["detail"], source=r["source"], quote=r["quote"],
+                       item_date=r["item_date"], first_seen=r["first_seen"], last_seen=r["last_seen"],
+                       fired=bool(r["fired"]))
+
+
+def events(lead: str, kind: str, path: Path = DB_PATH) -> list[SignalEvent]:
+    """Every event of this kind stored for the lead."""
+    with closing(_connect(path)) as conn:
+        rows = conn.execute("SELECT * FROM signal_events WHERE lead = ? AND kind = ?", (lead, kind)).fetchall()
+    return [_event(r) for r in rows]
 
 
 def is_baselined(lead: str, kind: str, path: Path = DB_PATH) -> bool:

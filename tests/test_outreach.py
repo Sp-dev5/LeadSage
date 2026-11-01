@@ -1,7 +1,8 @@
 """Contacts, cited email drafts, follow-up timing and stages. No model, no network."""
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -883,3 +884,38 @@ def test_a_page_saved_at_the_old_cut_is_read_again(tmp_path):
     calls.clear()
     contacts._people_page("https://acme.example/about", path, fetch)
     assert calls == []
+
+
+def test_a_press_item_is_named_as_reported_not_as_their_own_site(db):
+    store.save(Company(name="Acme", industry="B2B SaaS", size="120", location="Pune, India", description="CRM."),
+               LeadScore(fit=85, verdict="qualify", criteria=[], disqualifier_hit=False, disqualifier_reason="",
+                         summary="s"), url="https://acme.example", text_source="typed", path=db)
+    lead = store.load("Acme", db)
+    item = hooks.NewsItem(headline="Acme raises $5 Mn in Series A", date_text="29 October 2026", date="2026-10-29",
+                          kind="funding", source="https://entrackr.com/news/acme", outlet="Entrackr",
+                          fetched_at="2026-10-29T00:00:00+00:00")
+    assert outreach.hook_for(lead, item).text == "29 October 2026, reported by Entrackr: Acme raises $5 Mn in Series A"
+    assert "RECENT NEWS (reported by Entrackr)" in outreach._prompt(lead, make_icp(), None, [], item)
+
+
+def test_a_saved_round_reaches_the_first_draft_and_beats_an_own_site_launch(db, monkeypatch):
+    class Drafted(Exception):
+        pass
+
+    def draft_email(lead, step, icp, cfg, contact, earlier, news=None, contact_how=""):
+        raise Drafted(news.headline)
+
+    day = date.today().isoformat()
+    item = hooks.NewsItem(headline="Acme raises $5 Mn", date_text=day, date=day, kind="funding",
+                          source="https://entrackr.com/news/acme", outlet="Entrackr", fetched_at="2026-10-29T00:00:00+00:00")
+    launch = item.model_copy(update={"headline": "Acme launches a module", "kind": "launch", "outlet": ""})
+    store.save(Company(name="Acme", industry="B2B SaaS", size="120", location="Pune, India", description="CRM."),
+               LeadScore(fit=85, verdict="qualify", criteria=[], disqualifier_hit=False, disqualifier_reason="",
+                         summary="s"), url="https://acme.example", text_source="typed", path=db)
+    store.record_events("Acme", [store.SignalEvent(kind="press", key="k", detail=item.model_dump_json(),
+                                                   source=item.source, quote=item.headline, item_date=day)], db)
+    monkeypatch.setattr(outreach, "contact_for", lambda *a, **k: SimpleNamespace(contact=None, chosen_by=""))
+    monkeypatch.setattr(outreach, "news_for", lambda *a, **k: hooks.NewsSearch(items=[launch]))
+    monkeypatch.setattr(outreach, "draft_email", draft_email)
+    with pytest.raises(Drafted, match="Acme raises"):
+        outreach.draft_step(store.load("Acme", db), 0, make_icp(), CFG, db)

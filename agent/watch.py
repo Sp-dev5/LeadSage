@@ -13,6 +13,10 @@ nothing is compared and the lead is not rescored. A lead is rescored only when a
 read shows a different set of sales roles, because roles are part of the score. News never
 changes a score; it only moves the lead up its tab.
 
+Funding news (agent/press.py) is read once per run, not per lead, and needs no model. Every lead
+still in play is checked against it, with the same baseline rule. If no feed can be read, nothing
+is recorded for any lead. --hiring-only skips it, like the other news.
+
 When reply checking is set up (IMAP settings in .env, see agent/mailer.py), a full run also looks
 for replies to contacted leads; a reply stops their follow-ups.
 
@@ -31,7 +35,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from agent import mailer, store
+from agent import mailer, press, store
 from agent.hooks import HOOK_KINDS, NewsItem
 from agent.outreach import OutreachConfig, load_outreach, news_for
 from agent.pipeline import score_one, signal_rows
@@ -67,8 +71,8 @@ def hiring_events(roles: list[SalesRole]) -> list[SignalEvent]:
                         quote=r.title) for r in roles]
 
 
-def news_events(items: list[NewsItem]) -> list[SignalEvent]:
-    return [SignalEvent(kind="news", key=event_key(i.headline, i.date), detail=i.model_dump_json(), source=i.source,
+def news_events(items: list[NewsItem], kind: str = "news") -> list[SignalEvent]:
+    return [SignalEvent(kind=kind, key=event_key(i.headline, i.date), detail=i.model_dump_json(), source=i.source,
                         quote=i.headline, item_date=i.date) for i in items]
 
 
@@ -112,6 +116,44 @@ def watch_news(lead: StoredLead, cfg: OutreachConfig, today: date, result: Watch
         lambda e: e.key in newsworthy and is_recent(e.item_date, today, cfg.fresh_days), db)]
 
 
+def read_press(cfg: OutreachConfig, today: date, result: WatchResult, db: Path) -> list[NewsItem] | None:
+    """Store what the feeds show today and return the recent history, or None if no feed could be read."""
+    items, failed = press.read_feeds(cfg.news_max_age_days, today)
+    result.failed += [f"news feed not read ({line})" for line in failed]
+    if len(failed) == len(press.FEEDS):
+        return None
+    store.record_events(press.ALL_LEADS, news_events(items, "press"), db)
+    return press.saved_news(press.ALL_LEADS, cfg.news_max_age_days, db, today)
+
+
+def confirmed(lead: StoredLead, item: NewsItem) -> bool | None:
+    """Whether a matched headline is really about this lead. None if the article can't be read, so
+    the next run asks again."""
+    if not press.needs_opening(lead.name):
+        return True
+    page = press.read_article(item.source)
+    return press.opening_confirms(page.text, lead.url, lead.company.location) if page.ok else None
+
+
+def watch_press(lead: StoredLead, items: list[NewsItem], cfg: OutreachConfig, today: date, result: WatchResult,
+                db: Path) -> None:
+    known = store.known_events(lead.name, "press", db)
+    ruled_out = store.known_events(lead.name, "press_unconfirmed", db)
+    matched, unconfirmed = [], []
+    for item in items:
+        key = event_key(item.headline, item.date)
+        if key in ruled_out or not press.matches(lead.name, item.headline):
+            continue
+        answer = True if key in known else confirmed(lead, item)
+        if answer:
+            matched.append(item)
+        elif answer is False:
+            unconfirmed.append(item)
+    store.record_events(lead.name, news_events(unconfirmed, "press_unconfirmed"), db)
+    result.fired += [(lead.name, e) for e in record(lead.name, "press", news_events(matched, "press"),
+                                                    lambda e: is_recent(e.item_date, today, cfg.fresh_days), db)]
+
+
 def leads_to_watch(db: Path, names: set[str] | None = None) -> list[StoredLead]:
     """Every stored lead still in play: not replied, meeting or lost, and not on the do-not-contact list."""
     blocked = store.suppressed(db)
@@ -124,11 +166,13 @@ def watch_leads(icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH, report:
                 names: set[str] | None = None, hiring_only: bool = False, signals: dict[str, dict] | None = None,
                 today: date | None = None) -> WatchResult:
     """Watch every lead still in play. Hiring for leads listed in the signals file; news for leads
-    whose verdict gets an email. One lead failing is reported and the run moves on."""
+    whose verdict gets an email; funding news for all of them. One lead failing is reported and
+    the run moves on."""
     signals = signal_rows() if signals is None else signals
     today = today or date.today()
     result = WatchResult()
     leads = leads_to_watch(db, names)
+    press_items = None if hiring_only else read_press(cfg, today, result, db)
     for i, lead in enumerate(leads, 1):
         report(f"[{i}/{len(leads)}] {lead.name}")
         result.watched += 1
@@ -142,6 +186,11 @@ def watch_leads(icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH, report:
                 watch_news(lead, cfg, today, result, db)
             except Exception as e:
                 result.failed.append(f"{lead.name}: news check failed ({str(e)[:90]})")
+        if press_items is not None:
+            try:
+                watch_press(lead, press_items, cfg, today, result, db)
+            except Exception as e:
+                result.failed.append(f"{lead.name}: funding news check failed ({str(e)[:90]})")
     if mailer.can_read() and names is None:
         try:
             mailer.check_replies(cfg, db, report)

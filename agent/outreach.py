@@ -32,6 +32,7 @@ from agent.contacts import Contact, ContactSearch, closest_match, find_contact, 
 from agent.fetch import Page, site_links, slug
 from agent.files import write_text_atomic
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
+from agent.press import saved_news
 from agent.llm import generate_writing
 from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, long_enough_quote, quote_in
 from agent.store import Citation, Email, StoredLead
@@ -208,7 +209,8 @@ def hook_for(lead: StoredLead, news: NewsItem | None = None) -> Hook:
     if titles:
         return Hook("open sales roles", f"they have open sales roles: {', '.join(titles[:3])}")
     if news:
-        return Hook("recent news", f"{news.date_text}, on their own site: {news.headline}")
+        where = f"reported by {news.outlet}" if news.outlet else "on their own site"
+        return Hook("recent news", f"{news.date_text}, {where}: {news.headline}")
     return Hook("", "")
 
 
@@ -233,7 +235,8 @@ def _prompt(lead: StoredLead, icp: ICP, contact: Contact | None, earlier: list[E
     text = (f"COMPANY DETAILS\n- Name: {c.name}\n- Industry: {c.industry}\n- About: {c.description}\n\n"
             f"OPEN ROLES\n{roles}\n\n")
     if news:
-        text += f"RECENT NEWS (from their own site)\n- {news.date_text}: {news.headline}\n\n"
+        where = f"reported by {news.outlet}" if news.outlet else "from their own site"
+        text += f"RECENT NEWS ({where})\n- {news.date_text}: {news.headline}\n\n"
     if hook := hook_for(lead, news).text:
         text += f"HOOK\n- {hook}. Open the first claim with this: it is the reason to write now.\n\n"
     facts = lead.score.facts
@@ -578,8 +581,9 @@ def draft_step(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, db: P
     if lead.stage in store.STOPPED:
         raise ValueError(f"{lead.name}: sequence stopped ({lead.stage}), no new drafts")
     search = contact_for(lead, icp, cfg, db)
-    news = None if lead.company.sales_roles or step else best_item(news_for(lead, cfg, db).items)
-    earlier = [e for e in store.load_emails(lead.name, db) if e.step < step and e.status == "sent"]
+    news = None if lead.company.sales_roles or step else best_item(
+        news_for(lead, cfg, db).items + saved_news(lead.name, cfg.news_max_age_days, db))
+    earlier =[e for e in store.load_emails(lead.name, db) if e.step < step and e.status == "sent"]
     email = draft_email(lead, step, icp, cfg, search.contact, earlier, news=news, contact_how=search.chosen_by)
     store.save_email(lead.name, email, db)
     return email
