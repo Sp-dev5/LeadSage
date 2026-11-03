@@ -37,6 +37,8 @@ SNIPPET_CHARS = 500
 MAX_FETCH_BYTES = 200_000
 MAX_ADDRESS = 254
 ADDRESS = re.compile(r"^[^@\s<>,;:\"()\[\]\\]+@[^@\s<>,;:\"()\[\]\\]+\.[A-Za-z]{2,}$")
+DELETE_ASK = re.compile(r"\b(?:delete|remove|erase)\s+(?:all\s+(?:of\s+)?)?my\s+(?:personal\s+)?"
+                        r"(?:data|details|information|info|contact|email|address|name)\b", re.I)
 QUOTE_START = re.compile(r"^(On .{0,200}wrote:|-{2,}\s*Original Message\s*-{2,}|From: .+)$", re.I | re.M)
 OPT_OUT = re.compile(r"\b(unsubscribe|remove me|opt[ -]?out|take me off|stop emailing|stop contacting|"
                      r"do not (email|contact)|don'?t (email|contact)|not interested|no thanks)\b", re.I)
@@ -167,6 +169,14 @@ def is_opt_out(text: str, cfg: OutreachConfig) -> bool:
     return first == "stop" or bool(OPT_OUT.search(text))
 
 
+def is_delete_request(text: str, cfg: OutreachConfig) -> bool:
+    """The reply asks us to delete what we hold. Our own notice line, if quoted back, doesn't count."""
+    if cfg.notice_line.strip():
+        text = text.replace(cfg.notice_line.strip(), " ")
+    first = re.sub(r"[^a-z ]", "", (text.strip().splitlines() or [""])[0].lower()).strip()
+    return first == "delete" or bool(DELETE_ASK.search(text))
+
+
 def is_automatic(msg) -> bool:
     """An out-of-office or other machine reply, which is not the person answering."""
     auto = msg.get("Auto-Submitted", "").lower()
@@ -197,7 +207,8 @@ def _criteria(emails: list[store.Email], contact: Contact | None, since: str) ->
 def check_replies(cfg: OutreachConfig, db: Path = store.DB_PATH, report=print,
                   connect=None) -> list[tuple[str, store.Reply]]:
     """Look in the rep's inbox (read-only) for replies to contacted leads. A reply stops the follow-ups
-    (stage replied); one that asks not to be emailed also puts the company on the do-not-contact list."""
+    (stage replied); one that asks not to be emailed also puts the company on the do-not-contact list;
+    one that asks for their data to be deleted does that as well and removes the person (store.forget_person)."""
     s = settings()
     if s is None or not s.imap_host:
         raise SendError("Reply checking is not set up: add IMAP_HOST (and the SMTP settings) to .env.")
@@ -228,14 +239,22 @@ def check_replies(cfg: OutreachConfig, db: Path = store.DB_PATH, report=print,
                 if is_automatic(msg):
                     continue
                 text = reply_text(msg)
+                delete = is_delete_request(text, cfg)
                 reply = store.Reply(message_id=msg.get("Message-ID", "") or f"{lead.name}-{i.decode()}",
-                                    received_at=_when(msg), sender=parseaddr(msg.get("From", ""))[1],
-                                    subject=str(msg.get("Subject", ""))[:200], snippet=text[:SNIPPET_CHARS],
-                                    opt_out=is_opt_out(text, cfg))
+                                    received_at=_when(msg), sender="" if delete else parseaddr(msg.get("From", ""))[1],
+                                    subject="" if delete else str(msg.get("Subject", ""))[:200],
+                                    snippet="" if delete else text[:SNIPPET_CHARS],
+                                    opt_out=delete or is_opt_out(text, cfg), delete_request=delete)
                 if not store.save_reply(lead.name, reply, db):
                     continue
                 found.append((lead.name, reply))
                 store.set_stage(lead.name, "replied", db)
+                if delete:
+                    person = saved_contact(lead, cfg, db)
+                    store.forget_person(lead.name, person.name if person else "", db)
+                    store.suppress(lead.name, "asked to have their data deleted (reply)", db)
+                    report(f"Reply from {lead.name}: asked to have their data deleted. Done.")
+                    continue
                 if reply.opt_out:
                     store.suppress(lead.name, "asked not to be emailed (reply)", db)
                 report(f"Reply from {lead.name} ({reply.sender})" + (": asked not to be emailed" if reply.opt_out else ""))

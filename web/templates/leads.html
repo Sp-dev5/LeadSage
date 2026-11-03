@@ -144,8 +144,15 @@
             {% if current.signals %}<dt>New signals</dt><dd><ul class="plain">{% for e in current.signals %}<li><span class="pill hl">{{ 'Hiring' if e.kind == 'hiring' else 'News' }}</span> {% if is_link(e.source) %}<a href="{{ e.source }}" target="_blank" rel="noopener">{{ e.quote }}</a>{% else %}{{ e.quote }}{% endif %} <span class="faint mono small">{% if e.item_date %}dated {{ e.item_date | day }} · {% endif %}first seen {{ e.first_seen | day }}</span></li>{% endfor %}</ul></dd>{% endif %}
             <dt>Open sales roles</dt><dd>{% if s.sales_roles %}<ul class="plain">{% for role in s.sales_roles %}<li><a href="{{ role.source }}" target="_blank" rel="noopener">{{ role.title }}</a> <span class="faint mono small">{{ role.match }}</span></li>{% endfor %}</ul>{% else %}<span class="muted">None found on a job board.</span>{% endif %}</dd>
             <dt>Where they are</dt><dd>{{ s.location.evidence or 'No location given.' }}</dd>
+            {% if current.site_down %}<dt>Website</dt><dd><span class="tag cut">Website down</span> <span class="muted small">{{ current.site.error }}, checked {{ current.site.checked_at | day }}.{% if current.suggest_lost %} Down on {{ current.site.down_streak }} checks in a row: you may want to mark this lead lost.{% endif %}</span></dd>{% endif %}
             <dt>Scored from</dt><dd class="mono small">{{ lead.url | domain or 'no url' }} · {{ 'website text' if lead.text_source == 'fetched' else lead.text_source }} · {{ lead.scored_at | day }} · {{ s.model or 'model unknown' }}</dd>
           </dl>
+          <details><summary>Add text about this company</summary><div>
+            <form method="post" action="/leads/paste" data-busy="Scoring"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}">
+              <label>For a site we can't read: copy from it in your own browser. This replaces the text behind the score, and every claim is still checked against it.
+                <textarea name="text" rows="6"></textarea></label>
+              <button class="b ghost" type="submit">Score from this text</button></form>
+          </div></details>
           <details><summary>Facts the model found ({{ s.facts | length }})</summary><div>
             <table>{% for k, v in s.facts.items() %}<tr><td class="small">{{ k | plain }}</td><td>{{ v | plain }}</td></tr>{% endfor %}</table>
           </div></details>

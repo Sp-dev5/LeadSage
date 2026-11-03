@@ -59,7 +59,7 @@ def _entries(root: Element) -> list[tuple[str, str, str]]:
                 u.findtext(f"{SITEMAP_NEWS}news/{SITEMAP_NEWS}publication_date"))
                for u in root.iter(f"{SITEMAP}url")]
     return [(" ".join(title.split()), link.strip(), when.strip()) for title, link, when in rss + sitemap
-            if title and link and when]
+            if title and link and when and link.strip().lower().startswith(("https://", "http://"))]
 
 
 def _is_recent(when: date, today: date, max_age_days: int) -> bool:

@@ -104,6 +104,7 @@ with st.container(border=True, key="panel_3"):
             ("Hard fail above this many times the largest size", s["max_size_factor"]),
             ("Score when unknown", s["unknown_score"]),
             ("Models disagree at a fit gap of", s["disagree_gap"]),
-            ("A quote needs at least this many words", s["min_quote_words"]),
+            ("A buyer, pain or email quote needs at least this many words", s["min_quote_words"]),
+            ("A fact quote needs at least this many words", s["min_fact_quote_words"]),
             ("A qualify needs a quote for", s["qualify_needs_evidence"]),
         ], columns=["Setting", "Value"]).astype(str), hide_index=True)

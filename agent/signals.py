@@ -8,7 +8,8 @@ jobs from its job board, and sorts the titles:
 
 Every role kept is a title copied from the downloaded list; a model answer that isn't one of
 those titles is dropped, and "unsure" doesn't count. No board, no list or no roles means
-unknown, never "no sales team".
+unknown, never "no sales team". With no supported board, Google-for-Jobs `JobPosting` data in the
+careers page's HTML is read instead, under the same rule.
 
 `job_board` is "<board>:<company id on that board>", e.g. "ashby:atlan". Leave it blank and the
 board is found on the careers page instead (see BOARDS). Supported: ashby, greenhouse, lever,
@@ -31,13 +32,14 @@ from typing import Literal, NamedTuple
 
 from pydantic import BaseModel
 
-from agent.fetch import fetch_html, fetch_json, load_or_fetch, slug
+from agent.fetch import Page, fetch_html, fetch_json, load_or_fetch, slug
 from agent.llm import EXTRACT_TEMPERATURE, generate_structured
 from agent.score_lead import ICP, SalesRole, load_icp
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 PAGES = DATA / "pages"
 MAX_TITLES_TO_INFER = 60
+LD_JSON = re.compile(r"""<script[^>]+type=["']application/ld\+json["'][^>]*>(.*?)</script>""", re.S | re.I)
 
 
 class Board(NamedTuple):
@@ -171,6 +173,46 @@ def job_board_for(name: str, job_board: str, careers_url: str, pages: Path = PAG
     return detect_board(page.url, page.text) if page.ok else ""
 
 
+def _posting_titles(data: object) -> list[str]:
+    if isinstance(data, list):
+        return [t for item in data for t in _posting_titles(item)]
+    if not isinstance(data, dict):
+        return []
+    kinds = data.get("@type")
+    title = data.get("title")
+    own = [title] if "JobPosting" in (kinds if isinstance(kinds, list) else [kinds]) and isinstance(title, str) else []
+    return own + _posting_titles(data.get("@graph"))
+
+
+def job_posting_titles(text: str) -> list[str]:
+    """Job titles in a page's JSON-LD blocks. A block that isn't valid JSON is skipped."""
+    titles: list[str] = []
+    for block in LD_JSON.findall(text):
+        try:
+            titles += _posting_titles(json.loads(block))
+        except ValueError:
+            continue
+    return [t for t in (html.unescape(t).strip() for t in titles) if t]
+
+
+def _hiring(titles: list[str], board: str, page: Page, icp: ICP) -> Hiring:
+    """Sort downloaded titles into exact and inferred sales roles."""
+    exact = [t for t in titles if exact_match(t, icp.sales_roles.titles)]
+    inferred = infer_sales_titles([t for t in titles if t not in exact], icp)
+    roles = [SalesRole(title=t, match=m, source=page.url, fetched_at=page.fetched_at)
+             for ts, m in ((exact, "exact"), (inferred, "inferred")) for t in ts]
+    return Hiring(ok=True, board=board, jobs_seen=len(titles), roles=roles)
+
+
+def careers_page_hiring(name: str, careers_url: str, icp: ICP, pages: Path = PAGES, refetch: bool = False) -> Hiring:
+    """Open sales roles from `JobPosting` data on the careers page. No data is unknown, not "no roles"."""
+    page = load_or_fetch(careers_url, pages / f"{slug(name)}-careers-html.json", fetch_html, refetch)
+    titles = list(dict.fromkeys(job_posting_titles(page.text))) if page.ok else []
+    if not titles:
+        return Hiring(ok=False, error="no supported job board found")
+    return _hiring(titles, "careers page", page, icp)
+
+
 def sales_hiring(name: str, job_board: str, icp: ICP, pages: Path = PAGES,
                  refetch: bool = False) -> Hiring:
     """Open sales roles for one company, from its job board. Never raises on a bad board."""
@@ -187,21 +229,19 @@ def sales_hiring(name: str, job_board: str, icp: ICP, pages: Path = PAGES,
     except (ValueError, KeyError, TypeError) as e:
         return Hiring(ok=False, board=job_board, error=f"unreadable job list: {type(e).__name__}")
 
-    exact = [t for t in titles if exact_match(t, icp.sales_roles.titles)]
-    inferred = infer_sales_titles([t for t in titles if t not in exact], icp)
-    roles = [SalesRole(title=t, match=m, source=page.url, fetched_at=page.fetched_at)
-             for ts, m in ((exact, "exact"), (inferred, "inferred")) for t in ts]
-    return Hiring(ok=True, board=job_board, jobs_seen=len(titles), roles=roles)
+    return _hiring(titles, job_board, page, icp)
 
 
 def hiring_for(row: dict, icp: ICP, pages: Path = PAGES, refetch: bool = False) -> Hiring:
     """Sales hiring for one signals CSV row (name, careers_url, job_board)."""
     name = row["name"].strip()
-    board = job_board_for(name, (row.get("job_board") or "").strip(),
-                          (row.get("careers_url") or "").strip(), pages, refetch)
-    if not board:
-        return Hiring(ok=False, error="no supported job board found")
-    return sales_hiring(name, board, icp, pages, refetch)
+    careers_url = (row.get("careers_url") or "").strip()
+    board = job_board_for(name, (row.get("job_board") or "").strip(), careers_url, pages, refetch)
+    if board:
+        return sales_hiring(name, board, icp, pages, refetch)
+    if careers_url:
+        return careers_page_hiring(name, careers_url, icp, pages, refetch)
+    return Hiring(ok=False, error="no supported job board found")
 
 
 def read_rows(file: str) -> list[dict]:

@@ -207,3 +207,28 @@ def test_mail_from_someone_else_is_never_read(mailbox, db):
     mailer.send(approved(db), 0, CFG, db)
     found, imap = check(db, [reply("Unrelated newsletter", sender="news@other.example")])
     assert found == [] and all("news@other.example" not in " ".join(c) for c in imap.searches)
+
+
+@pytest.mark.parametrize("text", ["Please delete my data.", "DELETE", "remove my details from your records",
+                                  "Could you erase all of my personal information?"])
+def test_a_delete_request_removes_the_person_and_lists_the_company(mailbox, db, text):
+    mailer.send(approved(db), 0, CFG, db)
+    found, _ = check(db, [reply(text)])
+    kept = store.load_replies("Acme", db)[0]
+    assert found[0][1].delete_request and (kept.sender, kept.subject, kept.snippet) == ("", "", "")
+    assert store.load_emails("Acme", db) == [] and store.load("Acme", db).stage == "lost"
+    assert store.load_contacts("Acme", db).contact is None
+    assert store.suppressed(db)["Acme"][0] == "asked to have their data deleted (reply)"
+    assert "priya" not in store.load_contacts("Acme", db).model_dump_json().lower()
+
+
+@pytest.mark.parametrize("text", ["Thanks, I deleted your last email by mistake.", "Sounds good, send details."])
+def test_an_ordinary_reply_is_not_a_delete_request(mailbox, db, text):
+    mailer.send(approved(db), 0, CFG, db)
+    found, _ = check(db, [reply(text)])
+    assert not found[0][1].delete_request and store.load_emails("Acme", db)
+
+
+def test_our_own_notice_line_quoted_back_is_not_a_delete_request():
+    cfg = CFG.model_copy(update={"notice_line": "Reply delete my data and I'll remove it."})
+    assert not mailer.is_delete_request("Thanks. Reply delete my data and I'll remove it.", cfg)

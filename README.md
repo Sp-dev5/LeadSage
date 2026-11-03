@@ -40,13 +40,26 @@ All seven steps are built. Step 7 hands leads to a CRM by import file, not by a 
 - **Sales hiring** (`agent/signals.py`): reads a company's open jobs from its job board (Ashby, Greenhouse, Lever, Keka, Trakstar, Kula; found on the careers page or typed in the CSV) and finds the sales roles. A title counts if it contains one of the ICP's sales titles, or if the model says it's a sales role and the title really is on the list. Each role keeps its source and date. Found roles tell the scorer the company has salespeople.
 - **Signal watcher** (`agent/watch.py`): reads each lead's job board and news pages again and flags what is new since the last look: a sales role not seen before, or a news item from the company's own site dated in the last 14 days (`fresh_days` in `data/outreach.json`). A plain blog post never counts, the same rule as for email hooks. The first look at a lead only records what is there, so nothing fires on day one. A board or page that can't be read counts as unknown, never as "no roles". Leads with a new signal move to the top of their tab on the Leads page; news never changes a score, and a lead is rescored only when its set of sales roles changes, since roles were already part of the score. Hiring is watched for companies listed in `data/signals_leads.csv`; news only for leads whose verdict gets an email. Signals show in the web app only, not the Streamlit app.
 - **Funding news** (`agent/press.py`): each full watch run also reads Inc42, YourStory and Entrackr and keeps the headline, link and date, never the article. A headline counts only if the lead's full name comes directly before a raise word and an amount or round ("Acme Labs raises $5 Mn"), so results stories and talks of a raise stay out. A one-word name also needs the lead's domain or city in the article's opening, which is read once and not kept. A match can open the first email, quoted as reported by that outlet, for 90 days. It never changes a score, and strict matching means some real rounds are missed.
+- **Sites we can't read**: three honest routes, and no way around a site that says no. When a site can't be read, the company's Wikipedia summary is used if the page is a real article about a company (`agent/wikipedia.py`; many names land on something else, and those are refused). The rep can paste text from their own browser on the lead, and the scorer uses it with the same quote checks, labelled "pasted by the rep". The watcher checks each website weekly: one that can't be reached shows as down, and two checks in a row suggest marking the lead lost. A careers page with no supported job board is read for its `JobPosting` data instead. JavaScript-only sites are not rendered: a headless browser would load pages past the check that refuses internal addresses, so the paste box covers them.
+- **Personal data** (built with India's DPDP Act in mind, not legal advice): the contact card says where a name came from and when, and "What we hold" lists every stored field about that person. An optional `notice_line` in `data/outreach.json` goes under the signature of first emails. A reply asking to delete their data removes the person, the emails to that company and the details of its replies, and keeps the company on the do-not-contact list. A person never emailed is forgotten after `forget_after_days` (180 by default; 0 keeps them).
 - **Careers probe** (`agent/fetch_careers.py`): a feasibility check for the hiring signal. It fetches each careers page from `data/signals_leads.csv` (columns `name,careers_url`) and reports whether the page is readable and mentions sales roles. It passes if at least half do.
+
+## How well it works
+
+Scored with the final rules on local models, November 2026:
+
+| Set | Text scored | Agrees | Near | Wrong |
+|---|---|---|---|---|
+| 47 hand-labelled companies, mostly made up for testing | typed description | 38 | 8 | 1 |
+| 50 real companies, labelled from the ICP's rules by a separate AI model | website text | 39 | 10 | 1 |
+
+Near means one verdict away: review against qualify or disqualify. These numbers show the scorer follows the ICP's rules. They don't show the rules are right, and nothing here proves replies or revenue: no real campaign was run. Known errors stay in the results on purpose: the model sometimes calls a company a sales-tool seller when it isn't (Rocketlane, Everstage), and a quote check confirms the words exist, not what they mean. A rep reads every lead and every draft before anything goes out.
 
 ## Roadmap
 
 1. Lead scoring (done)
 2. Walking skeleton: research, score, contact, cited email, follow-ups (done)
-3. Scoring engine: add intent and engagement on top of fit
+3. Scoring engine: signals move a lead up the queue; a separate intent score was not built, because no outcome data exists to check it
 4. Signal watcher: new sales roles and news move a lead up the queue (done; runs when you start it, or on a schedule you set up)
 5. Approval before sending, one-click send from your own mailbox, reply detection (done)
 6. CRM: import file today; a live sync would need a CRM account and key

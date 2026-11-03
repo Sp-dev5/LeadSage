@@ -4,7 +4,8 @@ Research and score leads, and keep the results for the app.
 For each company in a lead CSV: read its website (cached in data/pages/), find open
 sales roles on its job board when data/signals_leads.csv lists it, score it (with a
 second model on borderline leads), save it in the lead store, and keep the logo its
-homepage declares (data/logos/).
+homepage declares (data/logos/). A site that can't be read falls back to the company's Wikipedia
+summary, when there is a real one, and then to the typed description.
 
 Run it:  python -m agent.pipeline --file real_leads.csv
          python -m agent.pipeline --file test_leads.csv --names "Hevo Data,Basecamp"
@@ -24,9 +25,13 @@ from agent.llm import second_model_name
 from agent.logos import fetch_logo
 from agent.score_lead import ICP, Company, LeadScore, is_borderline, load_icp, score_lead, with_second_opinion
 from agent.signals import DATA, PAGES, hiring_for, rows_by_name
+from agent.wikipedia import SOURCE as WIKIPEDIA
+from agent.wikipedia import company_summary
 
 LEAD_COLUMNS = {"name", "industry", "size", "location", "url", "description"}
 SIGNALS_FILE = "signals_leads.csv"
+FETCH_FAILED = "typed (fetch failed)"
+PASTED = "pasted by the rep"
 
 
 def lead_files() -> list[str]:
@@ -64,13 +69,15 @@ def lead_text(row: dict, mode: str, pages: Path = PAGES, refetch: bool = False) 
     page = load_or_fetch(url, pages / f"{slug(row['name'])}.json", fetch_homepage, refetch)
     if not page.ok:
         print(f"  fetch failed for {row['name']}: {page.error}, using typed", flush=True)
-        return typed, "typed (fetch failed)"
+        return typed, FETCH_FAILED
     return page.text, "fetched"
 
 
 def research(row: dict, icp: ICP, signals: dict[str, dict]) -> tuple[Company, str]:
     """The company as the scorer sees it, and where its description came from."""
     description, text_source = lead_text(row, "fetched")
+    if text_source == FETCH_FAILED and len(summary := company_summary(row["name"])) > len(description):
+        description, text_source = summary[:MAX_CHARS], WIKIPEDIA
     roles = []
     if signal := signals.get(row["name"].strip().lower()):
         roles = hiring_for(signal, icp).roles

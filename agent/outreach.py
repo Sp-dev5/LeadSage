@@ -77,6 +77,10 @@ class OutreachConfig(BaseModel):
                                             "countries require one in marketing email")
     opt_out_line: str = Field(min_length=1, description="the line at the end of every email that tells the reader "
                                                         "how to stop hearing from you")
+    notice_line: str = Field(default="", description="optional line under the signature of first emails saying "
+                                                     "where you found their name and how to have it removed")
+    forget_after_days: int = Field(default=180, ge=0, description="a person never emailed is removed this many days "
+                                                                  "after they were found; 0 keeps them")
     max_sends_per_day: int = Field(gt=0, description="most emails the app itself may send in a day, from your "
                                                      "mailbox; a cap so a mistake can't send hundreds")
     avoid_phrases: list[str] = Field(description="stock phrases the emails must not use; a draft with one is flagged")
@@ -324,10 +328,24 @@ def _body(contact: Contact | None, citations: list[Citation], out: EmailOut) -> 
     return "\n\n".join(p for p in [greeting, personal, out.pitch.strip(), out.ask.strip()] if p)
 
 
-def _footer(cfg: OutreachConfig) -> str:
-    """The signature (name, company, address) and the opt-out line every email ends with."""
+def _footer(cfg: OutreachConfig, step: int = 0) -> str:
+    """The signature (name, company, address) and the opt-out line every email ends with, with the
+    notice line between them on a first email, when one is set."""
     signature = "\n".join(line for line in [cfg.sender_name, cfg.sender_company, cfg.sender_address] if line.strip())
-    return f"{signature}\n\n{cfg.opt_out_line}"
+    notice = [cfg.notice_line.strip()] if step == 0 and cfg.notice_line.strip() else []
+    return "\n\n".join([signature, *notice, cfg.opt_out_line])
+
+
+def what_we_hold(contact: Contact, emails: list[store.Email], replies: list[store.Reply]) -> list[str]:
+    """Every stored field about a person, with where it came from, in plain lines."""
+    where = "typed by the rep" if contact.matches_buyer == "typed" else f"from {contact.source}"
+    lines = [f"Name: {contact.name} ({where}, read {contact.fetched_at[:10]})",
+             f"Title: {contact.title or 'none'} ({where})",
+             f"Email address: {contact.email + ' (typed by the rep)' if contact.email else 'none'}"]
+    sent = [e.sent_at[:10] for e in emails if e.status == "sent"]
+    lines.append(f"Emails: {len(emails)} written, {len(sent)} sent" + (f", last on {max(sent)}" if sent else ""))
+    lines.append(f"Replies kept: {len(replies)} (sender, subject and the first lines of the text)")
+    return lines
 
 
 def _squash(text: str) -> str:
@@ -437,7 +455,7 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
             out, written_by, cloud_failed = again, again_by, again_failed
             citations, rejected = again_citations, again_rejected
     core = _body(contact, citations, out)
-    body = f"{core}\n\n{_footer(cfg)}"
+    body = f"{core}\n\n{_footer(cfg, step)}"
     ours = " ".join([_company_source(lead), *(e[0] for e in extra), contact.title if contact else "",
                      icp.buyer_persona, icp.pain_solved, icp.notes])
     loose = unsupported_specifics(f"{out.pitch.strip()} {out.ask.strip()}", ours, allowed)

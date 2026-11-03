@@ -29,6 +29,15 @@ class LeadRow(NamedTuple):
     ready: Readiness
     group: str
     signals: list[store.SignalEvent] = []
+    site: store.SiteCheck | None = None
+
+    @property
+    def site_down(self) -> bool:
+        return self.site is not None and self.site.down_streak > 0
+
+    @property
+    def suggest_lost(self) -> bool:
+        return self.site is not None and self.site.down_streak >= store.SITE_DOWN_CHECKS
 
     @property
     def country(self) -> str:
@@ -47,13 +56,15 @@ def lead_rows(icp: ICP, cfg: OutreachConfig) -> list[LeadRow]:
     all_emails, searches = store.load_all_emails(DB), store.load_all_contacts(DB)
     since = (datetime.now(timezone.utc) - timedelta(days=cfg.fresh_days)).isoformat(timespec="seconds")
     fresh = store.fresh_events(since, DB)
+    sites = store.site_checks(DB)
     rows = []
     for lead in store.load_all(DB):
         emails = all_emails.get(lead.name, [])
         search = searches.get(lead.name)
         contact = with_fallbacks(search, lead, cfg).contact if search else None
         rows.append(LeadRow(lead, emails, readiness(lead, emails, contact.name if contact else "", cfg),
-                            group(lead.score, icp.settings.qualify_at), fresh.get(lead.name, [])))
+                            group(lead.score, icp.settings.qualify_at), fresh.get(lead.name, []),
+                            sites.get(lead.name)))
     return sorted(rows, key=lambda r: (not r.signals, -r.lead.score.fit, r.lead.name.lower()))
 
 

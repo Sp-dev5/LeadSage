@@ -33,7 +33,7 @@ BASE_ICP = {
     "settings": {
         "min_headcount": 10, "max_size_factor": 3, "size_tolerance": 0.1, "unknown_score": 2, "gate_fail_max": 1,
         "fail_cap": 20, "disqualify_below": 40, "qualify_at": 70, "disagree_gap": 15,
-        "weights": {n: 1 for n in NAMES}, "qualify_needs_evidence": "off", "min_quote_words": 1,
+        "weights": {n: 1 for n in NAMES}, "qualify_needs_evidence": "off", "min_quote_words": 1, "min_fact_quote_words": 1,
     },
 }
 
@@ -714,7 +714,7 @@ def evidence_lead(fake_model, mode, buyer, pain, company=HIRING):
     _, answers = fake_model
     answers[sl.CompanyFacts] = facts(**CRM_FACTS)
     answers[sl.FitScores] = ratings(buyer, pain)
-    return sl.score_lead(make_icp(qualify_needs_evidence=mode, min_quote_words=3), company)
+    return sl.score_lead(make_icp(qualify_needs_evidence=mode, min_quote_words=3, min_fact_quote_words=3), company)
 
 
 def test_acme_hiring_aes_with_no_pain_quote_still_qualifies_on_buyer(fake_model):

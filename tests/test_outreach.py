@@ -919,3 +919,21 @@ def test_a_saved_round_reaches_the_first_draft_and_beats_an_own_site_launch(db, 
     monkeypatch.setattr(outreach, "draft_email", draft_email)
     with pytest.raises(Drafted, match="Acme raises"):
         outreach.draft_step(store.load("Acme", db), 0, make_icp(), CFG, db)
+
+
+def test_the_notice_line_goes_on_first_emails_only():
+    cfg = CFG.model_copy(update={"notice_line": "I found your name on your team page."})
+    assert "I found your name" in outreach._footer(cfg, 0) and "I found your name" not in outreach._footer(cfg, 1)
+    assert outreach._footer(cfg, 0).index("I found your name") < outreach._footer(cfg, 0).index(cfg.opt_out_line)
+    assert outreach._footer(CFG, 0).count("\n\n") == 1
+
+
+def test_what_we_hold_lists_every_field_with_its_source():
+    person = contacts.Contact(name="Priya Rao", title="Head of Sales", matches_buyer="yes", email="priya@acme.example",
+                              source="https://acme.example/team", fetched_at="2026-10-24T00:00:00+00:00")
+    sent = Email(step=0, subject="s", body="b", status="sent", sent_at="2026-10-25T00:00:00+00:00",
+                 drafted_at="2026-10-24T00:00:00+00:00")
+    lines = outreach.what_we_hold(person, [sent], [])
+    assert lines[0] == "Name: Priya Rao (from https://acme.example/team, read 2026-10-24)"
+    assert "Email address: priya@acme.example (typed by the rep)" in lines
+    assert "Emails: 1 written, 1 sent, last on 2026-10-25" in lines and lines[-1].startswith("Replies kept: 0")

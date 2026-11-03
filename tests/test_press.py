@@ -48,6 +48,11 @@ def test_news_sitemap_is_read():
         ("Qiroko", "2026-10-30", "https://entrackr.com/news/qiroko-raises")]
 
 
+def test_a_link_that_is_not_a_web_address_is_dropped():
+    text = RSS.replace("https://inc42.com/buzz/capgrid/", "javascript:alert(1)")
+    assert press.parse_feed("Inc42", page(text), 90, TODAY) == []
+
+
 def test_a_feed_with_no_items_is_a_failure_not_a_quiet_day():
     with pytest.raises(ValueError):
         press.parse_feed("Inc42", page("<rss><channel><title>x</title></channel></rss>"), 90, TODAY)

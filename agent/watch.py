@@ -17,6 +17,10 @@ Funding news (agent/press.py) is read once per run, not per lead, and needs no m
 still in play is checked against it, with the same baseline rule. If no feed can be read, nothing
 is recorded for any lead. --hiring-only skips it, like the other news.
 
+Each lead's website is checked weekly (full runs): one that can't be reached shows on the lead,
+and two down checks in a row suggest marking it lost. A site that refuses us has answered, so
+that is not down. A full run also forgets people never emailed after forget_after_days.
+
 When reply checking is set up (IMAP settings in .env, see agent/mailer.py), a full run also looks
 for replies to contacted leads; a reply stops their follow-ups.
 
@@ -36,12 +40,15 @@ from datetime import date
 from pathlib import Path
 
 from agent import mailer, press, store
+from agent.fetch import UNREACHABLE, fetch_homepage
 from agent.hooks import HOOK_KINDS, NewsItem
 from agent.outreach import OutreachConfig, load_outreach, news_for
 from agent.pipeline import score_one, signal_rows
 from agent.score_lead import ICP, SalesRole, load_icp
 from agent.signals import hiring_for
 from agent.store import SignalEvent, StoredLead
+
+SITE_CHECK_DAYS = 7
 
 
 @dataclass
@@ -154,6 +161,18 @@ def watch_press(lead: StoredLead, items: list[NewsItem], cfg: OutreachConfig, to
                                                     lambda e: is_recent(e.item_date, today, cfg.fresh_days), db)]
 
 
+def watch_site(lead: StoredLead, today: date, report: Callable[[str], None], db: Path) -> None:
+    """Look at the lead's website if the last look was SITE_CHECK_DAYS ago or more."""
+    last = store.site_checks(db).get(lead.name)
+    if last and (today - date.fromisoformat(last.checked_at)).days < SITE_CHECK_DAYS:
+        return
+    page = fetch_homepage(lead.url)
+    down = not page.ok and page.error.startswith(UNREACHABLE)
+    check = store.record_site_check(lead.name, today.isoformat(), down, page.error, db)
+    if down:
+        report(f"  website down ({check.down_streak} in a row): {page.error}")
+
+
 def leads_to_watch(db: Path, names: set[str] | None = None) -> list[StoredLead]:
     """Every stored lead still in play: not replied, meeting or lost, and not on the do-not-contact list."""
     blocked = store.suppressed(db)
@@ -191,6 +210,14 @@ def watch_leads(icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH, report:
                 watch_press(lead, press_items, cfg, today, result, db)
             except Exception as e:
                 result.failed.append(f"{lead.name}: funding news check failed ({str(e)[:90]})")
+        if not hiring_only and lead.url:
+            try:
+                watch_site(lead, today, report, db)
+            except Exception as e:
+                result.failed.append(f"{lead.name}: website check failed ({str(e)[:90]})")
+    if not hiring_only and names is None and cfg.forget_after_days:
+        for name in store.forget_stale_contacts(cfg.forget_after_days, today, db):
+            report(f"{name}: person forgotten, not emailed within {cfg.forget_after_days} days")
     if mailer.can_read() and names is None:
         try:
             mailer.check_replies(cfg, db, report)

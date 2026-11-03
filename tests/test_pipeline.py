@@ -1,5 +1,7 @@
 """Batch order and saving. No model, no network."""
 
+import pytest
+
 from agent import pipeline, store
 from agent.score_lead import Company, LeadScore
 from tests.test_scoring import make_icp
@@ -49,3 +51,25 @@ def test_main_model_scores_every_lead_before_the_second_model_runs(tmp_path, mon
     assert saved["Clear"].second_opinion is None
     assert (saved["Edge"].verdict, saved["Edge"].second_opinion.fit) == ("review", 60)
     assert saved["Dropped"].verdict == "review"
+
+
+def research_row(monkeypatch, text_source, summary):
+    monkeypatch.setattr(pipeline, "lead_text", lambda row, mode: ("Short typed line.", text_source))
+    monkeypatch.setattr(pipeline, "company_summary", lambda name: summary)
+    return pipeline.research({"name": "Acme", "url": "https://acme.example"}, make_icp(), {})
+
+
+def test_a_site_that_failed_falls_back_to_a_real_wikipedia_summary(monkeypatch):
+    company, source = research_row(monkeypatch, pipeline.FETCH_FAILED, "Acme is a long article about the company.")
+    assert company.description.startswith("Acme is a long") and source == "from Wikipedia"
+
+
+def test_no_summary_keeps_the_typed_text(monkeypatch):
+    company, source = research_row(monkeypatch, pipeline.FETCH_FAILED, "")
+    assert company.description == "Short typed line." and source == pipeline.FETCH_FAILED
+
+
+def test_wikipedia_is_not_asked_when_the_site_was_read(monkeypatch):
+    monkeypatch.setattr(pipeline, "company_summary", lambda name: pytest.fail("asked Wikipedia"))
+    monkeypatch.setattr(pipeline, "lead_text", lambda row, mode: ("Site text.", "fetched"))
+    assert pipeline.research({"name": "Acme"}, make_icp(), {})[1] == "fetched"
