@@ -29,7 +29,7 @@ from typing import NamedTuple
 
 from agent import store
 from agent.contacts import Contact
-from agent.outreach import OutreachConfig, saved_contact, sending_problems
+from agent.outreach import OutreachConfig, forget_people_pages, saved_contact, sending_problems
 
 TIMEOUT = 30
 REPLY_DAYS = 30
@@ -252,6 +252,7 @@ def check_replies(cfg: OutreachConfig, db: Path = store.DB_PATH, report=print,
                 if delete:
                     person = saved_contact(lead, cfg, db)
                     store.forget_person(lead.name, person.name if person else "", db)
+                    forget_people_pages(lead.name, db)
                     store.suppress(lead.name, "asked to have their data deleted (reply)", db)
                     report(f"Reply from {lead.name}: asked to have their data deleted. Done.")
                     continue

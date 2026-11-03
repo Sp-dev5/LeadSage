@@ -33,7 +33,9 @@ def mailbox(monkeypatch):
                        "IMAP_HOST": "imap.example"}.items():
         monkeypatch.setenv(key, value)
     server = FakeSMTP()
+    server.pages_forgotten = []
     monkeypatch.setattr(mailer, "_smtp", lambda s: server)
+    monkeypatch.setattr(mailer, "forget_people_pages", lambda name, db: server.pages_forgotten.append(name))
     return server
 
 
@@ -220,6 +222,7 @@ def test_a_delete_request_removes_the_person_and_lists_the_company(mailbox, db, 
     assert store.load_contacts("Acme", db).contact is None
     assert store.suppressed(db)["Acme"][0] == "asked to have their data deleted (reply)"
     assert "priya" not in store.load_contacts("Acme", db).model_dump_json().lower()
+    assert mailbox.pages_forgotten == ["Acme"]
 
 
 @pytest.mark.parametrize("text", ["Thanks, I deleted your last email by mistake.", "Sounds good, send details."])
@@ -227,6 +230,7 @@ def test_an_ordinary_reply_is_not_a_delete_request(mailbox, db, text):
     mailer.send(approved(db), 0, CFG, db)
     found, _ = check(db, [reply(text)])
     assert not found[0][1].delete_request and store.load_emails("Acme", db)
+    assert mailbox.pages_forgotten == []
 
 
 def test_our_own_notice_line_quoted_back_is_not_a_delete_request():

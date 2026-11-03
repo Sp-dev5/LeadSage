@@ -39,7 +39,7 @@ def lead_score(fit: int, verdict: str, model: str = "main") -> LeadScore:
 def w(tmp_path, monkeypatch):
     w = SimpleNamespace(db=tmp_path / "leads.db", roles={}, news={}, board_down=set(), broken=set(),
                         hiring_calls=[], news_calls=[], scored=[], main=lead_score(85, "qualify"),
-                        press=[], press_failed=[], articles={}, article_reads=[], site_errors={})
+                        press=[], press_failed=[], articles={}, article_reads=[], site_errors={}, pages_forgotten=[])
 
     def hiring_for(row, icp, refetch=False):
         name = row["name"]
@@ -66,6 +66,7 @@ def w(tmp_path, monkeypatch):
                     error="" if text is not None else "timed out")
 
     monkeypatch.setattr(watch, "news_for", news_for)
+    monkeypatch.setattr(watch, "forget_people_pages", lambda name, db: w.pages_forgotten.append(name))
     monkeypatch.setattr(pipeline, "score_lead", score_lead)
     monkeypatch.setattr(press, "read_feeds", lambda days, today: (w.press, w.press_failed))
     monkeypatch.setattr(press, "read_article", read_article)
@@ -420,6 +421,7 @@ def test_a_person_never_emailed_is_forgotten_after_the_set_days_and_the_score_st
     run(w)
     assert store.load_contacts("Acme Labs", w.db) is None and store.load_emails("Acme Labs", w.db) == []
     assert store.load("Acme Labs", w.db).score.fit == 85
+    assert w.pages_forgotten == ["Acme Labs"]
 
 
 def test_a_recent_person_or_one_who_was_emailed_stays(w):
@@ -431,6 +433,7 @@ def test_a_recent_person_or_one_who_was_emailed_stays(w):
                                        drafted_at="2026-01-01T00:00:00+00:00"), w.db)
     run(w)
     assert store.load_contacts("Acme Labs", w.db) and store.load_contacts("Other Co", w.db)
+    assert w.pages_forgotten == []
 
 
 def test_zero_days_keeps_everyone(w):

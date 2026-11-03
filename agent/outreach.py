@@ -618,6 +618,19 @@ def _cached_pages(lead_name: str, others: list[str], pages: Path) -> list[Path]:
             and not any(p.stem == r or p.stem.startswith(f"{r}-") for r in rivals)]
 
 
+def forget_people_pages(lead_name: str, db: Path = store.DB_PATH, pages: Path = PAGES) -> int:
+    """Delete the cached pages that can name people at a company: whole team, about and news pages
+    and the homepage HTML. The text the score was read from stays. Returns how many were removed."""
+    if not pages.exists():
+        return 0
+    others = [slug(other.name) for other in store.load_all(db) if other.name != lead_name]
+    found = [p for p in _cached_pages(lead_name, others, pages)
+             if p.stem.endswith("-full") or p.stem.endswith("-home-html")]
+    for path in found:
+        path.unlink(missing_ok=True)
+    return len(found)
+
+
 def forget_lead(lead: StoredLead, db: Path = store.DB_PATH, pages: Path = PAGES,
                 logo_dir: Path = logos.LOGOS) -> int:
     """Delete everything stored about a company: its rows in the lead store, every website page

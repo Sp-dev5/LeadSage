@@ -624,6 +624,19 @@ def test_deleting_a_lead_removes_its_rows_and_cached_pages_but_keeps_the_do_not_
     assert "Acme" in store.suppressed(db)
 
 
+def test_forgetting_people_removes_only_the_pages_that_can_name_them(db, tmp_path):
+    store.save(COMPANY.model_copy(update={"name": "Acme Labs"}), SCORE, url="", text_source="typed", path=db)
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    for name in ("acme.json", "acme-jobs.json", "acme-careers-html.json", "acme-about-full.json",
+                 "acme-news-blog-full.json", "acme-home-html.json", "acme-labs-about-full.json", "other-home-html.json"):
+        (pages / name).write_text("{}", encoding="utf-8")
+    assert outreach.forget_people_pages("Acme", db, pages) == 3
+    assert sorted(p.name for p in pages.iterdir()) == [
+        "acme-careers-html.json", "acme-jobs.json", "acme-labs-about-full.json", "acme.json", "other-home-html.json"]
+    assert store.load("Acme", db).score == SCORE
+
+
 def test_a_stopped_lead_is_not_drafted_for(db, monkeypatch):
     store.suppress("Acme", "", db)
     monkeypatch.setattr(outreach, "contact_for", lambda *a, **k: pytest.fail("searched"))

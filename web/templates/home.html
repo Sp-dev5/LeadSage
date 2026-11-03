@@ -13,8 +13,8 @@
   <div class="big"><b>{{ h.ready_now }}</b><small>{{ 'draft' if h.ready_now == 1 else 'drafts' }} ready to review</small></div>
   <div class="t">
     <p class="kick">{{ now.strftime('%A %d %B') }} · <b>{{ h.scored }}</b> companies read{% if h.last_scored %} · last scored {{ h.last_scored | stamp }}{% endif %}</p>
-    <h1>Checked against <mark>their own words.</mark></h1>
-    <p class="lede"><b>{{ h.kept }}</b> lines about companies matched a quote from their own site or job posts and were kept. <b>{{ h.cut }}</b> had no matching quote and were cut. Nothing is sent until you send it.</p>
+    <h1>Checked against <mark>the source.</mark></h1>
+    <p class="lede"><b>{{ h.kept }}</b> lines about companies matched a quote from their site, job posts or the news and were kept. <b>{{ h.cut }}</b> had no matching quote and were cut. Nothing is sent until you send it.</p>
   </div>
 </section>
 

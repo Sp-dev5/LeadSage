@@ -42,7 +42,7 @@ from pathlib import Path
 from agent import mailer, press, store
 from agent.fetch import UNREACHABLE, fetch_homepage
 from agent.hooks import HOOK_KINDS, NewsItem
-from agent.outreach import OutreachConfig, load_outreach, news_for
+from agent.outreach import OutreachConfig, forget_people_pages, load_outreach, news_for
 from agent.pipeline import score_one, signal_rows
 from agent.score_lead import ICP, SalesRole, load_icp
 from agent.signals import hiring_for
@@ -217,6 +217,7 @@ def watch_leads(icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH, report:
                 result.failed.append(f"{lead.name}: website check failed ({str(e)[:90]})")
     if not hiring_only and names is None and cfg.forget_after_days:
         for name in store.forget_stale_contacts(cfg.forget_after_days, today, db):
+            forget_people_pages(name, db)
             report(f"{name}: person forgotten, not emailed within {cfg.forget_after_days} days")
     if mailer.can_read() and names is None:
         try:
