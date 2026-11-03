@@ -23,7 +23,6 @@ from datetime import date
 from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import urlsplit
-from xml.etree.ElementTree import Element, ParseError
 
 from defusedxml import ElementTree
 from defusedxml.common import DefusedXmlException
@@ -52,7 +51,7 @@ ROUND = (r"(?:[$₹€£]\s?\d|(?:rs\.?|inr|usd)\s?\d|\d[\d.,]*\s?(?:mn|cr|crore
          r"|(?:pre[- ]?)?(?:series|seed)\b|funding\b)")
 
 
-def _entries(root: Element) -> list[tuple[str, str, str]]:
+def _entries(root) -> list[tuple[str, str, str]]:
     """(headline, link, date) from an RSS feed or a news sitemap. Summaries and bodies are left unread."""
     rss = [(i.findtext("title"), i.findtext("link"), i.findtext("pubDate")) for i in root.iter("item")]
     sitemap = [(u.findtext(f"{SITEMAP_NEWS}news/{SITEMAP_NEWS}title"), u.findtext(f"{SITEMAP}loc"),
@@ -93,7 +92,7 @@ def read_feeds(max_age_days: int, today: date,
             continue
         try:
             items += parse_feed(feed.outlet, page, max_age_days, today)
-        except (ParseError, DefusedXmlException, ValueError) as e:
+        except (ElementTree.ParseError, DefusedXmlException, ValueError) as e:
             failed.append(f"{feed.outlet}: {str(e)[:90]}")
     return items, failed
 
