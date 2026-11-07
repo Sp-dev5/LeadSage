@@ -9,7 +9,9 @@ so one dead website can't stop a batch of leads.
 
 PUBLIC_APIS skips the robots check. Only hosts whose owner documents a public API for this
 use belong there (Ashby's job postings API answers robots.txt with 401, which reads as
-"keep out" even though the API is meant to be read).
+"keep out" even though the API is meant to be read). PUBLIC_API_PATHS is the same rule for one
+path on a host whose other pages stay under robots.txt (Wikipedia's robots.txt disallows /api/
+for crawlers while Wikimedia documents this API for programs).
 
 Run it:  python -m agent.fetch https://example.com
 """
@@ -49,6 +51,7 @@ FULL_MAX_CHARS = 9000
 MAX_REDIRECTS = 5
 REDIRECT_CODES = (301, 302, 303, 307, 308)
 PUBLIC_APIS = {"api.ashbyhq.com"}
+PUBLIC_API_PATHS = ("en.wikipedia.org/api/rest_v1/page/summary/",)
 RATE_LIMIT_WAIT = 10
 MAX_SITE_LINKS = 6
 MAX_LINK_DEPTH = 2
@@ -214,7 +217,9 @@ def _allowed_by_robots(url: str) -> bool:
 
 
 def _robots_ok(url: str) -> bool:
-    return urlsplit(url).netloc in PUBLIC_APIS or _allowed_by_robots(url)
+    parts = urlsplit(url)
+    return (parts.netloc in PUBLIC_APIS or f"{parts.netloc}{parts.path}".startswith(PUBLIC_API_PATHS)
+            or _allowed_by_robots(url))
 
 
 def _get(url: str, max_bytes: int | None = None) -> tuple[requests.Response, str]:
@@ -414,6 +419,11 @@ def fetch_json(url: str) -> Page:
 def fetch_html(url: str) -> Page:
     """A page's raw HTML, links and markup included (fetch_page keeps only the readable text)."""
     return _fetch_raw(url, "html")
+
+
+def fetch_xml(url: str) -> Page:
+    """A news feed or sitemap as raw XML. Never raises."""
+    return _fetch_raw(url, "xml")
 
 
 MAX_IMAGE_BYTES = 300_000

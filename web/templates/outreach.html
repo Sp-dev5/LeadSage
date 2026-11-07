@@ -186,7 +186,7 @@
                 <tr><td class="num faint">·</td><td class="small muted" colspan="3">{{ cut }}</td><td><span class="tag cut">Cut</span></td></tr>
                 {% endfor %}
               </table>
-              <p class="annot"><b>Rule:</b> a line about the company stays only if its quote is in their own words: their site, job posts or news.</p>
+              <p class="annot"><b>Rule:</b> a line about the company stays only if its quote is in the source: their site, job posts or news.</p>
               {% endif %}
             {% endif %}
           </div>
@@ -204,10 +204,13 @@
             {% if c %}
               <p class="m-0-0-4"><b>{{ c.name }}</b>, {{ c.title }}</p>
               <p class="small muted m-0">{{ {'buyer': 'Matches your buyer', 'rep': 'Chosen by you', 'startup_ceo': 'Startup of ' ~ lead.company.size ~ ': no buyer named, so the chief executive', 'closest': 'Closest match on their site, not a sales leader: check it fits'}.get(d.search.chosen_by, 'Chosen') }} ·
-                {% if c.matches_buyer == 'typed' %}typed by you{% elif is_link(c.source) %}<a href="{{ c.source }}" target="_blank" rel="noopener">source</a>, {{ c.fetched_at | day }}{% else %}{{ c.source }}, {{ c.fetched_at | day }}{% endif %}</p>
+                {% if c.matches_buyer == 'typed' %}typed by you{% elif is_link(c.source) %}Name and title from <a href="{{ c.source }}" target="_blank" rel="noopener">{{ c.source | domain }}</a>, read {{ c.fetched_at | day }}{% else %}{{ c.source }}, {{ c.fetched_at | day }}{% endif %}</p>
               <form method="post" action="/outreach/act" class="mt-14"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="lead" value="{{ lead.name }}"><input type="hidden" name="do" value="address">
                 <label>Their email address <input type="email" name="address" value="{{ c.email }}" placeholder="Type it in: LeadSage never guesses one" autocomplete="off"></label>
                 <button class="b ghost" type="submit">Save address</button></form>
+              {% if d.hold %}<details><summary>What we hold about {{ c.name }}</summary><div>
+                <ul class="plain small">{% for line in d.hold %}<li>{{ line }}</li>{% endfor %}</ul>
+              </div></details>{% endif %}
             {% else %}
               <div class="flag mt-0"><b>No contact</b>No one matching your buyer is named on their website. Pick someone below or type a contact in.</div>
             {% endif %}
@@ -245,9 +248,15 @@
           </div></details>
           {% endif %}
 
+          {% if d.press %}
+          <details><summary>Funding news reported by others ({{ d.press | length }})</summary><div>
+            <ul class="plain small">{% for item in d.press | sort(attribute='date', reverse=True) %}<li><span class="mono faint">{{ item.date_text }}</span> {{ item.outlet }}: <a href="{{ item.source }}" target="_blank" rel="noopener">{{ item.headline }}</a></li>{% endfor %}</ul>
+          </div></details>
+          {% endif %}
+
           {% if d.replies %}
           <header class="mt-30"><div><h2>Replies</h2><h3>Found in your inbox</h3></div></header>
-          <ul class="plain small">{% for r in d.replies %}<li><span class="mono faint">{{ r.received_at | day }}</span> {{ r.sender }}{% if r.opt_out %} <span class="tag cut">Asked not to be emailed</span>{% endif %}<br><b>{{ r.subject }}</b><br><span class="muted">{{ r.snippet }}</span></li>{% endfor %}</ul>
+          <ul class="plain small">{% for r in d.replies %}<li><span class="mono faint">{{ r.received_at | day }}</span> {{ r.sender }}{% if r.delete_request %} <span class="tag cut">Asked for their data to be deleted: done</span>{% elif r.opt_out %} <span class="tag cut">Asked not to be emailed</span>{% endif %}<br><b>{{ r.subject }}</b><br><span class="muted">{{ r.snippet }}</span></li>{% endfor %}</ul>
           {% endif %}
 
           <header class="mt-30"><div><h2>Stage and privacy</h2></div></header>

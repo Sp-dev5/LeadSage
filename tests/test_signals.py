@@ -223,3 +223,35 @@ def test_trakstar_titles_go_through_the_same_matching(tmp_path, board, model, mo
     h = signals.sales_hiring("Exotel", "trakstar:exotel", ICP_, tmp_path)
     assert h.ok and h.jobs_seen == 2 and h.board == "trakstar:exotel"
     assert board == []
+
+
+POSTINGS = """<html><script type="application/ld+json">
+{"@context": "https://schema.org", "@graph": [{"@type": "Organization", "title": "Not a job"},
+ {"@type": "JobPosting", "title": "Account Executive &amp; Lead"}]}</script>
+<script type='application/ld+json'>[{"@type": ["JobPosting"], "title": "Designer"}]</script>
+<script type="application/ld+json">{broken</script></html>"""
+
+
+def test_job_posting_titles_come_from_the_page_data():
+    assert signals.job_posting_titles(POSTINGS) == ["Account Executive & Lead", "Designer"]
+    assert signals.job_posting_titles("<html>Account Executive</html>") == []
+
+
+def serve_careers_page(monkeypatch, text):
+    page = Page(url="https://acme.example/careers", text=text, fetched_at="2026-11-01T00:00:00+00:00", ok=True)
+    monkeypatch.setattr(signals, "fetch_html", lambda url: page)
+    monkeypatch.setattr(signals, "infer_sales_titles", lambda titles, icp: [])
+
+
+def test_no_board_reads_job_postings_on_the_careers_page(monkeypatch, tmp_path):
+    title = ICP_.sales_roles.titles[0]
+    serve_careers_page(monkeypatch, f"""<script type="application/ld+json">{{"@type": "JobPosting", "title": "{title}"}}</script>""")
+    hiring = signals.hiring_for({"name": "Acme", "careers_url": "https://acme.example/careers"}, ICP_, tmp_path)
+    assert hiring.ok and hiring.board == "careers page" and [r.title for r in hiring.roles] == [title]
+    assert hiring.roles[0].source == "https://acme.example/careers"
+
+
+def test_a_careers_page_with_no_postings_is_unknown_not_no_roles(monkeypatch, tmp_path):
+    serve_careers_page(monkeypatch, "<html>Join us</html>")
+    hiring = signals.hiring_for({"name": "Acme", "careers_url": "https://acme.example/careers"}, ICP_, tmp_path)
+    assert not hiring.ok and hiring.roles == []

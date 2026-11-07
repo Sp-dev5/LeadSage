@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -27,6 +27,7 @@ from agent.hooks import NewsSearch
 from agent.score_lead import Company, LeadScore
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "leadsage.db"
+SITE_DOWN_CHECKS = 2
 
 STAGES = ["new", "drafted", "approved", "contacted", "replied", "meeting", "lost"]
 STOPPED = {"replied", "meeting", "lost"}
@@ -84,6 +85,12 @@ CREATE TABLE IF NOT EXISTS replies (
     message_id TEXT NOT NULL,
     reply TEXT NOT NULL,
     PRIMARY KEY (lead, message_id)
+);
+CREATE TABLE IF NOT EXISTS site_checks (
+    lead TEXT PRIMARY KEY,
+    checked_at TEXT NOT NULL,
+    down_streak INTEGER NOT NULL,
+    error TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS logins (
     id TEXT PRIMARY KEY,
@@ -154,14 +161,25 @@ class Reply(BaseModel):
     snippet: str
     opt_out: bool = False
     found_at: str = ""
+    delete_request: bool = False
+
+
+class SiteCheck(BaseModel):
+    """The last look at a lead's website. `down_streak` counts checks in a row where it could not
+    be reached; a site that refuses us answered, so it does not count."""
+
+    checked_at: str
+    down_streak: int
+    error: str = ""
 
 
 class SignalEvent(BaseModel):
     """One signal the watcher saw: an open sales role or a dated news item, with where it was read.
     `quote` is the role title or headline as the source writes it; `detail` is the whole item as JSON.
-    `fired` is set once, when the event is first stored, and never changes."""
+    `fired` is set once, when the event is first stored, and never changes. `press_unconfirmed` is a
+    headline whose article did not show the lead's domain or city: kept so it is not read again."""
 
-    kind: Literal["hiring", "news"]
+    kind: Literal["hiring", "news", "press", "press_unconfirmed"]
     key: str
     detail: str
     source: str
@@ -284,10 +302,64 @@ def delete_lead(lead: str, path: Path = DB_PATH) -> None:
         conn.execute("DELETE FROM replies WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM signal_events WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM watched WHERE lead = ?", (lead,))
+        conn.execute("DELETE FROM site_checks WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM news WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM contacts WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM leads WHERE name = ?", (lead,))
+
+
+def forget_person(lead: str, name: str, path: Path = DB_PATH) -> None:
+    """Remove a person who asked: them from the saved search, every email to the company (each
+    carries their name) and the sender, subject and text of its replies. The company's score stays."""
+    search = load_contacts(lead, path)
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
+        for r in conn.execute("SELECT message_id, reply FROM replies WHERE lead = ?", (lead,)).fetchall():
+            blank = Reply.model_validate_json(r["reply"]).model_copy(update={"sender": "", "subject": "", "snippet": ""})
+            conn.execute("UPDATE replies SET reply = ? WHERE lead = ? AND message_id = ?",
+                         (blank.model_dump_json(), lead, r["message_id"]))
+    if search:
+        gone = search.contact is not None and search.contact.name == name
+        save_contacts(lead, search.model_copy(update={
+            "contact": None if gone else search.contact, "chosen_by": "" if gone else search.chosen_by,
+            "people": [p for p in search.people if p.name != name], "rejected": []}), path)
+
+
+def forget_stale_contacts(days: int, today: date, path: Path = DB_PATH) -> list[str]:
+    """Drop the people saved for any company never emailed, once `days` have passed since they were
+    found, with its unsent drafts (they carry the name). Returns the companies. The scores stay."""
+    cutoff = today - timedelta(days=days)
+    stale = []
+    for lead, search in load_all_contacts(path).items():
+        stamps = [s for s in (search.searched_at, search.contact.fetched_at if search.contact else "") if s]
+        if stamps and date.fromisoformat(max(stamps)[:10]) < cutoff and not any(
+                e.status == "sent" for e in load_emails(lead, path)):
+            stale.append(lead)
+    with closing(_connect(path)) as conn, conn:
+        for lead in stale:
+            conn.execute("DELETE FROM contacts WHERE lead = ?", (lead,))
+            conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
+    return stale
+
+
+def record_site_check(lead: str, checked_at: str, down: bool, error: str = "", path: Path = DB_PATH) -> SiteCheck:
+    before = site_checks(path).get(lead)
+    check = SiteCheck(checked_at=checked_at, down_streak=(before.down_streak if before else 0) + 1 if down else 0,
+                      error=error if down else "")
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("INSERT INTO site_checks (lead, checked_at, down_streak, error) VALUES (?, ?, ?, ?) "
+                     "ON CONFLICT(lead) DO UPDATE SET checked_at = excluded.checked_at, "
+                     "down_streak = excluded.down_streak, error = excluded.error",
+                     (lead, check.checked_at, check.down_streak, check.error))
+    return check
+
+
+def site_checks(path: Path = DB_PATH) -> dict[str, SiteCheck]:
+    with closing(_connect(path)) as conn:
+        rows = conn.execute("SELECT * FROM site_checks").fetchall()
+    return {r["lead"]: SiteCheck(checked_at=r["checked_at"], down_streak=r["down_streak"], error=r["error"])
+            for r in rows}
 
 
 def save_contacts(lead: str, search: ContactSearch, path: Path = DB_PATH) -> None:
@@ -360,10 +432,21 @@ def fresh_events(since: str, path: Path = DB_PATH) -> dict[str, list[SignalEvent
                             "ORDER BY first_seen DESC", (since,)).fetchall()
     found: dict[str, list[SignalEvent]] = {}
     for r in rows:
-        found.setdefault(r["lead"], []).append(SignalEvent(
-            kind=r["kind"], key=r["key"], detail=r["detail"], source=r["source"], quote=r["quote"],
-            item_date=r["item_date"], first_seen=r["first_seen"], last_seen=r["last_seen"], fired=bool(r["fired"])))
+        found.setdefault(r["lead"], []).append(_event(r))
     return found
+
+
+def _event(r: sqlite3.Row) -> SignalEvent:
+    return SignalEvent(kind=r["kind"], key=r["key"], detail=r["detail"], source=r["source"], quote=r["quote"],
+                       item_date=r["item_date"], first_seen=r["first_seen"], last_seen=r["last_seen"],
+                       fired=bool(r["fired"]))
+
+
+def events(lead: str, kind: str, path: Path = DB_PATH) -> list[SignalEvent]:
+    """Every event of this kind stored for the lead."""
+    with closing(_connect(path)) as conn:
+        rows = conn.execute("SELECT * FROM signal_events WHERE lead = ? AND kind = ?", (lead, kind)).fetchall()
+    return [_event(r) for r in rows]
 
 
 def is_baselined(lead: str, kind: str, path: Path = DB_PATH) -> bool:

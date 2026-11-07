@@ -6,10 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent import outreach, pipeline, store, watch
+from agent import outreach, pipeline, press, store, watch
+from agent.contacts import Contact, ContactSearch
+from agent.fetch import Page
 from agent.hooks import NewsItem, NewsSearch, best_item
 from agent.score_lead import Company, LeadScore, SalesRole
 from agent.signals import Hiring
+from agent.store import Email
 from tests.test_outreach import CFG
 from tests.test_scoring import make_icp
 
@@ -35,7 +38,8 @@ def lead_score(fit: int, verdict: str, model: str = "main") -> LeadScore:
 @pytest.fixture
 def w(tmp_path, monkeypatch):
     w = SimpleNamespace(db=tmp_path / "leads.db", roles={}, news={}, board_down=set(), broken=set(),
-                        hiring_calls=[], news_calls=[], scored=[], main=lead_score(85, "qualify"))
+                        hiring_calls=[], news_calls=[], scored=[], main=lead_score(85, "qualify"),
+                        press=[], press_failed=[], articles={}, article_reads=[], site_errors={}, pages_forgotten=[])
 
     def hiring_for(row, icp, refetch=False):
         name = row["name"]
@@ -55,8 +59,20 @@ def w(tmp_path, monkeypatch):
         return w.main if model is None else lead_score(60, "review", model)
 
     monkeypatch.setattr(watch, "hiring_for", hiring_for)
+    def read_article(url):
+        w.article_reads.append(url)
+        text = w.articles.get(url)
+        return Page(url=url, text=text or "", fetched_at="2026-10-27T00:00:00+00:00", ok=text is not None,
+                    error="" if text is not None else "timed out")
+
     monkeypatch.setattr(watch, "news_for", news_for)
+    monkeypatch.setattr(watch, "forget_people_pages", lambda name, db: w.pages_forgotten.append(name))
     monkeypatch.setattr(pipeline, "score_lead", score_lead)
+    monkeypatch.setattr(press, "read_feeds", lambda days, today: (w.press, w.press_failed))
+    monkeypatch.setattr(press, "read_article", read_article)
+    monkeypatch.setattr(watch, "fetch_homepage", lambda url: Page(
+        url=url, text="", fetched_at="2026-10-27T00:00:00+00:00", ok=url not in w.site_errors,
+        error=w.site_errors.get(url, "")))
     return w
 
 
@@ -244,3 +260,185 @@ def test_event_keys_ignore_case_spacing_and_punctuation(a, b):
 
 def test_news_keys_include_the_date():
     assert watch.event_key("Launch", "2026-10-01") != watch.event_key("Launch", "2026-10-02")
+
+
+def press_item(headline: str, days_ago: int = 1, link: str = "https://entrackr.com/news/a-round") -> NewsItem:
+    day = (TODAY - timedelta(days=days_ago)).isoformat()
+    return NewsItem(headline=headline, date_text=day, date=day, kind="funding", source=link, outlet="Entrackr",
+                    fetched_at="2026-10-27T00:00:00+00:00")
+
+
+def test_a_new_round_fires_after_the_baseline_and_a_repeat_does_not(w):
+    add(w, name="Acme Labs")
+    run(w)
+    w.press = [press_item("Acme Labs raises $5 Mn in Series A")]
+    assert fired(run(w)) == [("Acme Labs", "press", "Acme Labs raises $5 Mn in Series A")]
+    assert run(w).fired == []
+    assert [i.outlet for i in press.saved_news("Acme Labs", 90, w.db, TODAY)] == ["Entrackr"]
+
+
+def test_press_baseline_stores_a_match_without_firing_and_it_can_still_be_a_hook(w):
+    add(w, name="Acme Labs")
+    w.press = [press_item("Acme Labs raises $5 Mn in Series A")]
+    assert run(w).fired == []
+    assert len(press.saved_news("Acme Labs", 90, w.db, TODAY)) == 1
+    assert store.fresh_events("2000-01-01", w.db) == {}
+
+
+def test_a_lead_added_later_matches_history_the_feed_no_longer_shows(w):
+    add(w, name="Other Co")
+    w.press = [press_item("Acme Labs raises $5 Mn in Series A")]
+    run(w)
+    w.press = []
+    add(w, name="Acme Labs")
+    run(w)
+    assert len(press.saved_news("Acme Labs", 90, w.db, TODAY)) == 1
+
+
+def test_an_old_round_first_seen_today_does_not_fire(w):
+    add(w, name="Acme Labs")
+    run(w)
+    w.press = [press_item("Acme Labs raises $5 Mn in Series A", days_ago=30)]
+    assert run(w).fired == []
+
+
+def test_all_feeds_down_is_unknown_and_records_nothing_for_any_lead(w):
+    add(w, name="Acme Labs")
+    w.press_failed = [f"{f.outlet}: timed out" for f in press.FEEDS]
+    result = run(w)
+    assert len([f for f in result.failed if "news feed not read" in f]) == 3
+    assert not store.is_baselined("Acme Labs", "press", w.db)
+
+
+def test_one_feed_down_is_reported_and_the_others_are_used(w):
+    add(w, name="Acme Labs")
+    w.press_failed = ["Inc42: timed out"]
+    w.press = [press_item("Acme Labs raises $5 Mn in Series A")]
+    result = run(w)
+    assert result.failed == ["news feed not read (Inc42: timed out)"]
+    assert len(press.saved_news("Acme Labs", 90, w.db, TODAY)) == 1
+
+
+def test_hiring_only_skips_the_feeds(w, monkeypatch):
+    add(w, name="Acme Labs")
+    monkeypatch.setattr(press, "read_feeds", lambda days, today: pytest.fail("feeds read"))
+    run(w, hiring_only=True)
+
+
+def test_one_word_name_needs_its_city_in_the_opening(w):
+    add(w, name="Fyle")
+    w.press = [press_item("Fyle raises $5 Mn")]
+    w.articles[w.press[0].source] = "Pune-based Fyle, an expense tool, has raised funding."
+    run(w)
+    assert len(press.saved_news("Fyle", 90, w.db, TODAY)) == 1
+
+
+def test_one_word_name_without_city_or_domain_stays_unmatched_and_is_read_once(w):
+    add(w, name="Fyle")
+    w.press = [press_item("Fyle raises $5 Mn")]
+    w.articles[w.press[0].source] = "Mumbai-based Fyle, a fitness brand, has raised funding."
+    run(w)
+    run(w)
+    assert press.saved_news("Fyle", 90, w.db, TODAY) == []
+    assert len(w.article_reads) == 1
+
+
+def test_an_article_that_cant_be_read_is_asked_about_again_next_run(w):
+    add(w, name="Fyle")
+    w.press = [press_item("Fyle raises $5 Mn")]
+    run(w)
+    assert press.saved_news("Fyle", 90, w.db, TODAY) == []
+    w.articles[w.press[0].source] = "Pune-based Fyle has raised funding."
+    run(w)
+    assert len(press.saved_news("Fyle", 90, w.db, TODAY)) == 1
+    assert len(w.article_reads) == 2
+
+
+def test_two_word_name_reads_no_article(w):
+    add(w, name="Acme Labs")
+    w.press = [press_item("Acme Labs raises $5 Mn in Series A")]
+    run(w)
+    assert w.article_reads == []
+
+
+def test_nothing_of_the_article_is_stored(w):
+    add(w, name="Fyle")
+    w.press = [press_item("Fyle raises $5 Mn")]
+    w.articles[w.press[0].source] = "Pune-based Fyle has raised funding, the secret sentence."
+    run(w)
+    with sqlite3.connect(w.db) as conn:
+        dump = "\n".join(str(row) for row in conn.execute("SELECT * FROM signal_events"))
+    assert "secret sentence" not in dump
+
+
+def test_a_site_that_cant_be_reached_shows_and_two_in_a_row_are_counted(w):
+    add(w, name="Acme Labs")
+    w.site_errors[store.load("Acme Labs", w.db).url] = "could not connect (site down or no such domain)"
+    run(w)
+    assert store.site_checks(w.db)["Acme Labs"].down_streak == 1
+    watch.watch_leads(ICP, CFG, db=w.db, report=lambda msg: None, signals={}, today=TODAY + timedelta(days=7))
+    assert store.site_checks(w.db)["Acme Labs"].down_streak == 2
+
+
+def test_a_site_is_checked_weekly_not_every_run(w):
+    add(w, name="Acme Labs")
+    run(w)
+    first = store.site_checks(w.db)["Acme Labs"].checked_at
+    w.site_errors[store.load("Acme Labs", w.db).url] = "could not connect (site down or no such domain)"
+    watch.watch_leads(ICP, CFG, db=w.db, report=lambda msg: None, signals={}, today=TODAY + timedelta(days=6))
+    assert store.site_checks(w.db)["Acme Labs"].checked_at == first
+    assert store.site_checks(w.db)["Acme Labs"].down_streak == 0
+
+
+@pytest.mark.parametrize("error", ["blocked by robots.txt", "HTTP 403", "HTTP 429"])
+def test_a_site_that_refuses_us_is_not_down(w, error):
+    add(w, name="Acme Labs")
+    w.site_errors[store.load("Acme Labs", w.db).url] = error
+    run(w)
+    assert store.site_checks(w.db)["Acme Labs"].down_streak == 0
+
+
+def test_a_site_back_up_clears_the_streak(w):
+    add(w, name="Acme Labs")
+    url = store.load("Acme Labs", w.db).url
+    w.site_errors[url] = "HTTP 503"
+    run(w)
+    del w.site_errors[url]
+    watch.watch_leads(ICP, CFG, db=w.db, report=lambda msg: None, signals={}, today=TODAY + timedelta(days=7))
+    assert store.site_checks(w.db)["Acme Labs"].down_streak == 0
+
+
+def people_found(when: str) -> ContactSearch:
+    person = Contact(name="Priya Rao", title="Head of Sales", matches_buyer="yes", source="https://acme.example/team",
+                     fetched_at=when)
+    return ContactSearch(contact=person, chosen_by="buyer", people=[person], searched_at=when)
+
+
+def test_a_person_never_emailed_is_forgotten_after_the_set_days_and_the_score_stays(w):
+    add(w, name="Acme Labs")
+    store.save_contacts("Acme Labs", people_found("2026-01-01T00:00:00+00:00"), w.db)
+    store.save_email("Acme Labs", Email(step=0, subject="s", body="Hi Priya,", drafted_at="2026-01-01T00:00:00+00:00"), w.db)
+    run(w)
+    assert store.load_contacts("Acme Labs", w.db) is None and store.load_emails("Acme Labs", w.db) == []
+    assert store.load("Acme Labs", w.db).score.fit == 85
+    assert w.pages_forgotten == ["Acme Labs"]
+
+
+def test_a_recent_person_or_one_who_was_emailed_stays(w):
+    add(w, name="Acme Labs")
+    add(w, name="Other Co")
+    store.save_contacts("Acme Labs", people_found("2026-10-01T00:00:00+00:00"), w.db)
+    store.save_contacts("Other Co", people_found("2026-01-01T00:00:00+00:00"), w.db)
+    store.save_email("Other Co", Email(step=0, subject="s", body="b", status="sent",
+                                       drafted_at="2026-01-01T00:00:00+00:00"), w.db)
+    run(w)
+    assert store.load_contacts("Acme Labs", w.db) and store.load_contacts("Other Co", w.db)
+    assert w.pages_forgotten == []
+
+
+def test_zero_days_keeps_everyone(w):
+    add(w, name="Acme Labs")
+    store.save_contacts("Acme Labs", people_found("2026-01-01T00:00:00+00:00"), w.db)
+    watch.watch_leads(ICP, CFG.model_copy(update={"forget_after_days": 0}), db=w.db, report=lambda msg: None,
+                      signals={}, today=TODAY)
+    assert store.load_contacts("Acme Labs", w.db)

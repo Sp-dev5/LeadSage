@@ -53,7 +53,8 @@ class ItemsSeen(BaseModel):
 
 
 class NewsItem(BaseModel):
-    """A dated item from the company's own site, with where and when we read it."""
+    """A dated item, with where and when we read it. `outlet` names the news site that reported it;
+    empty means the company's own site."""
 
     headline: str
     date_text: str
@@ -61,6 +62,7 @@ class NewsItem(BaseModel):
     kind: str
     source: str
     fetched_at: str
+    outlet: str = ""
 
 
 class NewsSearch(BaseModel):

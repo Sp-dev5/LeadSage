@@ -6,7 +6,7 @@ Most lead tools return the same shape: a multi-agent loop, RAG, a 3-step cadence
 
 Built today:
 - Two timing signals, each with its source and date: open sales roles on a company's job board, and recent items (a launch, a partnership, a new hire) from its own news page.
-- Every email opens with one of those as its hook, and every sentence about the company must quote its own text. Drafts with no hook are flagged.
+- Every email opens with one of those as its hook, and every sentence about the company must quote its own text, a job post, or the news headline used as the hook. Drafts with no hook are flagged.
 - A person approves every email, then sends it with one click from their own mailbox or sends it themselves. Nothing is sent without that click.
 - Each email ends with an opt-out line and the sender's address; a do-not-contact list and a delete-lead button remove a company's data.
 

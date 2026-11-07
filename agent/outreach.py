@@ -32,6 +32,7 @@ from agent.contacts import Contact, ContactSearch, closest_match, find_contact, 
 from agent.fetch import Page, site_links, slug
 from agent.files import write_text_atomic
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
+from agent.press import saved_news
 from agent.llm import generate_writing
 from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, long_enough_quote, quote_in
 from agent.store import Citation, Email, StoredLead
@@ -76,6 +77,10 @@ class OutreachConfig(BaseModel):
                                             "countries require one in marketing email")
     opt_out_line: str = Field(min_length=1, description="the line at the end of every email that tells the reader "
                                                         "how to stop hearing from you")
+    notice_line: str = Field(default="", description="optional line under the signature of first emails saying "
+                                                     "where you found their name and how to have it removed")
+    forget_after_days: int = Field(default=180, ge=0, description="a person never emailed is removed this many days "
+                                                                  "after they were found; 0 keeps them")
     max_sends_per_day: int = Field(gt=0, description="most emails the app itself may send in a day, from your "
                                                      "mailbox; a cap so a mistake can't send hundreds")
     avoid_phrases: list[str] = Field(description="stock phrases the emails must not use; a draft with one is flagged")
@@ -208,7 +213,8 @@ def hook_for(lead: StoredLead, news: NewsItem | None = None) -> Hook:
     if titles:
         return Hook("open sales roles", f"they have open sales roles: {', '.join(titles[:3])}")
     if news:
-        return Hook("recent news", f"{news.date_text}, on their own site: {news.headline}")
+        where = f"reported by {news.outlet}" if news.outlet else "on their own site"
+        return Hook("recent news", f"{news.date_text}, {where}: {news.headline}")
     return Hook("", "")
 
 
@@ -233,7 +239,8 @@ def _prompt(lead: StoredLead, icp: ICP, contact: Contact | None, earlier: list[E
     text = (f"COMPANY DETAILS\n- Name: {c.name}\n- Industry: {c.industry}\n- About: {c.description}\n\n"
             f"OPEN ROLES\n{roles}\n\n")
     if news:
-        text += f"RECENT NEWS (from their own site)\n- {news.date_text}: {news.headline}\n\n"
+        where = f"reported by {news.outlet}" if news.outlet else "from their own site"
+        text += f"RECENT NEWS ({where})\n- {news.date_text}: {news.headline}\n\n"
     if hook := hook_for(lead, news).text:
         text += f"HOOK\n- {hook}. Open the first claim with this: it is the reason to write now.\n\n"
     facts = lead.score.facts
@@ -321,10 +328,24 @@ def _body(contact: Contact | None, citations: list[Citation], out: EmailOut) -> 
     return "\n\n".join(p for p in [greeting, personal, out.pitch.strip(), out.ask.strip()] if p)
 
 
-def _footer(cfg: OutreachConfig) -> str:
-    """The signature (name, company, address) and the opt-out line every email ends with."""
+def _footer(cfg: OutreachConfig, step: int = 0) -> str:
+    """The signature (name, company, address) and the opt-out line every email ends with, with the
+    notice line between them on a first email, when one is set."""
     signature = "\n".join(line for line in [cfg.sender_name, cfg.sender_company, cfg.sender_address] if line.strip())
-    return f"{signature}\n\n{cfg.opt_out_line}"
+    notice = [cfg.notice_line.strip()] if step == 0 and cfg.notice_line.strip() else []
+    return "\n\n".join([signature, *notice, cfg.opt_out_line])
+
+
+def what_we_hold(contact: Contact, emails: list[store.Email], replies: list[store.Reply]) -> list[str]:
+    """Every stored field about a person, with where it came from, in plain lines."""
+    where = "typed by the rep" if contact.matches_buyer == "typed" else f"from {contact.source}"
+    lines = [f"Name: {contact.name} ({where}, read {contact.fetched_at[:10]})",
+             f"Title: {contact.title or 'none'} ({where})",
+             f"Email address: {contact.email + ' (typed by the rep)' if contact.email else 'none'}"]
+    sent = [e.sent_at[:10] for e in emails if e.status == "sent"]
+    lines.append(f"Emails: {len(emails)} written, {len(sent)} sent" + (f", last on {max(sent)}" if sent else ""))
+    lines.append(f"Replies kept: {len(replies)} (sender, subject and the first lines of the text)")
+    return lines
 
 
 def _squash(text: str) -> str:
@@ -434,7 +455,7 @@ def draft_email(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, cont
             out, written_by, cloud_failed = again, again_by, again_failed
             citations, rejected = again_citations, again_rejected
     core = _body(contact, citations, out)
-    body = f"{core}\n\n{_footer(cfg)}"
+    body = f"{core}\n\n{_footer(cfg, step)}"
     ours = " ".join([_company_source(lead), *(e[0] for e in extra), contact.title if contact else "",
                      icp.buyer_persona, icp.pain_solved, icp.notes])
     loose = unsupported_specifics(f"{out.pitch.strip()} {out.ask.strip()}", ours, allowed)
@@ -578,8 +599,9 @@ def draft_step(lead: StoredLead, step: int, icp: ICP, cfg: OutreachConfig, db: P
     if lead.stage in store.STOPPED:
         raise ValueError(f"{lead.name}: sequence stopped ({lead.stage}), no new drafts")
     search = contact_for(lead, icp, cfg, db)
-    news = None if lead.company.sales_roles or step else best_item(news_for(lead, cfg, db).items)
-    earlier = [e for e in store.load_emails(lead.name, db) if e.step < step and e.status == "sent"]
+    news = None if lead.company.sales_roles or step else best_item(
+        news_for(lead, cfg, db).items + saved_news(lead.name, cfg.news_max_age_days, db))
+    earlier =[e for e in store.load_emails(lead.name, db) if e.step < step and e.status == "sent"]
     email = draft_email(lead, step, icp, cfg, search.contact, earlier, news=news, contact_how=search.chosen_by)
     store.save_email(lead.name, email, db)
     return email
@@ -594,6 +616,19 @@ def _cached_pages(lead_name: str, others: list[str], pages: Path) -> list[Path]:
     return [p for p in pages.glob("*.json")
             if (p.stem == base or p.stem.startswith(f"{base}-"))
             and not any(p.stem == r or p.stem.startswith(f"{r}-") for r in rivals)]
+
+
+def forget_people_pages(lead_name: str, db: Path = store.DB_PATH, pages: Path = PAGES) -> int:
+    """Delete the cached pages that can name people at a company: whole team, about and news pages
+    and the homepage HTML. The text the score was read from stays. Returns how many were removed."""
+    if not pages.exists():
+        return 0
+    others = [slug(other.name) for other in store.load_all(db) if other.name != lead_name]
+    found = [p for p in _cached_pages(lead_name, others, pages)
+             if p.stem.endswith("-full") or p.stem.endswith("-home-html")]
+    for path in found:
+        path.unlink(missing_ok=True)
+    return len(found)
 
 
 def forget_lead(lead: StoredLead, db: Path = store.DB_PATH, pages: Path = PAGES,

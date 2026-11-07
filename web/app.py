@@ -31,11 +31,13 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from agent import export, logos, mailer, store
 from agent.contacts import typed_contact
+from agent.fetch import MAX_CHARS
 from agent.files import write_text_atomic
 from agent.icp_assist import suggest, suggest_buyer
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
-                            save_outreach, saved_contact, saved_search, sending_problems, setup_problems)
-from agent.pipeline import lead_files, read_leads, score_all, signal_rows
+                            save_outreach, saved_contact, saved_search, sending_problems, setup_problems, what_we_hold)
+from agent.pipeline import PASTED, lead_files, read_leads, score_all, score_one, signal_rows
+from agent.press import saved_news
 from agent.readiness import QUEUES, group, hook_label, in_queue, todo
 from agent.score_lead import ALL_CRITERIA, FACT_VALUES, ICP, ICP_PATH, load_icp
 from agent.watch import watch_leads
@@ -276,6 +278,28 @@ def score_leads(request: Request, file: str = Form(...), skip_scored: str = Form
     return back(request, "/leads")
 
 
+@app.post("/leads/paste")
+def paste_text(request: Request, lead: str = Form(...), text: str = Form("")):
+    """Score a lead from text the rep copied in their own browser, for a site we can't read."""
+    back_to = "/leads?" + urlencode({"group": "All", "lead": lead})
+    pasted = text.strip()[:MAX_CHARS]
+    if not pasted:
+        return back(request, back_to, "Paste some text about the company first.", "error")
+    try:
+        current = store.load(lead, views.DB)
+    except KeyError:
+        return back(request, "/leads", "That lead is no longer in the store.", "error")
+    company = current.company.model_copy(update={"description": pasted})
+
+    def work(report):
+        report(f"Scoring {lead} from the pasted text")
+        score_one(load_icp(), company, current.url, PASTED, report, views.DB)
+        report("Done.")
+
+    jobs.start(f"Scoring {lead}", work)
+    return back(request, back_to)
+
+
 @app.post("/watch")
 def watch(request: Request):
     icp, cfg = load_icp(), load_outreach()
@@ -376,6 +400,9 @@ def _detail(name: str, icp: ICP, cfg: OutreachConfig, now: datetime) -> dict:
         "group": group(lead.score, icp.settings.qualify_at),
         "next": next_step(lead.stage, list(emails.values()), cfg, now).text,
         "news": store.load_news(name, views.DB), "first": emails.get(0), "hook_label": hook_label(emails.get(0)),
+        "press": saved_news(name, cfg.news_max_age_days, views.DB),
+        "hold": what_we_hold(search.contact, list(emails.values()), store.load_replies(name, views.DB))
+        if search and search.contact else [],
         "others": [p for p in search.people if p != search.contact] if search else [],
         "replies": store.load_replies(name, views.DB), "can_send": mailer.can_send(),
     }
@@ -548,7 +575,9 @@ SETTING_FIELDS = [
     ("size_tolerance", "Size still scores 3 this far outside the range (0.1 = 10%)", float, 0, 1, 0.05),
     ("unknown_score", "Score when unknown", int, 0, 5, 1),
     ("disagree_gap", "Models disagree at a fit gap of", int, 0, 100, 1),
-    ("min_quote_words", "A quote needs at least this many words (a whole job title also counts)", int, 1, None, 1),
+    ("min_quote_words", "A buyer, pain or email quote needs at least this many words (a whole job title also counts)",
+     int, 1, None, 1),
+    ("min_fact_quote_words", "A fact quote needs at least this many words", int, 1, None, 1),
 ]
 
 EVIDENCE_CHOICES = [

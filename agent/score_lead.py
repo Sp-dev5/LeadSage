@@ -141,7 +141,11 @@ class Settings(BaseModel):
     qualify_needs_evidence: Literal["buyer", "both", "off"] = Field(
         description="what a qualify needs a real quote for: buyer, both (buyer and pain) or off")
     min_quote_words: int = Field(
-        ge=1, description="a quote shorter than this many words fails the quote check (a whole job title passes)")
+        ge=1, description="a buyer, pain or email quote shorter than this many words fails the quote check "
+                          "(a whole job title passes)")
+    min_fact_quote_words: int = Field(
+        ge=1, description="a fact quote shorter than this many words fails the quote check; facts are often "
+                          "short and correct (\"Payments API\")")
 
     @model_validator(mode="after")
     def _consistent(self) -> Settings:
@@ -789,6 +793,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
     headcount = _parse_headcount(company.size)
     size_fail = _size_fail(icp, headcount)
     min_words = icp.settings.min_quote_words
+    fact_words = icp.settings.min_fact_quote_words
     used: list[str] = []
 
     def ask_facts(system: str) -> CompanyFacts:
@@ -801,15 +806,15 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
             used=used,
         )
 
-    facts_prompt = FACTS_PROMPT.replace("{min_words}", str(min_words))
+    facts_prompt = FACTS_PROMPT.replace("{min_words}", str(fact_words))
     raw_facts = ask_facts(facts_prompt)
-    unquoted = _unquoted(raw_facts, company, min_words)
+    unquoted = _unquoted(raw_facts, company, fact_words)
     if unquoted:
-        asked_again = ask_facts(facts_prompt + RETRY_NOTE.format(names=", ".join(unquoted), min_words=min_words))
-        raw_facts, fixed = _take_requoted(raw_facts, asked_again, unquoted, company, min_words)
+        asked_again = ask_facts(facts_prompt + RETRY_NOTE.format(names=", ".join(unquoted), min_words=fact_words))
+        raw_facts, fixed = _take_requoted(raw_facts, asked_again, unquoted, company, fact_words)
     else:
         fixed = []
-    facts, rejected = _check_facts(raw_facts, company, min_words)
+    facts, rejected = _check_facts(raw_facts, company, fact_words)
     rejected += [f"{name}: first quote failed the check, fixed on a second ask" for name in fixed]
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
     disqualified, review_flags = _apply_rules(icp, facts)

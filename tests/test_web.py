@@ -2,11 +2,12 @@
 
 import re
 import threading
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
 
-from agent import contacts, logos, outreach, store
+from agent import contacts, hooks, logos, outreach, store
 from agent.store import Citation, Email
 from tests.test_outreach import CFG, COMPANY, SCORE
 from web import app as web_app
@@ -612,3 +613,54 @@ def test_a_login_older_than_the_session_limit_is_refused(tmp_path):
     assert not store.login_alive("", 3600, db) and not store.login_alive("other", 3600, db)
     store.end_login("abc", db)
     assert not store.login_alive("abc", 3600, db)
+
+
+def run_jobs_now(monkeypatch):
+    monkeypatch.setattr(web_app.jobs, "start", lambda title, work: work(lambda line: None))
+
+
+def test_pasted_text_rescores_the_lead_and_is_labelled(client, monkeypatch):
+    seed()
+    run_jobs_now(monkeypatch)
+    seen = {}
+
+    def score_one(icp, company, url, text_source, report, db):
+        seen.update(description=company.description, source=text_source, roles=company.sales_roles)
+
+    monkeypatch.setattr(web_app, "score_one", score_one)
+    r = client.post("/leads/paste", data={"lead": "Acme", "text": "  " + "x" * 5000}, follow_redirects=True)
+    assert r.status_code == 200 and seen["source"] == "pasted by the rep" and len(seen["description"]) == 4000
+    assert seen["roles"] == COMPANY.sales_roles
+
+
+def test_empty_pasted_text_is_refused(client, monkeypatch):
+    seed()
+    monkeypatch.setattr(web_app, "score_one", lambda *a: pytest.fail("scored"))
+    r = client.post("/leads/paste", data={"lead": "Acme", "text": "   "}, follow_redirects=True)
+    assert "Paste some text" in r.text
+
+
+def test_a_lead_shows_the_paste_box_and_a_down_site(client):
+    seed()
+    assert "Add text about this company" in client.get("/leads?group=All&lead=Acme").text
+    store.record_site_check("Acme", "2026-11-01", True, "HTTP 503", views.DB)
+    once = client.get("/leads?group=All&lead=Acme").text
+    assert "Website down" in once and "you may want to mark" not in once
+    store.record_site_check("Acme", "2026-11-08", True, "HTTP 503", views.DB)
+    assert "you may want to mark this lead lost" in client.get("/leads?group=All&lead=Acme").text
+
+
+def test_outreach_lists_press_news_and_what_we_hold(client):
+    seed()
+    day = date.today().isoformat()
+    item = hooks.NewsItem(headline="Acme raises $5 Mn", date_text=day, date=day, kind="funding",
+                          source="https://entrackr.com/news/acme", outlet="Entrackr", fetched_at=day)
+    store.record_events("Acme", [store.SignalEvent(kind="press", key="k", detail=item.model_dump_json(),
+                                                   source=item.source, quote=item.headline, item_date=day)], views.DB)
+    person = contacts.Contact(name="Priya Rao", title="Head of Sales", matches_buyer="yes",
+                              source="https://acme.example/team", fetched_at="2026-10-24T00:00:00+00:00")
+    store.save_contacts("Acme", contacts.ContactSearch(contact=person, chosen_by="buyer", people=[person],
+                                                       searched_at="2026-10-24T00:00:00+00:00"), views.DB)
+    html = client.get("/outreach?lead=Acme").text
+    assert "Funding news reported by others (1)" in html and "Entrackr" in html
+    assert "What we hold about Priya Rao" in html and "Name and title from" in html
