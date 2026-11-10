@@ -139,7 +139,11 @@ def score_all(rows: list[dict], icp: ICP, signals: dict[str, dict], report: Call
             report(f"[{i}/{len(rows)}] {row['name']}: failed ({str(e)[:90]})")
             continue
         url = (row.get("url") or "").strip()
-        store.save(company, result, url=url, text_source=text_source, path=db)
+        try:
+            store.save(company, result, url=url, text_source=text_source, path=db)
+        except Exception as e:
+            report(f"[{i}/{len(rows)}] {company.name}: scored {result.verdict} {result.fit} but not saved ({str(e)[:90]})")
+            continue
         if url:
             fetch_logo(company.name, url)
         report(f"[{i}/{len(rows)}] {company.name}: {result.verdict} {result.fit}")
@@ -152,7 +156,10 @@ def score_all(rows: list[dict], icp: ICP, signals: dict[str, dict], report: Call
         with trace.run(company.name, "score", db, run_id=run_id):
             final = second_opinion(icp, company, result, report)
         if final is not result:
-            store.save(company, final, url=url, text_source=text_source, path=db)
+            try:
+                store.save(company, final, url=url, text_source=text_source, path=db)
+            except Exception as e:
+                report(f"{company.name}: second opinion not saved ({str(e)[:90]}); the first score stands")
 
 
 def main() -> None:

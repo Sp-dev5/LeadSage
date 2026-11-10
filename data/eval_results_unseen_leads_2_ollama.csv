@@ -1,0 +1,13 @@
+name,my_label,text_source,sales_roles,country,in_region,ollama_verdict,ollama_fit,ollama_grade,ollama_votes
+Pinecrest Payments,qualify,typed,0,India,yes,review,95,near,1/1
+Kite Analytics,review,typed,0,Japan,no,qualify,95,near,1/1
+Hexa Design Works,disqualify,typed,0,Australia,yes,disqualify,20,OK,1/1
+Corewave Systems,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Fernleaf Foods,disqualify,typed,0,New Zealand,yes,disqualify,20,OK,1/1
+Cloudbeam Telecom,qualify,typed,0,Malaysia,yes,qualify,95,OK,1/1
+Greenpath Foundation,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Zipdesk,review,typed,0,Indonesia,yes,review,80,OK,1/1
+Boltgrid Energy,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Atlas Recruit AI,qualify,typed,0,Singapore,yes,qualify,100,OK,1/1
+Lumos Learning,disqualify,typed,0,India,yes,review,40,near,1/1
+Orbital Ledger,review,typed,0,Australia,yes,qualify,75,near,1/1

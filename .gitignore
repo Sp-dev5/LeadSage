@@ -10,6 +10,10 @@ venv/
 
 # Generated evaluation output
 data/eval_results*.csv
+!data/eval_results_labelled_leads_ollama.csv
+!data/eval_results_unseen_leads_ollama.csv
+!data/eval_results_unseen_leads_2_ollama.csv
+!data/eval_results_real_leads_fetched_jobs_ollama.csv
 
 # Fetched web pages (cache for --text fetched)
 data/pages/
