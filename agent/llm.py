@@ -33,10 +33,15 @@ import requests
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 
+from agent import trace
+
 load_dotenv()
 
 OLLAMA_DEFAULT_MODEL = "qwen3.5:9b"
 OLLAMA_DEFAULT_SECOND_MODEL = "qwen3.5:4b"
+OLLAMA_DEFAULT_EMBED_MODEL = "nomic-embed-text"
+EMBED_BATCH = 16
+EMBED_PREFIX = {"document": "search_document: ", "query": "search_query: "}
 OLLAMA_TIMEOUT = 300
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -100,25 +105,33 @@ FALLBACK_ERRORS = (ollama.ResponseError, httpx.TimeoutException, ValidationError
 
 def _ask_ollama(system: str, user_prompt: str, schema: type[T], model: str, temperature: float,
                 context: int | None = None) -> T:
+    """One call to Ollama. Inside a trace run, the full prompt and the raw answer (or the error) are written."""
     host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
     options = {"temperature": temperature} | ({"num_ctx": context} if context else {})
+    started, raw, error = time.monotonic(), "", ""
     try:
-        response = _ollama_client(host).chat(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_prompt},
-            ],
-            format=schema.model_json_schema(),
-            options=options,
-            think=False,
-        )
-    except ConnectionError as e:
-        raise OllamaUnreachable(f"Could not reach Ollama at {host}. Is `ollama serve` running? ({e})") from e
-    raw = (response.message.content or "").strip()
-    if not raw:
-        raise RuntimeError("Model returned no usable output.")
-    return schema.model_validate_json(raw)
+        try:
+            response = _ollama_client(host).chat(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                format=schema.model_json_schema(),
+                options=options,
+                think=False,
+            )
+        except ConnectionError as e:
+            raise OllamaUnreachable(f"Could not reach Ollama at {host}. Is `ollama serve` running? ({e})") from e
+        raw = (response.message.content or "").strip()
+        if not raw:
+            raise RuntimeError("Model returned no usable output.")
+        return schema.model_validate_json(raw)
+    except Exception as e:
+        error = f"{type(e).__name__}: {str(e)[:300]}"
+        raise
+    finally:
+        trace.model_step(schema.__name__, model, system, user_prompt, raw, error, started)
 
 
 def generate_structured(system: str, user_prompt: str, schema: type[T], model: str | None = None,
@@ -152,6 +165,28 @@ def generate_structured(system: str, user_prompt: str, schema: type[T], model: s
     if used is not None:
         used.append(answered)
     return result
+
+
+def embed_model_name() -> str:
+    return os.environ.get("OLLAMA_EMBED_MODEL", OLLAMA_DEFAULT_EMBED_MODEL)
+
+
+def embed(texts: list[str], kind: str = "document") -> list[list[float]]:
+    """One vector per text from the local embedding model, for finding passages in the seller's own
+    documents. `kind` is "document" for passages and "query" for what is searched for: the model was
+    trained with a different prefix for each. Nothing leaves the machine."""
+    host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+    vectors: list[list[float]] = []
+    for i in range(0, len(texts), EMBED_BATCH):
+        batch = [EMBED_PREFIX[kind] + t for t in texts[i:i + EMBED_BATCH]]
+        try:
+            response = _ollama_client(host).embed(model=embed_model_name(), input=batch)
+        except ConnectionError as e:
+            raise OllamaUnreachable(f"Could not reach Ollama at {host}. Is `ollama serve` running? ({e})") from e
+        vectors += [list(v) for v in response.embeddings]
+    if len(vectors) != len(texts):
+        raise RuntimeError(f"asked for {len(texts)} vectors, got {len(vectors)}")
+    return vectors
 
 
 def cloud_model_id() -> str:
@@ -189,9 +224,9 @@ def _retry_after(resp: requests.Response) -> float:
         return 10.0
 
 
-def _groq(system: str, user_prompt: str, schema: type[T]) -> T:
-    """Ask Groq for schema-valid JSON. A rate limit (429) is waited out if the wait is short;
-    any other failure raises."""
+def _groq_raw(system: str, user_prompt: str, schema: type[T]) -> str:
+    """Ask Groq for schema-valid JSON and return its raw text. A rate limit (429) is waited out if
+    the wait is short; any other failure raises."""
     model = os.environ.get("GROQ_MODEL", GROQ_DEFAULT_MODEL)
     body = {
         "model": model,
@@ -216,15 +251,34 @@ def _groq(system: str, user_prompt: str, schema: type[T]) -> T:
     raw = (resp.json()["choices"][0]["message"].get("content") or "").strip()
     if not raw:
         raise RuntimeError("no output")
-    return schema.model_validate_json(raw)
+    return raw
 
 
-def generate_writing(system: str, user_prompt: str, schema: type[T]) -> Written:
+def _groq(system: str, user_prompt: str, schema: type[T]) -> T:
+    """Groq's answer as a validated instance. Inside a trace run, the prompt and the answer (or the
+    error, with the key masked) are written."""
+    started, raw, error = time.monotonic(), "", ""
+    try:
+        raw = _groq_raw(system, user_prompt, schema)
+        return schema.model_validate_json(raw)
+    except Exception as e:
+        error = _masked(f"{type(e).__name__}: {str(e)[:300]}")
+        raise
+    finally:
+        trace.model_step(schema.__name__, cloud_model_id(), system, user_prompt, raw, error, started)
+
+
+def _masked(text: str) -> str:
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    return text.replace(key, "***") if key else text
+
+
+def generate_writing(system: str, user_prompt: str, schema: type[T], cloud: bool = True) -> Written:
     """Structured output for text a person will read: the Groq model if a key is set, else the
     local main model. If Groq fails for any reason, the local model writes it instead and the
-    reason comes back so the caller can say so."""
+    reason comes back so the caller can say so. `cloud=False` keeps the prompt on this machine."""
     reason = ""
-    if cloud_enabled():
+    if cloud and cloud_enabled():
         try:
             return Written(_groq(system, user_prompt, schema), cloud_model_id(), "")
         except Exception as e:

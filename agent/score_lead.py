@@ -25,6 +25,7 @@ import geonamescache
 import pycountry
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from agent import trace
 from agent.llm import EXTRACT_TEMPERATURE, JUDGE_TEMPERATURE, generate_structured, model_name, second_model_name
 
 ALL_CRITERIA = ["industry match", "company size match", "buyer persona fit", "pain match"]
@@ -816,8 +817,10 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
         fixed = []
     facts, rejected = _check_facts(raw_facts, company, fact_words)
     rejected += [f"{name}: first quote failed the check, fixed on a second ask" for name in fixed]
+    trace.step("Check the fact quotes", {"kept": facts, "rejected": rejected})
     code_criteria = [_industry_criterion(icp, facts), _size_criterion(icp, headcount)]
     disqualified, review_flags = _apply_rules(icp, facts)
+    trace.step("Apply the rules", {"disqualified": disqualified, "review": review_flags, "size": size_fail or "ok"})
     unknown = icp.settings.unknown_score
     proven: set[str] = set()
 
@@ -834,6 +837,8 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
         )
         rated, rejected_ratings, proven = _check_ratings(q, company, unknown, min_words)
         rejected += rejected_ratings
+        trace.step("Check the rating quotes", {"kept": [c.model_dump() for c in rated],
+                                               "rejected": rejected_ratings})
         summary = q.summary
 
     asked = model or model_name()
@@ -848,6 +853,8 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
         review_flags = review_flags + [EVIDENCE_FLAG.format(missing=" or ".join(missing))]
     if review_flags and verdict == "qualify":
         verdict = "review"
+    trace.step("Fit and verdict", {"fit": fit, "verdict": verdict, "criteria": {c.criterion: c.score for c in criteria},
+                                   "flags": review_flags}, model=model or model_name())
     return LeadScore(
         fit=fit,
         verdict=verdict,

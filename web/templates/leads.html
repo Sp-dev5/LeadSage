@@ -164,6 +164,25 @@
           {% endif %}
         </div>
       </div>
+      <div class="pane trace" id="trace">
+        <header><div><h2>What the agent did</h2><h3>Every step on this lead, with the full prompt and answer. Open a step to read it.</h3></div></header>
+        {% if not runs %}<p class="muted">Nothing recorded yet. Steps are kept from the next time this lead is scored, drafted or watched.</p>{% endif %}
+        {% for r in runs %}
+        <details class="run" {{ 'open' if loop.first }}>
+          <summary><b>{{ r.label }}</b> <span class="faint mono small">{{ r.started | day }} · {{ r.steps | length }} steps{% if r.failed %} · {{ r.failed }} failed{% endif %}{% if loop.first %} · latest{% endif %}</span></summary>
+          <ol class="steps">
+            {% for st in r.steps %}
+            <li><details><summary>{% if not st.ok %}<span class="tag cut">Failed</span> {% endif %}{{ st.step }}{% if st.model %} <span class="faint mono small">{{ st.model }}</span>{% endif %}{% if st.ms %} <span class="faint mono small">{{ '%.1f' % (st.ms / 1000) }} s</span>{% endif %}</summary><div>
+              {% if st.error %}<p class="small"><b>Error:</b> {{ st.error }}</p>{% endif %}
+              {% if st.input %}<p class="faint small">In</p><pre class="tr">{{ st.input }}</pre>{% endif %}
+              {% if st.output %}<p class="faint small">Out</p><pre class="tr">{{ st.output }}</pre>{% endif %}
+            </div></details></li>
+            {% endfor %}
+          </ol>
+        </details>
+        {% endfor %}
+        {% if runs %}<p class="annot">Only the last {{ keep }} runs of each kind are kept. Forgetting a person or deleting the lead deletes these too.</p>{% endif %}
+      </div>
     </section>
     {% else %}
     <p class="note top-rule">Pick a company to see why it scored that way.</p>

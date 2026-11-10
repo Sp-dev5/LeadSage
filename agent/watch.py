@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from agent import mailer, press, store
+from agent import mailer, press, store, trace
 from agent.fetch import UNREACHABLE, fetch_homepage
 from agent.hooks import HOOK_KINDS, NewsItem
 from agent.outreach import OutreachConfig, forget_people_pages, load_outreach, news_for
@@ -98,6 +98,7 @@ def record(lead: str, kind: str, events: list[SignalEvent], can_fire: Callable[[
 def watch_hiring(lead: StoredLead, row: dict, icp: ICP, result: WatchResult, report: Callable[[str], None],
                  db: Path) -> None:
     hiring = hiring_for(row, icp, refetch=True)
+    trace.step("Read the job board", {"sales roles": [r.title for r in hiring.roles]}, ok=hiring.ok, error=hiring.error)
     if not hiring.ok:
         result.failed.append(f"{lead.name}: job board not read ({hiring.error})")
         return
@@ -169,6 +170,8 @@ def watch_site(lead: StoredLead, today: date, report: Callable[[str], None], db:
     page = fetch_homepage(lead.url)
     down = not page.ok and page.error.startswith(UNREACHABLE)
     check = store.record_site_check(lead.name, today.isoformat(), down, page.error, db)
+    trace.step("Check the website", {"down": down, "down in a row": check.down_streak}, input=lead.url,
+               ok=page.ok, error=page.error)
     if down:
         report(f"  website down ({check.down_streak} in a row): {page.error}")
 
@@ -179,6 +182,31 @@ def leads_to_watch(db: Path, names: set[str] | None = None) -> list[StoredLead]:
     return [lead for lead in store.load_all(db)
             if lead.stage not in store.STOPPED and lead.name not in blocked
             and (not names or lead.name.lower() in names)]
+
+
+def _watch_one(lead: StoredLead, icp: ICP, cfg: OutreachConfig, signals: dict[str, dict],
+               press_items: list[NewsItem] | None, hiring_only: bool, today: date, result: WatchResult,
+               report: Callable[[str], None], db: Path) -> None:
+    if row := signals.get(lead.name.lower()):
+        try:
+            watch_hiring(lead, row, icp, result, report, db)
+        except Exception as e:
+            result.failed.append(f"{lead.name}: hiring check failed ({str(e)[:90]})")
+    if not hiring_only and lead.url and lead.score.verdict in cfg.draft_verdicts:
+        try:
+            watch_news(lead, cfg, today, result, db)
+        except Exception as e:
+            result.failed.append(f"{lead.name}: news check failed ({str(e)[:90]})")
+    if press_items is not None:
+        try:
+            watch_press(lead, press_items, cfg, today, result, db)
+        except Exception as e:
+            result.failed.append(f"{lead.name}: funding news check failed ({str(e)[:90]})")
+    if not hiring_only and lead.url:
+        try:
+            watch_site(lead, today, report, db)
+        except Exception as e:
+            result.failed.append(f"{lead.name}: website check failed ({str(e)[:90]})")
 
 
 def watch_leads(icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH, report: Callable[[str], None] = print,
@@ -195,26 +223,10 @@ def watch_leads(icp: ICP, cfg: OutreachConfig, db: Path = store.DB_PATH, report:
     for i, lead in enumerate(leads, 1):
         report(f"[{i}/{len(leads)}] {lead.name}")
         result.watched += 1
-        if row := signals.get(lead.name.lower()):
-            try:
-                watch_hiring(lead, row, icp, result, report, db)
-            except Exception as e:
-                result.failed.append(f"{lead.name}: hiring check failed ({str(e)[:90]})")
-        if not hiring_only and lead.url and lead.score.verdict in cfg.draft_verdicts:
-            try:
-                watch_news(lead, cfg, today, result, db)
-            except Exception as e:
-                result.failed.append(f"{lead.name}: news check failed ({str(e)[:90]})")
-        if press_items is not None:
-            try:
-                watch_press(lead, press_items, cfg, today, result, db)
-            except Exception as e:
-                result.failed.append(f"{lead.name}: funding news check failed ({str(e)[:90]})")
-        if not hiring_only and lead.url:
-            try:
-                watch_site(lead, today, report, db)
-            except Exception as e:
-                result.failed.append(f"{lead.name}: website check failed ({str(e)[:90]})")
+        with trace.run(lead.name, "watch", db):
+            _watch_one(lead, icp, cfg, signals, press_items, hiring_only, today, result, report, db)
+            trace.step("Watch result", {"fired": [e.quote for name, e in result.fired if name == lead.name],
+                                        "failed": [f for f in result.failed if f.startswith(f"{lead.name}:")]})
     if not hiring_only and names is None and cfg.forget_after_days:
         for name in store.forget_stale_contacts(cfg.forget_after_days, today, db):
             forget_people_pages(name, db)

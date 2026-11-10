@@ -949,4 +949,5 @@ def test_what_we_hold_lists_every_field_with_its_source():
     lines = outreach.what_we_hold(person, [sent], [])
     assert lines[0] == "Name: Priya Rao (from https://acme.example/team, read 2026-10-24)"
     assert "Email address: priya@acme.example (typed by the rep)" in lines
-    assert "Emails: 1 written, 1 sent, last on 2026-10-25" in lines and lines[-1].startswith("Replies kept: 0")
+    assert "Emails: 1 written, 1 sent, last on 2026-10-25" in lines and lines[-2].startswith("Replies kept: 0")
+    assert lines[-1].startswith("Agent trace: 0 steps in 0 runs")

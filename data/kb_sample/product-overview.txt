@@ -1,0 +1,11 @@
+Fernway: product overview
+
+Fernway is a research assistant for outbound sales teams. Before a rep writes to a company, Fernway reads the company's own website, its job board and its recent news, checks how well it fits the ideal customer profile, and drafts a first email that only says things the rep can check against a source.
+
+Who buys it. Our buyer is the Head of Sales or VP of Sales at a B2B software company with 50 to 500 employees and an outbound team of at least three account executives or sales development reps. Revenue operations leads often run the trial.
+
+The problem we solve. Reps at our customers spent two to three hours a day reading websites and writing first emails by hand. Most of that research never reached the email, and good moments to write, such as a new sales hire or a funding round, were noticed weeks late.
+
+How it is priced. Fernway is priced per seat per month, billed yearly. A team of five reps is the smallest plan. There is no setup fee.
+
+What it does not do. Fernway does not send email on its own. Every draft is approved by a rep and sent from the rep's own mailbox.
