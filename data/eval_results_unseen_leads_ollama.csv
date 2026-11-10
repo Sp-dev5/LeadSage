@@ -1,0 +1,16 @@
+name,my_label,text_source,sales_roles,country,in_region,ollama_verdict,ollama_fit,ollama_grade,ollama_votes
+Harbor Metrics,qualify,typed,0,India,yes,qualify,95,OK,1/1
+Crumbwell Bakeries,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Lumen Flow,review,typed,0,United States,no,qualify,85,near,1/1
+Quanta Labs,review,typed,0,Singapore,yes,review,50,OK,1/1
+Breeze Inbox,review,typed,0,Australia,yes,review,60,OK,1/1
+Tally Street,qualify,typed,0,India,yes,qualify,85,OK,1/1
+PlayNest,disqualify,typed,0,Indonesia,yes,disqualify,20,OK,1/1
+ProspectIQ,disqualify,typed,0,India,yes,review,100,near,1/1
+Bazaario,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Meridian Consulting,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Stackforge,qualify,typed,0,India,yes,review,65,near,1/1
+Nimbus Two,disqualify,typed,0,Philippines,yes,disqualify,20,OK,1/1
+GlobalEdge ERP,review,typed,0,Australia,yes,qualify,75,near,1/1
+Vexel,review,typed,0,Viet Nam,yes,review,60,OK,1/1
+CivicStack,review,typed,0,New Zealand,yes,review,85,OK,1/1

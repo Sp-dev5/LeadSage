@@ -7,6 +7,7 @@ Where the text in these files comes from.
   - Duolingo, Infosys and Tata Consultancy Services: the opening paragraph of their Wikipedia articles ([Duolingo](https://en.wikipedia.org/wiki/Duolingo), [Infosys](https://en.wikipedia.org/wiki/Infosys), [Tata Consultancy Services](https://en.wikipedia.org/wiki/Tata_Consultancy_Services)). Wikipedia text is licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); these excerpts keep that license.
   - Vymo and Sprinto: our own short summary of web search results about them.
 - `labelled_leads.csv`, `unseen_leads.csv`, `unseen_leads_2.csv`: made-up companies written for testing. No real company or person is described.
+- `demo_leads.csv`: three made-up companies on `.example` domains for the demo in the README. Their websites do not exist, so they are scored from the description.
 - `outreach.json`: the example emails are written for a made-up company.
 - `kb_sample/`: documents for a made-up seller, Fernway, and its made-up customers (Payvorne, Freightmoor, Clinivale and the rest). No real company or person is described. They show how the knowledge base works; they prove nothing about real case studies. `partner-notes.md` carries a planted instruction on purpose, to test that it is kept out. Your own documents go in `kb/`, which is git-ignored.
 - Websites the app reads are saved in `data/pages/` and the lead store in `data/leadsage.db`. Both are git-ignored and never committed. The app deletes a lead's rows and saved pages when you delete the lead.

@@ -1,0 +1,11 @@
+name,my_label,text_source,sales_roles,country,in_region,ollama_verdict,ollama_fit,ollama_grade,ollama_votes
+Rocketlane,qualify,fetched,11,United States,no,qualify,100,OK,1/1
+Fyle,review,fetched,0,United States,no,review,70,OK,1/1
+Zluri,qualify,fetched,0,United States,no,review,90,near,1/1
+Atlan,review,fetched,3,United States,no,qualify,75,near,1/1
+Locus,qualify,fetched,0,United States,no,qualify,85,OK,1/1
+Exotel,disqualify,fetched,3,India,yes,review,65,near,1/1
+Tookitaki,qualify,fetched,0,Singapore,yes,review,95,near,1/1
+Deputy,qualify,fetched,1,Australia,yes,qualify,75,OK,1/1
+Dovetail,qualify,fetched,2,Australia,yes,qualify,85,OK,1/1
+Tracksuit,review,typed (fetch failed),4,New Zealand,yes,qualify,85,near,1/1

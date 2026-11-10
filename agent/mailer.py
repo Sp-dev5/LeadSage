@@ -44,6 +44,7 @@ OPT_OUT = re.compile(r"\b(unsubscribe|remove me|opt[ -]?out|take me off|stop ema
                      r"do not (email|contact)|don'?t (email|contact)|not interested|no thanks)\b", re.I)
 
 SEND_LOCK = threading.Lock()
+REFUSED = (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError)
 
 
 class MailSettings(NamedTuple):
@@ -123,6 +124,8 @@ def send(lead: store.StoredLead, step: int, cfg: OutreachConfig, db: Path = stor
         raise SendError("Sending is not set up: add SMTP_HOST, SMTP_USER and SMTP_PASSWORD to .env.")
     with SEND_LOCK:
         email = store.check_sendable(lead.name, step, db)
+        if email.message_id:
+            raise SendError(store.MAYBE_SENT.format(lead=lead.name, n=step + 1))
         if lead.stage in store.STOPPED:
             raise SendError(f"{lead.name}: the sequence is stopped ({lead.stage}).")
         if problems := sending_problems(email.body, cfg):
@@ -135,15 +138,23 @@ def send(lead: store.StoredLead, step: int, cfg: OutreachConfig, db: Path = stor
         earlier = [e.message_id for e in store.load_emails(lead.name, db)
                    if e.step < step and e.status == "sent" and e.message_id]
         msg = build_message(email, contact, cfg, s.user, earlier)
-        conn = _smtp(s)
+        store.start_send(lead.name, step, msg["Message-ID"], db)
+        handed_over = False
         try:
-            conn.login(s.user, s.password)
-            conn.send_message(msg)
-        finally:
+            conn = _smtp(s)
             try:
-                conn.quit()
-            except smtplib.SMTPException:
-                pass
+                conn.login(s.user, s.password)
+                handed_over = True
+                conn.send_message(msg)
+            finally:
+                try:
+                    conn.quit()
+                except (smtplib.SMTPException, OSError):
+                    pass
+        except Exception as e:
+            if not handed_over or isinstance(e, REFUSED):
+                store.cancel_send(lead.name, step, msg["Message-ID"], db)
+            raise
         store.mark_sent(lead.name, step, db, message_id=msg["Message-ID"])
         return contact.email
 

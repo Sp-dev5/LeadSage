@@ -538,7 +538,7 @@ def edit_email(lead: str, step: int, subject: str, body: str, path: Path = DB_PA
         if old is None or old.status in ("sent", "stopped"):
             raise ValueError(f"{lead}: email {step + 1} can't be edited")
         _put_email(conn, lead, old.model_copy(update={"subject": subject, "body": body, "edited": True,
-                                                      "status": "draft", "approved_at": ""}))
+                                                      "status": "draft", "approved_at": "", "message_id": ""}))
 
 
 def approve_email(lead: str, step: int, path: Path = DB_PATH) -> None:
@@ -568,12 +568,38 @@ def check_sendable(lead: str, step: int, path: Path = DB_PATH) -> Email:
         return _sendable(conn, lead, step)
 
 
+MAYBE_SENT = ("{lead}: email {n} may already have gone out: the app stopped before it could note the send. "
+              "Check your Sent folder. If it is there, mark it sent; if not, edit it or write it again, then approve it.")
+
+
+def start_send(lead: str, step: int, message_id: str, path: Path = DB_PATH) -> None:
+    """Note the Message-ID an approved email is about to go out under, before the mail server is
+    contacted. If the app stops after the server takes it and before mark_sent, the id stays, and
+    the email is not sent again until the rep has checked their Sent folder."""
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        old = _sendable(conn, lead, step)
+        if old.message_id:
+            raise ValueError(MAYBE_SENT.format(lead=lead, n=step + 1))
+        _put_email(conn, lead, old.model_copy(update={"message_id": message_id}))
+
+
+def cancel_send(lead: str, step: int, message_id: str, path: Path = DB_PATH) -> None:
+    """The mail server refused the email, so it did not go out: drop the id so it can be sent again."""
+    with closing(_connect(path)) as conn, conn:
+        old = _email(conn, lead, step)
+        if old is not None and old.status == "approved" and old.message_id == message_id:
+            _put_email(conn, lead, old.model_copy(update={"message_id": ""}))
+
+
 def mark_sent(lead: str, step: int, path: Path = DB_PATH, message_id: str = "") -> None:
     """The email went out: sent by the rep from their own mailbox, or by the app (with the
-    `message_id` it was sent under). Only an approved email can be sent."""
+    `message_id` it was sent under). Only an approved email can be sent. A rep marking it sent
+    after an interrupted send keeps the id the app sent it under, so follow-ups stay in its thread."""
     with closing(_connect(path)) as conn, conn:
         old = _sendable(conn, lead, step)
-        _put_email(conn, lead, old.model_copy(update={"status": "sent", "sent_at": now(), "message_id": message_id}))
+        _put_email(conn, lead, old.model_copy(update={"status": "sent", "sent_at": now(),
+                                                      "message_id": message_id or old.message_id}))
         if step == 0:
             _advance(conn, lead, "contacted")
     trace.on_email(lead, f"Sent email {step + 1}", {"subject": old.subject,

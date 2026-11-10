@@ -1,0 +1,21 @@
+name,my_label,text_source,sales_roles,country,in_region,ollama_verdict,ollama_fit,ollama_grade,ollama_votes
+Northwind Analytics,qualify,typed,0,India,yes,qualify,85,OK,1/1
+Example Bakery,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Example Cloud Co,qualify,typed,0,Singapore,yes,qualify,85,OK,1/1
+Cloudnest Billing,qualify,typed,0,India,yes,qualify,95,OK,1/1
+Kirana Connect,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Orbit Logistics Software,review,typed,0,Singapore,yes,review,65,OK,1/1
+PixelForge Studio,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Lattice Health,review,typed,0,India,yes,review,55,OK,1/1
+Zenith ERP,qualify,typed,0,Indonesia,yes,qualify,80,OK,1/1
+Brightpath Tutoring,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Fintrac,review,typed,0,India,yes,qualify,85,near,1/1
+Mapleleaf Software,disqualify,typed,0,Canada,no,qualify,95,MISS,1/1
+DataHarbor,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Tandem HR,review,typed,0,Australia,yes,qualify,85,near,1/1
+ShopLoop,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+SignalWorks,disqualify,typed,0,India,yes,review,85,near,1/1
+Veritas Compliance Tech,qualify,typed,0,Malaysia,yes,qualify,85,OK,1/1
+Quickserve Kitchens,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+Amber IT Services,disqualify,typed,0,India,yes,disqualify,20,OK,1/1
+NovaStack,review,typed,0,Singapore,yes,review,80,OK,1/1

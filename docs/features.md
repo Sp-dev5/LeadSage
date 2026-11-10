@@ -59,6 +59,7 @@ python -m agent.logos             # fetch company logos for stored leads
 python -m http.server 8600 --directory site                 # the website, at http://127.0.0.1:8600/
 python -m agent.score_lead        # score a sample company
 python -m agent.evaluate          # grade against the labelled leads
+python -m agent.benchmark         # precision, recall and false positives from the saved results
 python -m agent.evaluate --file real_leads.csv --text fetched   # score real websites
 python -m agent.fetch https://example.com                       # read one page
 python -m agent.fetch_careers                                   # probe careers pages
