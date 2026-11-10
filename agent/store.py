@@ -536,7 +536,7 @@ def edit_email(lead: str, step: int, subject: str, body: str, path: Path = DB_PA
     with closing(_connect(path)) as conn, conn:
         old = _email(conn, lead, step)
         if old is None or old.status in ("sent", "stopped"):
-            raise ValueError(f"{lead}: email {step} can't be edited")
+            raise ValueError(f"{lead}: email {step + 1} can't be edited")
         _put_email(conn, lead, old.model_copy(update={"subject": subject, "body": body, "edited": True,
                                                       "status": "draft", "approved_at": ""}))
 
@@ -545,7 +545,7 @@ def approve_email(lead: str, step: int, path: Path = DB_PATH) -> None:
     with closing(_connect(path)) as conn, conn:
         old = _email(conn, lead, step)
         if old is None or old.status != "draft":
-            raise ValueError(f"{lead}: email {step} is not a draft")
+            raise ValueError(f"{lead}: email {step + 1} is not a draft")
         _put_email(conn, lead, old.model_copy(update={"status": "approved", "approved_at": now()}))
         if step == 0:
             _advance(conn, lead, "approved")
@@ -555,9 +555,9 @@ def approve_email(lead: str, step: int, path: Path = DB_PATH) -> None:
 def _sendable(conn: sqlite3.Connection, lead: str, step: int) -> Email:
     old = _email(conn, lead, step)
     if old is None or old.status != "approved":
-        raise ValueError(f"{lead}: email {step} is not approved")
+        raise ValueError(f"{lead}: email {step + 1} is not approved")
     if step > 0 and not any(e.step == step - 1 and e.status == "sent" for e in _emails(conn, lead)):
-        raise ValueError(f"{lead}: email {step - 1} has not been sent")
+        raise ValueError(f"{lead}: email {step} has not been sent")
     return old
 
 
