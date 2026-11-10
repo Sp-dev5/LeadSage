@@ -224,7 +224,7 @@ select option { background: var(--page); }
 .job { border-bottom: 2px solid var(--rule); padding: 16px 30px; }
 .job header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 10px; }
 .job pre { margin: 0; max-height: 220px; overflow: auto; font: 400 12.5px/1.6 var(--mono); color: var(--soft); background: rgba(0, 0, 0, .3); border: 1px solid var(--rule-soft); padding: 10px 12px; white-space: pre-wrap; }
-.trace .steps { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 2px; }
+.trace .steps { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 2px; border: 0; font: 400 14px/1.5 var(--sans); text-transform: none; letter-spacing: 0; }
 .trace .steps details { margin-top: 0; border-top: 0; }
 .trace .steps summary { text-transform: none; letter-spacing: 0; font: 500 14px/1.5 var(--sans); color: var(--ink); padding: 6px 0 2px; }
 .trace pre.tr { margin: 4px 0 12px; max-height: 360px; overflow: auto; font: 400 12.5px/1.6 var(--mono); color: var(--soft); background: rgba(0, 0, 0, .3); border: 1px solid var(--rule-soft); padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }

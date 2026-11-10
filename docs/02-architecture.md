@@ -1,6 +1,6 @@
 # LeadSage: Architecture & Technical Plan
 
-> **Status: this is the original plan, not what is built.** Today the app is Streamlit with a local SQLite store, local Ollama models for scoring and contact finding, and an optional free Groq model for email drafting. There is no Next.js, FastAPI, LangGraph, Postgres, Claude, HubSpot, discovery API or email sending. See the README for what exists. The loop below is still the direction.
+> **Status: this is the original plan, not what is built.** Today the app is a FastAPI web app with a local SQLite store, local Ollama models for scoring and contact finding, and an optional free Groq model for email drafting. There is no Next.js, LangGraph, Postgres or live CRM sync; leads move to HubSpot by import file. See the README for what exists. The loop below is still the direction.
 
 ## 1. The one loop the product is built around
 
