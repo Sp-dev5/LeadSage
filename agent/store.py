@@ -25,6 +25,8 @@ from agent.contacts import ContactSearch
 from agent.fetch import now
 from agent.hooks import NewsSearch
 from agent.score_lead import Company, LeadScore
+from agent import trace
+from agent.trace import Step
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "leadsage.db"
 SITE_DOWN_CHECKS = 2
@@ -95,7 +97,22 @@ CREATE TABLE IF NOT EXISTS site_checks (
 CREATE TABLE IF NOT EXISTS logins (
     id TEXT PRIMARY KEY,
     started TEXT NOT NULL
-);"""
+);
+CREATE TABLE IF NOT EXISTS trace (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    lead TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    step TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input TEXT NOT NULL,
+    output TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    error TEXT NOT NULL,
+    started TEXT NOT NULL,
+    ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trace_lead ON trace (lead, kind, run_id);"""
 
 
 class StoredLead(BaseModel):
@@ -128,6 +145,7 @@ class Citation(BaseModel):
     quote: str
     source: str
     fetched_at: str
+    passage: str = ""
 
 
 class Email(BaseModel):
@@ -139,6 +157,7 @@ class Email(BaseModel):
     hook: str = ""
     hook_kind: str = ""
     citations: list[Citation] = []
+    proof: list[Citation] = []
     rejected: list[str] = []
     flags: list[str] = []
     status: Literal["draft", "approved", "sent", "stopped"] = "draft"
@@ -300,6 +319,7 @@ def delete_lead(lead: str, path: Path = DB_PATH) -> None:
     signals. The do-not-contact list is kept, so a company that asked to be left alone stays left alone."""
     with closing(_connect(path)) as conn, conn:
         conn.execute("DELETE FROM replies WHERE lead = ?", (lead,))
+        conn.execute("DELETE FROM trace WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM signal_events WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM watched WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM site_checks WHERE lead = ?", (lead,))
@@ -311,10 +331,12 @@ def delete_lead(lead: str, path: Path = DB_PATH) -> None:
 
 def forget_person(lead: str, name: str, path: Path = DB_PATH) -> None:
     """Remove a person who asked: them from the saved search, every email to the company (each
-    carries their name) and the sender, subject and text of its replies. The company's score stays."""
+    carries their name), the sender, subject and text of its replies, and the company's trace (its
+    prompts carry names). The company's score stays."""
     search = load_contacts(lead, path)
     with closing(_connect(path)) as conn, conn:
         conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
+        conn.execute("DELETE FROM trace WHERE lead = ?", (lead,))
         for r in conn.execute("SELECT message_id, reply FROM replies WHERE lead = ?", (lead,)).fetchall():
             blank = Reply.model_validate_json(r["reply"]).model_copy(update={"sender": "", "subject": "", "snippet": ""})
             conn.execute("UPDATE replies SET reply = ? WHERE lead = ? AND message_id = ?",
@@ -328,7 +350,8 @@ def forget_person(lead: str, name: str, path: Path = DB_PATH) -> None:
 
 def forget_stale_contacts(days: int, today: date, path: Path = DB_PATH) -> list[str]:
     """Drop the people saved for any company never emailed, once `days` have passed since they were
-    found, with its unsent drafts (they carry the name). Returns the companies. The scores stay."""
+    found, with its unsent drafts and its trace (they carry the name). Returns the companies. The
+    scores stay."""
     cutoff = today - timedelta(days=days)
     stale = []
     for lead, search in load_all_contacts(path).items():
@@ -340,6 +363,7 @@ def forget_stale_contacts(days: int, today: date, path: Path = DB_PATH) -> list[
         for lead in stale:
             conn.execute("DELETE FROM contacts WHERE lead = ?", (lead,))
             conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
+            conn.execute("DELETE FROM trace WHERE lead = ?", (lead,))
     return stale
 
 
@@ -525,6 +549,7 @@ def approve_email(lead: str, step: int, path: Path = DB_PATH) -> None:
         _put_email(conn, lead, old.model_copy(update={"status": "approved", "approved_at": now()}))
         if step == 0:
             _advance(conn, lead, "approved")
+    trace.on_email(lead, f"Approved email {step + 1}", {"subject": old.subject, "edited": old.edited}, path)
 
 
 def _sendable(conn: sqlite3.Connection, lead: str, step: int) -> Email:
@@ -551,6 +576,8 @@ def mark_sent(lead: str, step: int, path: Path = DB_PATH, message_id: str = "") 
         _put_email(conn, lead, old.model_copy(update={"status": "sent", "sent_at": now(), "message_id": message_id}))
         if step == 0:
             _advance(conn, lead, "contacted")
+    trace.on_email(lead, f"Sent email {step + 1}", {"subject": old.subject,
+                                                  "how": "by the app" if message_id else "marked sent by the rep"}, path)
 
 
 def sent_by_app_since(since: str, path: Path = DB_PATH) -> int:
@@ -565,7 +592,11 @@ def save_reply(lead: str, reply: Reply, path: Path = DB_PATH) -> bool:
         stamped = reply.model_copy(update={"found_at": reply.found_at or now()})
         cur = conn.execute("INSERT OR IGNORE INTO replies (lead, message_id, reply) VALUES (?, ?, ?)",
                            (lead, reply.message_id, stamped.model_dump_json()))
-        return cur.rowcount == 1
+        added = cur.rowcount == 1
+    if added:
+        trace.on_email(lead, "Reply found", {"received": reply.received_at, "opt out": reply.opt_out,
+                                             "delete request": reply.delete_request}, path)
+    return added
 
 
 def _login_key(login_id: str) -> str:
@@ -601,3 +632,48 @@ def load_replies(lead: str, path: Path = DB_PATH) -> list[Reply]:
     with closing(_connect(path)) as conn:
         rows = conn.execute("SELECT reply FROM replies WHERE lead = ?", (lead,)).fetchall()
     return sorted((Reply.model_validate_json(r["reply"]) for r in rows), key=lambda r: r.received_at)
+
+
+def add_trace(s: Step, path: Path = DB_PATH) -> None:
+    with closing(_connect(path)) as conn, conn:
+        conn.execute("INSERT INTO trace (run_id, lead, kind, step, model, input, output, ok, error, started, ms) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (s.run_id, s.lead, s.kind, s.step, s.model, s.input, s.output, int(s.ok), s.error, s.started,
+                      s.ms))
+
+
+def load_trace(lead: str, path: Path = DB_PATH) -> list[Step]:
+    """Every kept trace step for the lead, in the order they were written."""
+    with closing(_connect(path)) as conn:
+        rows = conn.execute("SELECT * FROM trace WHERE lead = ? ORDER BY id", (lead,)).fetchall()
+    return [Step(run_id=r["run_id"], lead=r["lead"], kind=r["kind"], step=r["step"], model=r["model"],
+                 input=r["input"], output=r["output"], ok=bool(r["ok"]), error=r["error"], started=r["started"],
+                 ms=r["ms"]) for r in rows]
+
+
+def _trace_runs(conn: sqlite3.Connection, lead: str, kind: str) -> list[str]:
+    rows = conn.execute("SELECT run_id, MAX(id) AS last FROM trace WHERE lead = ? AND kind = ? GROUP BY run_id "
+                        "ORDER BY last DESC", (lead, kind)).fetchall()
+    return [r["run_id"] for r in rows]
+
+
+def latest_trace_run(lead: str, kind: str, path: Path = DB_PATH) -> str:
+    """The id of the lead's newest run of this kind, or "" if there is none."""
+    with closing(_connect(path)) as conn:
+        found = _trace_runs(conn, lead, kind)
+    return found[0] if found else ""
+
+
+def prune_trace(lead: str, kind: str, keep: int, path: Path = DB_PATH) -> None:
+    """Keep the lead's `keep` newest runs of this kind and delete the rest."""
+    with closing(_connect(path)) as conn, conn:
+        for run_id in _trace_runs(conn, lead, kind)[max(keep, 0):]:
+            conn.execute("DELETE FROM trace WHERE run_id = ?", (run_id,))
+
+
+def trace_size(lead: str, path: Path = DB_PATH) -> tuple[int, int]:
+    """How many runs and steps are kept for the lead."""
+    with closing(_connect(path)) as conn:
+        r = conn.execute("SELECT COUNT(DISTINCT run_id) AS runs, COUNT(*) AS steps FROM trace WHERE lead = ?",
+                         (lead,)).fetchone()
+    return r["runs"], r["steps"]

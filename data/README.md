@@ -8,4 +8,5 @@ Where the text in these files comes from.
   - Vymo and Sprinto: our own short summary of web search results about them.
 - `labelled_leads.csv`, `unseen_leads.csv`, `unseen_leads_2.csv`: made-up companies written for testing. No real company or person is described.
 - `outreach.json`: the example emails are written for a made-up company.
+- `kb_sample/`: documents for a made-up seller, Fernway, and its made-up customers (Payvorne, Freightmoor, Clinivale and the rest). No real company or person is described. They show how the knowledge base works; they prove nothing about real case studies. `partner-notes.md` carries a planted instruction on purpose, to test that it is kept out. Your own documents go in `kb/`, which is git-ignored.
 - Websites the app reads are saved in `data/pages/` and the lead store in `data/leadsage.db`. Both are git-ignored and never committed. The app deletes a lead's rows and saved pages when you delete the lead.

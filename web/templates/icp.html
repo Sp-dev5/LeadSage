@@ -11,10 +11,12 @@
   <div class="pane">
     <header><div><h2>Profile</h2><h3>What the scorer reads</h3></div></header>
     <form method="post" action="/icp" id="icp-form"><input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if docs %}<div class="suggrow mb-8"><button class="b ghost" type="button" data-from-docs>Draft from my documents</button><span class="small faint" data-docs-status aria-live="polite"></span></div>{% endif %}
       {% for field, label in fields.items() %}
       <label>{{ label }} <textarea name="{{ field }}" rows="{{ 5 if field == 'notes' else 3 }}" data-field="{{ field }}">{{ raw.get(field, '') }}</textarea></label>
       <div class="suggrow"><button class="linkish" type="button" data-suggest="{{ field }}">Suggest a fuller description</button><span class="small faint" data-status="{{ field }}" aria-live="polite"></span></div>
       <div class="sugg" data-sugg="{{ field }}" hidden><h3 class="mb-8">Suggestion from the local model</h3><p></p>
+        <ul class="plain small sources" data-sources hidden></ul>
         <div class="row-btns"><button class="b" type="button" data-use="{{ field }}">Use this</button><button class="b ghost" type="button" data-dismiss="{{ field }}">Dismiss</button></div></div>
       {% if field == 'buyer_persona' %}<div class="titles" data-titles="{{ field }}" hidden><span class="small faint">Other titles for this role. Click one to add it to your text.</span><div></div></div>{% endif %}
       {% endfor %}
@@ -61,6 +63,29 @@
       <button class="b" type="submit">Save scoring</button>
     </form>
   </div>
+</section>
+
+<section class="pane no-top-rule" id="docs">
+  <header><div><h2>Your documents</h2><h3>Case studies, product notes and answers to objections. Emails may quote one line from them, and they can draft the profile above. They never change a score.</h3></div></header>
+  {% if docs %}
+  <div class="scroll"><table>
+    <tr><th>Document</th><th class="r">Pages</th><th class="r">Passages</th><th>Notes</th><th>Indexed</th><th></th></tr>
+    {% for d in docs %}
+    <tr><td>{{ d.file }}</td><td class="r num">{{ d.pages if d.file.endswith('.pdf') else '·' }}</td><td class="r num">{{ d.passages }}</td>
+      <td class="small muted">{% if d.error %}<span class="tag cut">Not read</span> {{ d.error }}{% endif %}{% if d.empty_pages %}{{ d.empty_pages }} pages have no text (scanned pages are not read). {% endif %}{% if d.skipped %}{{ d.skipped }} kept out: they talk to an AI.{% endif %}</td>
+      <td class="small nw">{{ d.indexed_at | day }}</td>
+      <td class="r"><form method="post" action="/icp/docs/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="name" value="{{ d.file }}"><button class="b ghost" type="submit" aria-label="Delete {{ d.file }}">Delete</button></form></td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">No documents yet.</p>{% endif %}
+  <div class="row-btns mt-16">
+    <form method="post" action="/icp/docs" enctype="multipart/form-data" data-busy="Uploading" class="row-btns"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="m-0">Add a document <input type="file" name="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" required></label>
+      <button class="b" type="submit" {{ 'disabled' if job }}>Upload</button>
+    </form>
+    {% if docs %}<form method="post" action="/icp/docs/reindex" data-busy="Starting"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="b ghost" type="submit" {{ 'disabled' if job }}>Reindex</button></form>{% endif %}
+  </div>
+  <p class="small faint m-12-0-0">Text, Markdown or PDF, up to {{ max_mb }} MB and {{ max_pages }} pages each. Kept in data/kb on this machine. Indexing uses the local embedding model.</p>
 </section>
 
 <section class="pane no-top-rule">

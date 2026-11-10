@@ -224,6 +224,10 @@ select option { background: var(--page); }
 .job { border-bottom: 2px solid var(--rule); padding: 16px 30px; }
 .job header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 10px; }
 .job pre { margin: 0; max-height: 220px; overflow: auto; font: 400 12.5px/1.6 var(--mono); color: var(--soft); background: rgba(0, 0, 0, .3); border: 1px solid var(--rule-soft); padding: 10px 12px; white-space: pre-wrap; }
+.trace .steps { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 2px; }
+.trace .steps details { margin-top: 0; border-top: 0; }
+.trace .steps summary { text-transform: none; letter-spacing: 0; font: 500 14px/1.5 var(--sans); color: var(--ink); padding: 6px 0 2px; }
+.trace pre.tr { margin: 4px 0 12px; max-height: 360px; overflow: auto; font: 400 12.5px/1.6 var(--mono); color: var(--soft); background: rgba(0, 0, 0, .3); border: 1px solid var(--rule-soft); padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dots::after { content: ""; animation: dots 1.4s steps(4) infinite; }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 
@@ -259,6 +263,8 @@ select option { background: var(--page); }
 .chips input { flex: 1; min-width: 160px; border: 0 !important; background: transparent !important; box-shadow: none !important; padding: 3px 4px !important; }
 .sugg { margin: -4px 0 18px; padding: 14px 16px; border: 1px solid var(--hl); background: rgba(168, 213, 186,.08); animation: swap .3s ease-out; }
 .sugg p { margin: 0 0 10px; font-size: 14.5px; }
+.sugg .sources { margin: 0 0 12px; display: grid; gap: 4px; }
+.sugg .sources .q { color: var(--soft); font-style: italic; }
 .suggrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: -8px 0 16px; }
 .linkish { background: none; border: 1px solid var(--hl); padding: 6px 10px; font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--hl); cursor: pointer; }
 .linkish::before { content: "+ "; }

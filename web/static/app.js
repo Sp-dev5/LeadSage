@@ -223,6 +223,8 @@
           if (!manual && area(field).value !== sent) { return; }
           if (!manual && !j.text) { status(field).textContent = j.error; return; }
           var b = box(field);
+          b.querySelector("h3").textContent = "Suggestion from the local model";
+          b.querySelector("[data-sources]").hidden = true;
           b.querySelector("p").textContent = j.text || j.error;
           b.querySelector("[data-use]").hidden = !j.text;
           b.hidden = false;
@@ -257,6 +259,51 @@
         timers[field] = setTimeout(function () { fire(field); }, DELAY);
       });
     });
+    var fromDocs = icp.querySelector("[data-from-docs]");
+    if (fromDocs) {
+      var docsStatus = icp.querySelector("[data-docs-status]");
+      fromDocs.addEventListener("click", function () {
+        if (running) { docsStatus.textContent = "Still writing a suggestion. Try again in a moment."; return; }
+        running = "docs";
+        fromDocs.disabled = true;
+        docsStatus.textContent = "Reading your documents with the local model. This takes about 30 seconds.";
+        fetch("/icp/from-docs", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": document.querySelector("meta[name=csrf]").content }, body: "{}" })
+          .then(function (r) { return r.json(); })
+          .catch(function () { return { error: "The app did not answer. Is it still running?" }; })
+          .then(function (j) {
+            var fields = j.fields || {};
+            var filled = 0;
+            Object.keys(fields).forEach(function (field) {
+              var b = box(field);
+              if (!b) { return; }
+              filled += 1;
+              b.querySelector("h3").textContent = "Draft from your documents";
+              b.querySelector("p").textContent = fields[field].text;
+              var list = b.querySelector("[data-sources]");
+              list.textContent = "";
+              fields[field].lines.forEach(function (line) {
+                var li = document.createElement("li");
+                var q = document.createElement("span");
+                q.className = "q";
+                q.textContent = "\u201C" + line.quote + "\u201D ";
+                var src = document.createElement("span");
+                src.className = "faint mono";
+                src.textContent = line.source;
+                li.appendChild(q);
+                li.appendChild(src);
+                list.appendChild(li);
+              });
+              list.hidden = false;
+              b.querySelector("[data-use]").hidden = false;
+              b.hidden = false;
+            });
+            var cut = (j.cut || []).length;
+            docsStatus.textContent = filled ? ("Drafted " + filled + " of 3 fields. Nothing changes until you click Use this and Save." + (cut ? " " + cut + " lines were cut by the quote check." : "")) : (j.error || "Nothing came back.");
+          })
+          .then(function () { running = null; fromDocs.disabled = false; });
+      });
+    }
+
     icp.querySelectorAll("[data-use]").forEach(function (button) {
       button.addEventListener("click", function () {
         var field = button.dataset.use;

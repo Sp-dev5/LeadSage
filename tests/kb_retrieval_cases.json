@@ -1,0 +1,22 @@
+[
+  {"query": "Sells: payroll and salary processing software. Customers: businesses. Industry: HR software. Run payroll for your small business in minutes, with payslips and tax filings done for you.",
+   "file": "customer-stories.pdf", "contains": "Payvorne"},
+  {"query": "Sells: freight management platform. Customers: businesses. Industry: Logistics software. Book trucks, track every load and keep shippers updated from one screen.",
+   "file": "customer-stories.pdf", "contains": "Freightmoor"},
+  {"query": "Sells: patient booking software. Customers: businesses. Industry: Healthcare software. Let patients book appointments online and cut no-shows with text reminders for your practice.",
+   "file": "customer-stories.pdf", "contains": "Clinivale"},
+  {"query": "Sells: hiring software. Customers: businesses. Industry: HR tech. Post jobs, screen candidates and run interviews in one applicant tracking system for fast-growing teams.",
+   "file": "customer-stories.pdf", "contains": "Hirequill"},
+  {"query": "Sells: point of sale and stock software. Customers: businesses. Industry: Retail software. Count stock across all your stores and reorder before shelves run empty.",
+   "file": "customer-stories.pdf", "contains": "Shelfwick"},
+  {"query": "Sells: regulatory compliance platform. Customers: businesses. Industry: Fintech. Automate anti-money-laundering checks and audit reports for regional banks.",
+   "file": "customer-stories.md", "contains": "Vaultmere"},
+  {"query": "Sells: job scheduling app for tradespeople. Customers: businesses. Industry: Field service software. Dispatch plumbers and electricians, send quotes and get paid on site.",
+   "file": "customer-stories.md", "contains": "Fixloom"},
+  {"query": "Sells: employee training platform. Customers: businesses. Industry: Edtech. Build courses, assign learning paths and track compliance training for large workforces.",
+   "file": "customer-stories.md", "contains": "Learnmoor"},
+  {"query": "Sells: embedded credit infrastructure. Customers: businesses. Industry: Fintech. Add buy now pay later and instant loans to your app with one API.",
+   "file": "customer-stories.md", "contains": "Credvane"},
+  {"query": "Sells: ecommerce analytics. Customers: businesses. Industry: Marketing software. See which ads and channels drive sales for your online store, in one dashboard for D2C brands.",
+   "file": "customer-stories.md", "contains": "Adsorrel"}
+]

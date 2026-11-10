@@ -21,7 +21,7 @@ from urllib.parse import urlencode
 
 import pycountry
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -29,11 +29,11 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
-from agent import export, logos, mailer, store
+from agent import export, kb, logos, mailer, store, trace
 from agent.contacts import typed_contact
 from agent.fetch import MAX_CHARS
 from agent.files import write_text_atomic
-from agent.icp_assist import suggest, suggest_buyer
+from agent.icp_assist import draft_from_documents, suggest, suggest_buyer
 from agent.outreach import (OutreachConfig, contact_for, draft_step, due_dates, forget_lead, load_outreach, next_step,
                             save_outreach, saved_contact, saved_search, sending_problems, setup_problems, what_we_hold)
 from agent.pipeline import PASTED, lead_files, read_leads, score_all, score_one, signal_rows
@@ -45,6 +45,7 @@ from web import jobs, views
 
 load_dotenv()
 HERE = Path(__file__).resolve().parent
+KB_DIR = kb.KB_DIR
 PASSWORD = os.getenv("LEADSAGE_PASSWORD", "")
 SECRET = os.getenv("LEADSAGE_SECRET", "")
 HTTPS = os.getenv("LEADSAGE_HTTPS", "") == "1"
@@ -233,7 +234,9 @@ def leads_page(request: Request):
     data = views.leads(rows, f)
     current = next((r for r in data["shown"] if r.lead.name == request.query_params.get("lead")), None)
     files = lead_files()
-    return page(request, "leads.html", nav="leads", rows=rows, f=f, d=data, current=current,
+    runs = trace.runs(current.lead.name, views.DB) if current else []
+    return page(request, "leads.html", nav="leads", rows=rows, f=f, d=data, current=current, runs=runs,
+                keep=cfg.trace_runs_per_lead,
                 files=files, default_file="real_leads.csv" if "real_leads.csv" in files else (files or [""])[0],
                 suppressed=store.suppressed(views.DB), qualify_at=icp.settings.qualify_at,
                 weights=icp.settings.weights, stages=store.STAGES, query=lambda **kw: _query(request, **kw))
@@ -401,7 +404,8 @@ def _detail(name: str, icp: ICP, cfg: OutreachConfig, now: datetime) -> dict:
         "next": next_step(lead.stage, list(emails.values()), cfg, now).text,
         "news": store.load_news(name, views.DB), "first": emails.get(0), "hook_label": hook_label(emails.get(0)),
         "press": saved_news(name, cfg.news_max_age_days, views.DB),
-        "hold": what_we_hold(search.contact, list(emails.values()), store.load_replies(name, views.DB))
+        "hold": what_we_hold(search.contact, list(emails.values()), store.load_replies(name, views.DB),
+                             store.trace_size(name, views.DB))
         if search and search.contact else [],
         "others": [p for p in search.people if p != search.contact] if search else [],
         "replies": store.load_replies(name, views.DB), "can_send": mailer.can_send(),
@@ -598,7 +602,65 @@ def icp_page(request: Request):
                                 for k, label, kind, lo, hi, step in SETTING_FIELDS],
                 evidence_choices=EVIDENCE_CHOICES, evidence=s["qualify_needs_evidence"],
                 facts={name: list(values) for name, values in FACT_VALUES.items()}, criteria=ALL_CRITERIA,
-                labels={c: views.plain(c) for name, values in FACT_VALUES.items() for c in (name, *values)})
+                labels={c: views.plain(c) for name, values in FACT_VALUES.items() for c in (name, *values)},
+                docs=kb.listing(views.DB), max_mb=kb.MAX_BYTES // (1024 * 1024), max_pages=kb.MAX_PAGES)
+
+
+def _index_docs(force: bool = False) -> None:
+    def work(report):
+        report("Reading your documents and indexing them with the local embedding model")
+        kb.index(KB_DIR, views.DB, force=force, report=report)
+        report("Done.")
+
+    jobs.start("Indexing your documents", work)
+
+
+@app.post("/icp/docs")
+async def docs_upload(request: Request, file: UploadFile = File(...)):
+    name = kb.clean_name(file.filename or "")
+    if not name:
+        return back(request, "/icp#docs", "Upload a .txt, .md or .pdf file.", "error")
+    data = await file.read(kb.MAX_BYTES + 1)
+    if len(data) > kb.MAX_BYTES:
+        return back(request, "/icp#docs", f"That file is over {kb.MAX_BYTES // (1024 * 1024)} MB.", "error")
+    if not data.strip():
+        return back(request, "/icp#docs", "That file is empty.", "error")
+    KB_DIR.mkdir(parents=True, exist_ok=True)
+    part = KB_DIR.parent / f".kb-upload-{secrets.token_hex(8)}{Path(name).suffix}"
+    part.write_bytes(data)
+    try:
+        await run_in_threadpool(kb.read_pages, part)
+    except Exception as e:
+        part.unlink(missing_ok=True)
+        return back(request, "/icp#docs", f"Not added: {str(e)[:120]}", "error")
+    part.replace(KB_DIR / name)
+    _index_docs()
+    return back(request, "/icp#docs", f"Added {name}. It is being indexed now.")
+
+
+@app.post("/icp/docs/delete")
+def docs_delete(request: Request, name: str = Form(...)):
+    if not kb.forget_file(name, KB_DIR, views.DB):
+        return back(request, "/icp#docs", "That document is no longer there.", "error")
+    return back(request, "/icp#docs", f"Deleted {name} and its passages.")
+
+
+@app.post("/icp/docs/reindex")
+def docs_reindex(request: Request):
+    _index_docs(force=True)
+    return back(request, "/icp#docs")
+
+
+@app.post("/icp/from-docs")
+async def icp_from_docs(request: Request):
+    try:
+        cfg = load_outreach()
+        result = await run_in_threadpool(draft_from_documents, cfg.kb_top_k, load_icp().settings.min_quote_words,
+                                         views.DB)
+    except Exception:
+        log.exception("drafting from documents failed")
+        return JSONResponse({"error": "The local model did not answer. Is ollama serve running?"}, status_code=502)
+    return result
 
 
 def _first_error(e: ValidationError) -> str:

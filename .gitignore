@@ -21,3 +21,7 @@ data/logos/
 data/signals_results.csv
 
 data/leadsage.db
+
+# The seller's own documents for the knowledge base (python -m agent.kb)
+data/kb/
+data/.kb-upload-*

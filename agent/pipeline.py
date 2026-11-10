@@ -19,7 +19,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from agent import store
+from agent import store, trace
 from agent.fetch import MAX_CHARS, fetch_homepage, load_or_fetch, slug
 from agent.llm import second_model_name
 from agent.logos import fetch_logo
@@ -67,6 +67,8 @@ def lead_text(row: dict, mode: str, pages: Path = PAGES, refetch: bool = False) 
         return typed, "typed"
 
     page = load_or_fetch(url, pages / f"{slug(row['name'])}.json", fetch_homepage, refetch)
+    trace.step("Read the website", {"address": page.url or url, "characters": len(page.text),
+                                    "read at": page.fetched_at}, input=url, ok=page.ok, error=page.error)
     if not page.ok:
         print(f"  fetch failed for {row['name']}: {page.error}, using typed", flush=True)
         return typed, FETCH_FAILED
@@ -76,8 +78,12 @@ def lead_text(row: dict, mode: str, pages: Path = PAGES, refetch: bool = False) 
 def research(row: dict, icp: ICP, signals: dict[str, dict]) -> tuple[Company, str]:
     """The company as the scorer sees it, and where its description came from."""
     description, text_source = lead_text(row, "fetched")
-    if text_source == FETCH_FAILED and len(summary := company_summary(row["name"])) > len(description):
-        description, text_source = summary[:MAX_CHARS], WIKIPEDIA
+    if text_source == FETCH_FAILED:
+        summary = company_summary(row["name"])
+        used = len(summary) > len(description)
+        trace.step("Read Wikipedia", {"characters": len(summary), "used": used}, input=row["name"])
+        if used:
+            description, text_source = summary[:MAX_CHARS], WIKIPEDIA
     roles = []
     if signal := signals.get(row["name"].strip().lower()):
         roles = hiring_for(signal, icp).roles
@@ -91,9 +97,12 @@ def second_opinion(icp: ICP, company: Company, result: LeadScore, report: Callab
     try:
         second = score_lead(icp, company, model=second_model_name())
     except Exception as e:
+        trace.step("Second opinion", "main score kept", ok=False, error=str(e)[:300], model=second_model_name())
         report(f"{company.name}: second opinion failed ({str(e)[:90]}); main score kept")
         return result
     final = with_second_opinion(result, second, icp.settings)
+    trace.step("Second opinion", {"main": f"{result.verdict} {result.fit}", "second": f"{second.verdict} {second.fit}",
+                                  "final": f"{final.verdict} {final.fit}"}, model=second.model)
     report(f"{company.name}: second model {second.verdict} {second.fit} -> {final.verdict}")
     return final
 
@@ -102,10 +111,12 @@ def score_one(icp: ICP, company: Company, url: str, text_source: str, report: Ca
               db: Path = store.DB_PATH) -> LeadScore:
     """Score one company, with the second model straight after when it is borderline, and save it.
     For a single rescore; a batch goes through score_all so the GPU swaps models once."""
-    result = score_lead(icp, company)
-    if is_borderline(result, icp.settings):
-        result = second_opinion(icp, company, result, report)
-    store.save(company, result, url=url, text_source=text_source, path=db)
+    with trace.run(company.name, "score", db):
+        trace.step("Company text", company.description, input=text_source)
+        result = score_lead(icp, company)
+        if is_borderline(result, icp.settings):
+            result = second_opinion(icp, company, result, report)
+        store.save(company, result, url=url, text_source=text_source, path=db)
     return result
 
 
@@ -120,8 +131,10 @@ def score_all(rows: list[dict], icp: ICP, signals: dict[str, dict], report: Call
     scored = []
     for i, row in enumerate(rows, 1):
         try:
-            company, text_source = research(row, icp, signals)
-            result = score_lead(icp, company)
+            with trace.run(row["name"].strip(), "score", db) as run_id:
+                company, text_source = research(row, icp, signals)
+                trace.step("Company text", company.description, input=text_source)
+                result = score_lead(icp, company)
         except Exception as e:
             report(f"[{i}/{len(rows)}] {row['name']}: failed ({str(e)[:90]})")
             continue
@@ -131,12 +144,13 @@ def score_all(rows: list[dict], icp: ICP, signals: dict[str, dict], report: Call
             fetch_logo(company.name, url)
         report(f"[{i}/{len(rows)}] {company.name}: {result.verdict} {result.fit}")
         if is_borderline(result, icp.settings):
-            scored.append((company, result, url, text_source))
+            scored.append((company, result, url, text_source, run_id))
 
     if scored:
         report(f"Second opinion ({second_model_name()}) on {len(scored)} borderline leads")
-    for company, result, url, text_source in scored:
-        final = second_opinion(icp, company, result, report)
+    for company, result, url, text_source, run_id in scored:
+        with trace.run(company.name, "score", db, run_id=run_id):
+            final = second_opinion(icp, company, result, report)
         if final is not result:
             store.save(company, final, url=url, text_source=text_source, path=db)
 
