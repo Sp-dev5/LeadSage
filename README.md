@@ -2,6 +2,21 @@
 
 **Prospect research and first emails for teams that sell to businesses. Every line about a company has a source.**
 
+[![CI](https://github.com/Sp-dev5/LeadSage/actions/workflows/ci.yml/badge.svg)](https://github.com/Sp-dev5/LeadSage/actions/workflows/ci.yml)
+
+![The LeadSage home page: drafts ready to review, leads scored, verdicts and the quote check](site/assets/app-home.webp)
+
+## At a glance
+
+- **Finds and researches companies** from the open Y Combinator list, their own websites, job boards and Indian startup news.
+- **Scores each one against your ideal customer** and says why, with a quote behind every reason.
+- **Drafts a first email and three follow-ups.** A line about the prospect that has no matching quote is cut before you see it.
+- **A person approves every email**, then it sends from their own Gmail. Replies stop the follow-ups, and "not interested" puts the company on a do-not-contact list.
+- **Shows its work:** every model prompt and answer for a lead is kept and shown on the lead's page.
+- **Runs on your laptop** with local models. No paid APIs.
+
+**Built with** Python, FastAPI, SQLite, Ollama (local LLMs), `nomic-embed-text` embeddings for retrieval, SMTP and IMAP. 778 tests; CI runs the tests, `bandit`, `pip-audit` and a secrets scan on every pull request.
+
 ---
 
 ## What it does, in one paragraph
@@ -58,6 +73,8 @@ Scored with the final rules on local models, November 2026:
 Near means one verdict away: review against qualify or disqualify. These numbers show the scorer follows the ICP's rules. They don't show the rules are right, and nothing here proves replies or revenue: no real campaign was run. A possible competitor goes to review, not disqualify: the model sometimes calls a company a sales-tool seller when it isn't (Rocketlane, Everstage), and a quote check confirms the words exist, not what they mean. The cost is that real competitors in the test sets now land in review, which counts as near. A rep reads every lead and every draft before anything goes out.
 
 Your documents, tested with the made-up sample (November 2026): 10 of 10 test searches, written before the first run, found the right passage first. On the 15 real leads closest to the sample, only one was close enough to be offered a passage, and the model did not use it, so the sample changed none of those 15 emails. A made-up payroll company that matches a case study got a checked proof line in one of two drafts on the local model. A planted "90% discount" line was kept out of the index, and when forced into the prompt it still never reached an email. Scores did not change: the 47 labelled companies came back 35, 11 and 1 again. How much real case studies help depends on how close your customers are to your leads.
+
+Sending and replies, tested end to end (November 2026), on a copy of the lead store. Through real Gmail: the app logged in, sent an approved draft to a test address, then found a "not interested" reply in the same thread over IMAP, put the company on the do-not-contact list and stopped its follow-ups; a second check found nothing new. The reply was sent from the same account, not by a separate person. Against a mail server on the laptop, over TLS with its certificate checked: an unapproved email was refused before the server was touched, and the email that arrived matched the approved subject and body word for word.
 
 ## Roadmap
 
