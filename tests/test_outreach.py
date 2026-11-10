@@ -536,7 +536,7 @@ def test_follow_up_cannot_go_before_the_email_before_it(db):
     store.save_email("Acme", mail(0, "draft"), db)
     store.save_email("Acme", mail(1, "draft"), db)
     store.approve_email("Acme", 1, db)
-    with pytest.raises(ValueError, match="email 0 has not been sent"):
+    with pytest.raises(ValueError, match="email 1 has not been sent"):
         store.mark_sent("Acme", 1, db)
 
 
