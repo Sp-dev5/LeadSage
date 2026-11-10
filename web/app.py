@@ -1,5 +1,5 @@
 """
-The LeadSage web app: plain HTML pages over the same agent modules the Streamlit app uses.
+The LeadSage web app: plain HTML pages over the agent modules.
 
 Run it:  uvicorn web.app:app --host 127.0.0.1 --port 8000
 
