@@ -19,7 +19,7 @@ Salespeople spend most of their day reading up on companies, finding the right p
 - **Shows its work:** every model prompt and answer for a lead is kept and shown on the lead's page.
 - **Runs on your laptop** with local models. No paid APIs.
 
-**Built with** Python, FastAPI, SQLite, Ollama (local LLMs), `nomic-embed-text` embeddings for retrieval, SMTP and IMAP. CI runs 797 tests, `bandit`, `pip-audit` and a secrets scan on every pull request.
+**Built with** Python, FastAPI, SQLite, Ollama (local LLMs), `nomic-embed-text` embeddings for retrieval, SMTP and IMAP. CI runs 870 tests, `bandit`, `pip-audit` and a secrets scan on every pull request.
 
 ## How it works
 

@@ -20,6 +20,8 @@ class Job:
     failed: str = ""
 
 
+MAX_KEPT_JOBS = 50
+
 JOBS: dict[str, Job] = {}
 _lock = threading.Lock()
 
@@ -34,6 +36,8 @@ def start(title: str, work: Callable[[Callable[[str], None]], None]) -> Job:
         if busy := running():
             return busy
         job = Job(id=uuid.uuid4().hex[:12], title=title)
+        for old in [j.id for j in JOBS.values() if j.done][:max(len(JOBS) + 1 - MAX_KEPT_JOBS, 0)]:
+            del JOBS[old]
         JOBS[job.id] = job
 
     def run() -> None:

@@ -137,6 +137,9 @@ def reply(body, sender="priya@acme.example", in_reply_to="", **headers):
     return msg.as_bytes()
 
 
+UID_BASE = 500
+
+
 class FakeIMAP:
     """Answers SEARCH by matching the From address or a header against the stored messages."""
 
@@ -149,20 +152,23 @@ class FakeIMAP:
     def select(self, box, readonly=False):
         self.readonly = readonly
 
+    def uid(self, command, *args):
+        return self.search(*args) if command == "SEARCH" else self.fetch(*args)
+
     def search(self, charset, *criteria):
         self.searches.append(criteria)
         hits = []
         for i, raw in enumerate(self.messages, 1):
             msg = message_from_bytes(raw, policy=policy.default)
             if "FROM" in criteria and criteria[-1].strip('"') in msg["From"]:
-                hits.append(str(i).encode())
+                hits.append(str(UID_BASE + i).encode())
             if "HEADER" in criteria and criteria[-1] in (msg.get(criteria[-2]) or ""):
-                hits.append(str(i).encode())
+                hits.append(str(UID_BASE + i).encode())
         return "OK", [b" ".join(hits)]
 
     def fetch(self, i, spec):
         assert "PEEK" in spec
-        return "OK", [(b"1 (BODY[] {1}", self.messages[int(i) - 1]), b")"]
+        return "OK", [(b"1 (BODY[] {1}", self.messages[int(i) - UID_BASE - 1]), b")"]
 
     def logout(self):
         pass
@@ -236,3 +242,15 @@ def test_an_ordinary_reply_is_not_a_delete_request(mailbox, db, text):
 def test_our_own_notice_line_quoted_back_is_not_a_delete_request():
     cfg = CFG.model_copy(update={"notice_line": "Reply delete my data and I'll remove it."})
     assert not mailer.is_delete_request("Thanks. Reply delete my data and I'll remove it.", cfg)
+
+
+def test_a_reply_with_no_message_id_is_keyed_by_its_uid_so_a_second_look_adds_nothing(mailbox, db):
+    mailer.send(approved(db), 0, CFG, db)
+    raw = reply("Sounds good.")
+    raw = b"\n".join(line for line in raw.split(b"\n") if not line.startswith(b"Message-ID"))
+    found, imap = check(db, [raw])
+    assert [r.message_id for _, r in found] == [f"Acme-{UID_BASE + 1}"]
+    store.set_stage("Acme", "contacted", db)
+    again, _ = check(db, [raw])
+    assert again == []
+    assert len(store.load_replies("Acme", db)) == 1

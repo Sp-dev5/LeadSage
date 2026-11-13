@@ -203,7 +203,9 @@ def _when(msg) -> str:
 
 
 def _search(conn: imaplib.IMAP4, *criteria: str) -> list[bytes]:
-    status, data = conn.search(None, *criteria)
+    """Message UIDs matching the criteria. UIDs, not sequence numbers: a sequence number shifts
+    whenever a message is deleted or moved, so it can't stand for the same message twice."""
+    status, data = conn.uid("SEARCH", None, *criteria)
     return data[0].split() if status == "OK" and data and data[0] else []
 
 
@@ -242,7 +244,7 @@ def check_replies(cfg: OutreachConfig, db: Path = store.DB_PATH, report=print,
             for criteria in _criteria(emails, saved_contact(lead, cfg, db), start.strftime("%d-%b-%Y")):
                 ids += [i for i in _search(conn, *criteria) if i not in ids]
             for i in ids:
-                status, data = conn.fetch(i, f"(BODY.PEEK[]<0.{MAX_FETCH_BYTES}>)")
+                status, data = conn.uid("FETCH", i, f"(BODY.PEEK[]<0.{MAX_FETCH_BYTES}>)")
                 raw = next((part[1] for part in data if isinstance(part, tuple)), b"") if status == "OK" else b""
                 if not raw:
                     continue

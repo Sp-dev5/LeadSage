@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from agent.llm import EXTRACT_TEMPERATURE, WRITE_CONTEXT, WRITE_TEMPERATURE, generate_structured, suggest_model_name
+from agent.llm import (DOCUMENTS_BUDGET, EXTRACT_TEMPERATURE, INTERACTIVE_BUDGET, WRITE_CONTEXT, WRITE_TEMPERATURE,
+                       generate_structured, suggest_model_name)
 
 FIELDS = {
     "buyer_persona": (
@@ -91,7 +92,8 @@ def clean_titles(titles: list[str], draft: str) -> list[str]:
 def suggest(field: str, draft: str, context: dict[str, str]) -> str:
     """A fuller wording for `field` from the rep's `draft`, with the other fields as context."""
     result = generate_structured(system=SYSTEM, user_prompt=_prompt(field, draft, context), schema=Suggestion,
-                                 model=suggest_model_name(), temperature=WRITE_TEMPERATURE)
+                                 model=suggest_model_name(), temperature=WRITE_TEMPERATURE,
+                                 budget=INTERACTIVE_BUDGET)
     return _plain(result.text)
 
 
@@ -99,7 +101,7 @@ def suggest_buyer(draft: str, context: dict[str, str]) -> tuple[str, list[str]]:
     """The buyer-persona wording plus other titles for the same role, from one model call."""
     result = generate_structured(system=SYSTEM + TITLES_RULES, user_prompt=_prompt("buyer_persona", draft, context),
                                  schema=BuyerSuggestion, model=suggest_model_name(),
-                                 temperature=WRITE_TEMPERATURE)
+                                 temperature=WRITE_TEMPERATURE, budget=INTERACTIVE_BUDGET)
     return _plain(result.text), clean_titles(result.titles, draft)
 
 
@@ -152,7 +154,8 @@ def draft_from_documents(top_k: int, min_words: int, path=None) -> dict:
         return {"fields": {}, "cut": [], "error": "No documents are indexed yet. Upload one first."}
     prompt = "PASSAGES\n" + "\n\n".join(f"[{i}] {p.where}\n{p.text}" for i, p in enumerate(offered, 1))
     result = generate_structured(system=DOC_SYSTEM.format(min_words=min_words), user_prompt=prompt, schema=DocDraft,
-                                 model=suggest_model_name(), temperature=EXTRACT_TEMPERATURE, context=WRITE_CONTEXT)
+                                 model=suggest_model_name(), temperature=EXTRACT_TEMPERATURE, context=WRITE_CONTEXT,
+                                 budget=DOCUMENTS_BUDGET)
     fields, cut = {}, []
     for field in DOC_QUERIES:
         kept = []

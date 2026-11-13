@@ -15,6 +15,7 @@ Run it:  python -m agent.score_lead   (needs `ollama serve` running)
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from functools import lru_cache
@@ -75,6 +76,8 @@ FACT_VALUES: dict[str, tuple[str, ...]] = {
     name: get_args(field.annotation.model_fields["value"].annotation)
     for name, field in CompanyFacts.model_fields.items() if name != "what_they_sell"
 } | {"offering": get_args(Offering)}
+MAX_SUMMARY_CHARS = 100
+SUMMARY_WORD_MIN = 4
 NO_QUOTE_NEEDED = ("no", "unknown", "unclear")
 REPORTED_FACTS = [f for f in FACT_VALUES if f != "offering"]
 EXCLUSIONS = [("is_services", "services"), ("is_marketplace", "marketplace"),
@@ -405,11 +408,20 @@ def _quote_found(quote: str, source: str) -> bool:
     pieces = [p for p in (_norm(part) for part in re.split(r"\.\.\.|…", quote)) if p]
     pos = 0
     for piece in pieces:
-        pos = source.find(piece, pos)
-        if pos < 0:
+        found = _whole_word_find(source, piece, pos)
+        if found < 0:
             return False
-        pos += len(piece)
+        pos = found + len(piece)
     return bool(pieces)
+
+
+def _whole_word_find(source: str, piece: str, start: int) -> int:
+    """Where `piece` first appears in `source` at or after `start`, as whole words: "sell" is not
+    found inside "reseller". -1 when it does not."""
+    head = r"(?<!\w)" if re.match(r"\w", piece) else ""
+    tail = r"(?!\w)" if re.search(r"\w$", piece) else ""
+    m = re.compile(head + re.escape(piece) + tail).search(source, start)
+    return m.start() if m else -1
 
 
 def quote_in(quote: str, text: str) -> bool:
@@ -434,6 +446,12 @@ def _negated(quote: str, source: str) -> bool:
     starts = [m.start() for m in re.finditer(re.escape(first), source)] if first else []
     return bool(starts) and all(
         any(w in NEGATIONS or w.endswith("n't") for w in _words(source[:i])[-3:]) for i in starts)
+
+
+def quote_negated(quote: str, text: str) -> bool:
+    """True if the quote sits right after "not", "no", "never" or an n't word wherever it appears
+    in `text`, so it says the opposite of what it seems to support."""
+    return _negated(quote, _norm(text))
 
 
 def _quote_problem(quote: str, source: str, min_words: int, titles: list[str] = (),
@@ -503,8 +521,28 @@ def _check_facts(facts: CompanyFacts, company: Company, min_words: int) -> tuple
     if checked["sales_motion"] == "unknown" and company.sales_roles:
         checked["sales_motion"] = "sales_team_unclear"
     checked["offering"] = _derive_offering(checked)
-    checked["what_they_sell"] = facts.what_they_sell
+    if problem := _summary_problem(facts.what_they_sell, source):
+        rejected.append(f"what_they_sell={facts.what_they_sell[:60]!r}: {problem}")
+        checked["what_they_sell"] = "unknown"
+    else:
+        checked["what_they_sell"] = facts.what_they_sell.strip()
     return checked, rejected
+
+
+def _stem(word: str) -> str:
+    return word[:-1] if word.endswith("s") and len(word) > 4 else word
+
+
+def _summary_problem(summary: str, source: str) -> str:
+    """Why the model's few-word summary of what the company sells cannot be trusted, or "". It has
+    no quote, and it later reaches the email prompt (and the cloud writer), so it may use only
+    words the company's own text uses and stays short: a planted instruction brings words the page
+    never had."""
+    if len(summary) > MAX_SUMMARY_CHARS:
+        return f"is over {MAX_SUMMARY_CHARS} characters"
+    seen = {_stem(w) for w in _words(source)}
+    odd = [w for w in _words(_norm(summary)) if len(w) >= SUMMARY_WORD_MIN and _stem(w) not in seen]
+    return f"uses words the company details do not: {', '.join(odd[:3])}" if odd else ""
 
 
 def _derive_offering(facts: dict[str, str]) -> str:
@@ -544,29 +582,85 @@ def _apply_rules(icp: ICP, facts: dict[str, str]) -> tuple[list[str], list[str]]
             [r.label for r in fired if r.action == "review"])
 
 
+_NUMBER = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
+_FIGURE = re.compile(rf"(?<![\d.,])(?P<a>{_NUMBER})\s*(?P<ak>[kK]\b)?"
+                     rf"(?:\s*(?:-|–|—|\bto\b)\s*(?P<b>{_NUMBER})\s*(?P<bk>[kK]\b)?)?")
+_PEOPLE_WORD = re.compile(r"\s*(?:employees?|people|staff|headcount)\b", re.I)
+_MONEY_WORD = re.compile(r"\s*(?:m|mn|million|b|bn|billion|cr|crore|lakh)\b", re.I)
+_CURRENCY = "$€£₹"
+YEAR_FROM, YEAR_TO = 1900, 2100
+
+
+def _figure_value(number: str, thousands: str | None) -> int:
+    n = float(number.replace(",", ""))
+    return round(n * 1000 if thousands else n)
+
+
+def _looks_like_year(number: str, thousands: str | None) -> bool:
+    return (not thousands and number.isdigit() and len(number) == 4 and YEAR_FROM <= int(number) <= YEAR_TO)
+
+
+def _headcount_bounds(size: str) -> tuple[int, int] | None:
+    """The employee count a size text states, as (low, high): one number gives (n, n), a range
+    like "11-50" or "1,001-5,000" gives both ends. A four-digit number from 1900 to 2100 is a year
+    ("Series A, 2019") unless "employees", "people" or "staff" follows it; an amount of money is
+    not a headcount. None when nothing in the text can be justified as a headcount."""
+    for m in _FIGURE.finditer(size):
+        before = size[:m.start()].rstrip()
+        if before and before[-1] in _CURRENCY:
+            continue
+        after = size[m.end():]
+        if _MONEY_WORD.match(after):
+            continue
+        counted = bool(_PEOPLE_WORD.match(after))
+        ends = [(m["a"], m["ak"])] + ([(m["b"], m["bk"])] if m["b"] else [])
+        if not counted and any(_looks_like_year(n, k) for n, k in ends):
+            continue
+        values = [_figure_value(n, k) for n, k in ends]
+        return min(values), max(values)
+    return None
+
+
 def _parse_headcount(size: str) -> int | None:
-    """First number in the size text: "1,200 employees" -> 1200, "1.5k" -> 1500."""
-    m = re.search(r"(\d+(?:\.\d+)?)\s*([kK]\b)?", size.replace(",", ""))
-    if not m:
-        return None
-    n = float(m.group(1))
-    return round(n * 1000 if m.group(2) else n)
+    """The employee count in the size text, for places that need one number: "1,200 employees" ->
+    1200, "1.5k" -> 1500, "11-50" -> 11 (the low end). None when it cannot be told."""
+    bounds = _headcount_bounds(size)
+    return bounds[0] if bounds else None
 
 
-def _size_criterion(icp: ICP, headcount: int | None) -> CriterionScore:
+Headcount = int | tuple[int, int] | None
+
+
+def _bounds(headcount: Headcount) -> tuple[int, int] | None:
+    return (headcount, headcount) if isinstance(headcount, int) else headcount
+
+
+def _size_score(icp: ICP, n: int) -> tuple[int, str]:
     lo, hi, s = icp.company_size_min, icp.company_size_max, icp.settings
-    if headcount is None:
-        score, why = s.unknown_score, "Headcount not stated (unknown)"
-    elif headcount < s.min_headcount:
-        score, why = 0, f"{headcount} employees, under the {s.min_headcount} minimum (hard fail)"
-    elif headcount > hi * s.max_size_factor:
-        score, why = 0, f"{headcount} employees, over {s.max_size_factor:g} times the {hi} maximum (hard fail)"
-    elif lo <= headcount <= hi:
-        score, why = 5, f"{headcount} employees, within {lo}-{hi}"
-    elif lo * (1 - s.size_tolerance) <= headcount <= hi * (1 + s.size_tolerance):
-        score, why = 3, f"{headcount} employees, just outside {lo}-{hi}"
+    if n < s.min_headcount:
+        return 0, f"{n} employees, under the {s.min_headcount} minimum (hard fail)"
+    if n > hi * s.max_size_factor:
+        return 0, f"{n} employees, over {s.max_size_factor:g} times the {hi} maximum (hard fail)"
+    if lo <= n <= hi:
+        return 5, f"{n} employees, within {lo}-{hi}"
+    if lo * (1 - s.size_tolerance) <= n <= hi * (1 + s.size_tolerance):
+        return 3, f"{n} employees, just outside {lo}-{hi}"
+    return 1, f"{n} employees, well outside {lo}-{hi}"
+
+
+def _size_criterion(icp: ICP, headcount: Headcount) -> CriterionScore:
+    """Size from one number, or from a range: the lead passes when either end fits, so a range is
+    scored by its better end."""
+    bounds = _bounds(headcount)
+    if bounds is None:
+        return CriterionScore(criterion="company size match", score=icp.settings.unknown_score,
+                              evidence="Headcount not stated (unknown)")
+    lo, hi = bounds
+    if lo == hi:
+        score, why = _size_score(icp, lo)
     else:
-        score, why = 1, f"{headcount} employees, well outside {lo}-{hi}"
+        score, why = max((_size_score(icp, n) for n in bounds), key=lambda r: r[0])
+        why = f"range {lo}-{hi}: best end {why}"
     return CriterionScore(criterion="company size match", score=score, evidence=why)
 
 
@@ -718,7 +812,8 @@ def _merge_criteria(*groups: list[CriterionScore]) -> list[CriterionScore]:
 def _fit_from_criteria(criteria: list[CriterionScore], capped: bool, icp: ICP) -> int:
     """Turn the 0-5 criterion scores into a 0-100 fit score, in plain Python.
 
-    A weighted average, with the customer's weights. A hard fail (`capped`) or a
+    A weighted average, with the customer's weights, rounded half up (Python's round() sends
+    62.5 down and 63.5 up). A hard fail (`capped`) or a
     gate criterion scoring <= gate_fail_max caps the score at fail_cap, so strong
     other scores can't float it.
     """
@@ -727,7 +822,7 @@ def _fit_from_criteria(criteria: list[CriterionScore], capped: bool, icp: ICP) -
     if not criteria or total_weight <= 0:
         return 0
     weighted = sum(s.weights[c.criterion] * c.score for c in criteria)
-    fit = round(100 * weighted / (5 * total_weight))
+    fit = math.floor(100 * weighted / (5 * total_weight) + 0.5)
     if capped or _failed_gates(criteria, icp):
         fit = min(fit, s.fail_cap)
     return fit
@@ -737,13 +832,16 @@ def _failed_gates(criteria: list[CriterionScore], icp: ICP) -> list[str]:
     return [c.criterion for c in criteria if c.criterion in icp.gates and c.score <= icp.settings.gate_fail_max]
 
 
-def _size_fail(icp: ICP, headcount: int | None) -> str:
-    """Why the headcount alone fails the lead, or "" when it doesn't."""
-    if headcount is None:
+def _size_fail(icp: ICP, headcount: Headcount) -> str:
+    """Why the headcount alone fails the lead, or "" when it doesn't. A range fails only when both
+    of its ends do."""
+    bounds = _bounds(headcount)
+    if bounds is None:
         return ""
-    if headcount < icp.settings.min_headcount:
+    lo, hi = bounds
+    if hi < icp.settings.min_headcount:
         return "under the minimum headcount"
-    if headcount > icp.company_size_max * icp.settings.max_size_factor:
+    if lo > icp.company_size_max * icp.settings.max_size_factor:
         return "far over the maximum headcount"
     return ""
 
@@ -791,7 +889,7 @@ def score_lead(icp: ICP, company: Company, model: str | None = None) -> LeadScor
                     "Needs research.",
             review_flags=[NO_TEXT_FLAG], sales_roles=company.sales_roles,
         )
-    headcount = _parse_headcount(company.size)
+    headcount = _headcount_bounds(company.size)
     size_fail = _size_fail(icp, headcount)
     min_words = icp.settings.min_quote_words
     fact_words = icp.settings.min_fact_quote_words

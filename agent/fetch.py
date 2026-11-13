@@ -22,11 +22,13 @@ import ipaddress
 import re
 import socket
 import sys
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -44,6 +46,11 @@ USER_AGENT = "LeadSage/0.1"
 TIMEOUT = 10
 MAX_PAGE_BYTES = 10_000_000
 MAX_ROBOTS_BYTES = 500_000
+ROBOTS_TTL = 3600
+ROBOTS_RETRY = 60
+HOST_DELAY = 0.5
+MAX_CRAWL_DELAY = 15
+MAX_PACED_HOSTS = 1000
 MAX_DOWNLOAD_SECONDS = 30
 CHUNK_BYTES = 16_384
 MAX_CHARS = 4000
@@ -182,20 +189,37 @@ def _read_capped(resp: requests.Response, max_bytes: int, what: str = "page") ->
     resp._content_consumed = True
 
 
-def _allowed_by_robots(url: str) -> bool:
-    """True if the site's robots.txt lets LeadSage fetch this URL.
+class _Robots(NamedTuple):
+    """What one host's robots.txt said, and until when to believe it."""
 
-    401/403 means keep out, any other 4xx (no robots.txt) means allowed, a server error
-    means "no". The rules are read with protego, which picks the most specific matching
-    rule as the standard says (Python's own parser takes the first match, so "Disallow: /"
-    followed by "Allow: /careers" blocked everything). Network errors are raised for
-    fetch_page to report, so a dead site doesn't read as "blocked".
+    rules: Protego | None
+    open_site: bool
+    delay: float
+    expires: float
+    problem: str = ""
+
+
+_ROBOTS: dict[tuple[str, str], _Robots] = {}
+_ROBOTS_GUARD = threading.Lock()
+_ROBOTS_FETCHING: dict[tuple[str, str], threading.Lock] = {}
+_NEXT_REQUEST: dict[str, float] = {}
+_PACE_GUARD = threading.Lock()
+
+
+def _read_robots(scheme: str, netloc: str) -> _Robots:
+    """Download and read one host's robots.txt.
+
+    200 is read with protego, which picks the most specific matching rule as the standard says
+    (Python's own parser takes the first match, so "Disallow: /" followed by "Allow: /careers"
+    blocked everything). 401/403 means keep out and a missing file (404, 410 and other 4xx) means
+    allowed; these answers hold for ROBOTS_TTL. A 429 or a server error says nothing about the
+    rules: the answer is "unknown, ask again soon" (ROBOTS_RETRY), never allowed. Network errors
+    are raised for fetch_page to report, so a dead site doesn't read as "blocked".
     """
-    parts = urlsplit(url)
-    robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
+    robots_url = f"{scheme}://{netloc}/robots.txt"
     for _ in range(MAX_REDIRECTS + 1):
         resp = _http_get(robots_url, headers={"User-Agent": USER_AGENT},
-                            timeout=TIMEOUT, allow_redirects=False, stream=True)
+                         timeout=TIMEOUT, allow_redirects=False, stream=True)
         location = resp.headers.get("Location")
         if resp.status_code not in REDIRECT_CODES or not location:
             _read_capped(resp, MAX_ROBOTS_BYTES, "robots.txt")
@@ -203,23 +227,86 @@ def _allowed_by_robots(url: str) -> bool:
         resp.close()
         robots_url = urljoin(robots_url, location)
         if urlsplit(robots_url).scheme not in ("http", "https"):
-            return False
+            return _Robots(None, False, 0.0, time.monotonic() + ROBOTS_TTL)
         _require_public(robots_url, "robots.txt redirected to an internal address")
-    if resp.status_code in REDIRECT_CODES:
-        return False
-    if resp.status_code in (401, 403):
-        return False
+    expires = time.monotonic() + ROBOTS_TTL
+    if resp.status_code in REDIRECT_CODES or resp.status_code in (401, 403):
+        return _Robots(None, False, 0.0, expires)
+    if resp.status_code == 429 or resp.status_code >= 500:
+        return _Robots(None, False, 0.0, time.monotonic() + ROBOTS_RETRY,
+                       problem=f"robots.txt could not be read (HTTP {resp.status_code})")
     if 400 <= resp.status_code < 500:
-        return True
-    if resp.status_code >= 500:
-        return False
-    return Protego.parse(resp.text).can_fetch(url, USER_AGENT)
+        return _Robots(None, True, 0.0, expires)
+    rules = Protego.parse(resp.text)
+    return _Robots(rules, False, min(rules.crawl_delay(USER_AGENT) or 0.0, MAX_CRAWL_DELAY), expires)
+
+
+def _robots_for(url: str) -> _Robots:
+    """The host's robots.txt answer, downloaded once per scheme and host and kept for ROBOTS_TTL.
+    Threads asking about the same host at the same time wait for one download. A failure that says
+    nothing about the rules is kept only for ROBOTS_RETRY seconds, and a network error is not kept."""
+    parts = urlsplit(url)
+    key = (parts.scheme, parts.netloc.lower())
+    with _ROBOTS_GUARD:
+        known = _ROBOTS.get(key)
+        if known and known.expires > time.monotonic():
+            return known
+        gate = _ROBOTS_FETCHING.setdefault(key, threading.Lock())
+    with gate:
+        with _ROBOTS_GUARD:
+            known = _ROBOTS.get(key)
+        if known and known.expires > time.monotonic():
+            return known
+        fresh = _read_robots(*key)
+        with _ROBOTS_GUARD:
+            _ROBOTS[key] = fresh
+        return fresh
+
+
+def _allowed_by_robots(url: str) -> bool:
+    """True if the site's robots.txt lets LeadSage fetch this URL. Raises _Refused when the file
+    could not be read for now (a 429 or a server error), so that is not mistaken for a rule."""
+    robots = _robots_for(url)
+    if robots.problem:
+        raise _Refused(robots.problem)
+    return robots.open_site or (robots.rules is not None and robots.rules.can_fetch(url, USER_AGENT))
 
 
 def _robots_ok(url: str) -> bool:
     parts = urlsplit(url)
     return (parts.netloc in PUBLIC_APIS or f"{parts.netloc}{parts.path}".startswith(PUBLIC_API_PATHS)
             or _allowed_by_robots(url))
+
+
+def _host_delay(url: str) -> float:
+    """Seconds to leave between two requests to this host: HOST_DELAY, or the site's Crawl-delay
+    if that is longer."""
+    parts = urlsplit(url)
+    known = _ROBOTS.get((parts.scheme, parts.netloc.lower()))
+    return max(HOST_DELAY, known.delay if known else 0.0)
+
+
+def _take_turn(url: str) -> None:
+    """Wait until this host may be asked again, then book the next turn. Every thread shares the
+    schedule, so three pages from one site go out one after another."""
+    host = urlsplit(url).netloc.lower()
+    delay = _host_delay(url)
+    with _PACE_GUARD:
+        now_ = time.monotonic()
+        for old in [h for h, t in _NEXT_REQUEST.items() if t < now_] if len(_NEXT_REQUEST) > MAX_PACED_HOSTS else []:
+            del _NEXT_REQUEST[old]
+        turn = max(now_, _NEXT_REQUEST.get(host, 0.0))
+        _NEXT_REQUEST[host] = turn + delay
+    if turn > now_:
+        time.sleep(turn - now_)
+
+
+def _hold_host(url: str, seconds: float) -> None:
+    """A site that answered 429 asked everyone to slow down, not one request: no thread asks it
+    again for `seconds`."""
+    host = urlsplit(url).netloc.lower()
+    with _PACE_GUARD:
+        _NEXT_REQUEST[host] = max(_NEXT_REQUEST.get(host, 0.0), time.monotonic() + seconds)
 
 
 def _get(url: str, max_bytes: int | None = None) -> tuple[requests.Response, str]:
@@ -238,12 +325,13 @@ def _get(url: str, max_bytes: int | None = None) -> tuple[requests.Response, str
     redirects = 0
     waited = False
     while True:
+        _take_turn(current)
         resp = _http_get(current, headers={"User-Agent": USER_AGENT},
                             timeout=TIMEOUT, allow_redirects=False, stream=True)
         if resp.status_code == 429 and not waited:
             waited = True
             resp.close()
-            time.sleep(_wait_for(resp))
+            _hold_host(current, _wait_for(resp))
             continue
         location = resp.headers.get("Location")
         if resp.status_code not in REDIRECT_CODES or not location:

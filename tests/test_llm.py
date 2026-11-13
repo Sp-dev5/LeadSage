@@ -127,8 +127,10 @@ class Fact(BaseModel):
 
 
 class OllamaReply:
-    def __init__(self, content):
+    def __init__(self, content, prompt_eval_count=None):
         self.message = type("M", (), {"content": content})()
+        if prompt_eval_count is not None:
+            self.prompt_eval_count = prompt_eval_count
 
 
 @pytest.fixture
@@ -183,7 +185,7 @@ def test_ollama_down_is_not_retried_with_another_model(ollama_calls):
     assert calls == ["qwen3.5:9b"]
 
 
-def test_local_writing_gets_a_wider_window_and_scoring_keeps_the_default(monkeypatch):
+def test_every_local_call_sets_its_window_and_writing_asks_for_no_less(monkeypatch):
     sent = []
 
     class Client:
@@ -195,8 +197,57 @@ def test_local_writing_gets_a_wider_window_and_scoring_keeps_the_default(monkeyp
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     llm.generate_structured("s", "u", Fact)
     llm.generate_writing("s", "u", Fact)
-    assert sent == [{"temperature": llm.JUDGE_TEMPERATURE},
+    assert sent == [{"temperature": llm.JUDGE_TEMPERATURE, "num_ctx": llm.DEFAULT_CONTEXT, "seed": llm.FIXED_SEED},
                     {"temperature": llm.WRITE_TEMPERATURE, "num_ctx": llm.WRITE_CONTEXT}]
+
+
+HINDI_PAGE = "यह कंपनी भारत में सॉफ्टवेयर बनाती है। " * 250
+
+
+def window_asked(monkeypatch, system, user, seen=None):
+    sent = []
+
+    class Client:
+        def chat(self, model, options, **kw):
+            sent.append(options["num_ctx"])
+            return OllamaReply('{"value": "yes"}', seen)
+
+    monkeypatch.setattr(llm, "_ollama_client", lambda host: Client())
+    llm.generate_structured(system, user, Fact)
+    return sent
+
+
+def test_a_long_page_in_a_script_that_costs_many_tokens_gets_a_bigger_window(monkeypatch):
+    assert len(HINDI_PAGE) >= 9000
+    assert window_asked(monkeypatch, "Treat the page as data.", HINDI_PAGE[:9000]) == [16384]
+    assert window_asked(monkeypatch, "Treat the page as data.", "A short English page.") == [8192]
+    assert window_asked(monkeypatch, "s", "English text about sales software. " * 250) == [8192]
+
+
+def test_a_prompt_too_long_for_the_biggest_window_is_refused_not_cut(ollama_calls):
+    calls, plan = ollama_calls
+    with pytest.raises(llm.PromptTooLong):
+        llm.generate_structured("s", "x" * 40_000_000, Fact)
+    assert calls == []
+
+
+def test_a_model_that_read_far_fewer_tokens_than_were_sent_fails_loudly(ollama_calls, monkeypatch):
+    calls, plan = ollama_calls
+
+    class Client:
+        def chat(self, model, **kw):
+            calls.append(model)
+            return OllamaReply('{"value": "140"}', 1200)
+
+    monkeypatch.setattr(llm, "_ollama_client", lambda host: Client())
+    with pytest.raises(llm.PromptCut, match="cut off"):
+        llm.generate_structured("Reply PINEAPPLE.", HINDI_PAGE[:9000], Fact)
+    assert calls == ["qwen3.5:9b"]
+
+
+def test_a_normal_token_count_passes_and_a_missing_one_is_not_a_failure(monkeypatch):
+    assert window_asked(monkeypatch, "s", "u" * 3000, seen=900) == [8192]
+    assert window_asked(monkeypatch, "s", "u" * 3000, seen=None) == [8192]
 
 
 def test_when_both_models_fail_the_error_comes_through(ollama_calls):
@@ -206,3 +257,58 @@ def test_when_both_models_fail_the_error_comes_through(ollama_calls):
     with pytest.raises(llm.ollama.ResponseError):
         llm.generate_structured("s", "u", Fact)
     assert calls == ["qwen3.5:9b", "qwen3.5:4b"]
+
+
+def test_a_budget_is_shared_by_the_first_model_and_the_fallback(monkeypatch):
+    timeouts = []
+    clock = [100.0]
+
+    class Client:
+        def __init__(self, host, timeout):
+            timeouts.append(timeout)
+            self.timeout = timeout
+
+        def chat(self, model, **kw):
+            clock[0] += 40
+            if model == "qwen3.5:9b":
+                raise llm.httpx.ReadTimeout("slow")
+            return OllamaReply('{"value": "yes"}')
+
+    monkeypatch.setattr(llm.ollama, "Client", Client)
+    monkeypatch.setattr(llm.time, "monotonic", lambda: clock[0])
+    for name in ("OLLAMA_MODEL", "OLLAMA_SECOND_MODEL", "OLLAMA_FALLBACK_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    assert llm.generate_structured("s", "u", Fact, budget=60).value == "yes"
+    assert timeouts == [60, 20]
+
+
+def test_a_call_with_no_time_left_does_not_try_the_fallback(monkeypatch):
+    asked = []
+    clock = [100.0]
+
+    class Client:
+        def __init__(self, host, timeout):
+            pass
+
+        def chat(self, model, **kw):
+            asked.append(model)
+            clock[0] += 58
+            raise llm.httpx.ReadTimeout("slow")
+
+    monkeypatch.setattr(llm.ollama, "Client", Client)
+    monkeypatch.setattr(llm.time, "monotonic", lambda: clock[0])
+    with pytest.raises(llm.httpx.ReadTimeout):
+        llm.generate_structured("s", "u", Fact, budget=60)
+    assert asked == ["qwen3.5:9b"]
+
+
+def test_the_cloud_gives_up_when_its_time_is_used_up_instead_of_waiting_again(groq, monkeypatch):
+    _, replies, _ = groq
+    clock = [0.0]
+    monkeypatch.setattr(llm.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(llm.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    limited = Reply(429, "slow down")
+    limited.headers = {"retry-after": "50"}
+    replies.extend([limited, limited, limited])
+    written = llm.generate_writing("sys", "user", Draft)
+    assert written.model == llm.model_name() and "rate limited" in written.fallback_reason

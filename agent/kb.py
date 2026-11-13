@@ -112,11 +112,13 @@ class FileInfo(BaseModel):
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA secure_delete = ON")
+    conn = store.open_db(path)
     conn.executescript(SCHEMA)
     return conn
+
+
+def _writing(path: Path):
+    return store.writing(path, _connect)
 
 
 def clean_name(name: str) -> str:
@@ -192,8 +194,18 @@ def files_in(folder: Path) -> list[Path]:
     return sorted(p for p in folder.glob("*") if p.is_file() and p.suffix.lower() in SUFFIXES) if folder.exists() else []
 
 
-def _index_file(conn: sqlite3.Connection, path: Path, digest: str) -> FileInfo:
-    conn.execute("DELETE FROM kb_passages WHERE file = ?", (path.name,))
+class Prepared(NamedTuple):
+    """A file read and embedded, ready to be stored. Nothing here touched the database."""
+
+    pages: list[tuple[int, str]]
+    rows: list[tuple[int, int, str]]
+    vectors: list[list[float]]
+    error: str
+
+
+def _prepare(path: Path) -> Prepared:
+    """Read, split and embed one file. This is the slow part (a long PDF can take minutes), so it
+    runs with no transaction open: the store stays writable for everything else meanwhile."""
     pages, error, rows = [], "", []
     try:
         if path.stat().st_size > MAX_BYTES:
@@ -204,14 +216,19 @@ def _index_file(conn: sqlite3.Connection, path: Path, digest: str) -> FileInfo:
     for page, text in pages:
         rows += [(page, n, t) for n, t in enumerate(split(text))]
     vectors = embed([t for _, _, t in rows]) if rows else []
+    return Prepared(pages, rows, vectors, error)
+
+
+def _store_file(conn: sqlite3.Connection, path: Path, digest: str, ready: Prepared) -> FileInfo:
+    conn.execute("DELETE FROM kb_passages WHERE file = ?", (path.name,))
     skipped = 0
-    for (page, n, text), vector in zip(rows, vectors):
+    for (page, n, text), vector in zip(ready.rows, ready.vectors):
         bad = talks_to_a_model(text)
         skipped += bad
         conn.execute("INSERT INTO kb_passages (file, page, n, text, vector, skipped) VALUES (?, ?, ?, ?, ?, ?)",
                      (path.name, page, n, text, _pack(vector), int(bad)))
-    info = FileInfo(file=path.name, pages=len(pages), empty_pages=sum(not t.strip() for _, t in pages),
-                    passages=len(rows), skipped=skipped, error=error, indexed_at=now())
+    info = FileInfo(file=path.name, pages=len(ready.pages), empty_pages=sum(not t.strip() for _, t in ready.pages),
+                    passages=len(ready.rows), skipped=skipped, error=ready.error, indexed_at=now())
     conn.execute("INSERT OR REPLACE INTO kb_files (file, hash, pages, empty_pages, passages, skipped, error, model, "
                  "indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                  (info.file, digest, info.pages, info.empty_pages, info.passages, info.skipped, info.error,
@@ -227,22 +244,23 @@ def index(folder: Path = KB_DIR, path: Path = store.DB_PATH, force: bool = False
     done = []
     with closing(_connect(path)) as conn:
         known = {r["file"]: (r["hash"], r["model"]) for r in conn.execute("SELECT file, hash, model FROM kb_files")}
-        for gone in set(known) - set(present):
-            with conn:
-                conn.execute("DELETE FROM kb_passages WHERE file = ?", (gone,))
-                conn.execute("DELETE FROM kb_files WHERE file = ?", (gone,))
-            report(f"{gone}: removed from the index")
-        for name, file in present.items():
-            digest = hashlib.sha256(file.read_bytes()).hexdigest()
-            if not force and known.get(name) == (digest, embed_model_name()):
-                continue
-            with conn:
-                info = _index_file(conn, file, digest)
-            done.append(info)
-            report(f"{name}: {info.passages} passages" + (f", {info.skipped} kept out (they talk to an AI)"
-                                                          if info.skipped else "")
-                   + (f", {info.empty_pages} pages with no text" if info.empty_pages else "")
-                   + (f" ({info.error})" if info.error else ""))
+    for gone in set(known) - set(present):
+        with _writing(path) as conn:
+            conn.execute("DELETE FROM kb_passages WHERE file = ?", (gone,))
+            conn.execute("DELETE FROM kb_files WHERE file = ?", (gone,))
+        report(f"{gone}: removed from the index")
+    for name, file in present.items():
+        digest = hashlib.sha256(file.read_bytes()).hexdigest()
+        if not force and known.get(name) == (digest, embed_model_name()):
+            continue
+        ready = _prepare(file)
+        with _writing(path) as conn:
+            info = _store_file(conn, file, digest, ready)
+        done.append(info)
+        report(f"{name}: {info.passages} passages" + (f", {info.skipped} kept out (they talk to an AI)"
+                                                      if info.skipped else "")
+               + (f", {info.empty_pages} pages with no text" if info.empty_pages else "")
+               + (f" ({info.error})" if info.error else ""))
     return done
 
 
@@ -259,7 +277,7 @@ def forget_file(name: str, folder: Path = KB_DIR, path: Path = store.DB_PATH) ->
     found = target.is_file() and target.parent.resolve() == folder.resolve()
     if found:
         target.unlink()
-    with closing(_connect(path)) as conn, conn:
+    with _writing(path) as conn:
         conn.execute("DELETE FROM kb_passages WHERE file = ?", (name,))
         conn.execute("DELETE FROM kb_files WHERE file = ?", (name,))
     return found

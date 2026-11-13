@@ -951,3 +951,13 @@ def test_what_we_hold_lists_every_field_with_its_source():
     assert "Email address: priya@acme.example (typed by the rep)" in lines
     assert "Emails: 1 written, 1 sent, last on 2026-10-25" in lines and lines[-2].startswith("Replies kept: 0")
     assert lines[-1].startswith("Agent trace: 0 steps in 0 runs")
+
+
+def test_a_claim_whose_quote_sits_right_after_a_negation_is_cut(tmp_path):
+    lead = LEAD.model_copy(update={"company": COMPANY.model_copy(update={
+        "description": "Acme builds payroll software for mid-size firms. We do not sell to large banks.",
+        "sales_roles": []})})
+    kept, rejected = outreach.check_claims([claim("sell to large banks", "You sell to large banks.")], lead, tmp_path)
+    assert kept == [] and "negation" in rejected[0]
+    kept, _ = outreach.check_claims([claim("payroll software for mid-size firms")], lead, tmp_path)
+    assert len(kept) == 1

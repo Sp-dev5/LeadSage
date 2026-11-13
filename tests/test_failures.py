@@ -10,7 +10,7 @@ import time
 import httpx
 import pytest
 
-from agent import llm, mailer, pipeline, store
+from agent import kb, llm, mailer, pipeline, store
 from agent.score_lead import Company
 from tests.test_llm import Fact, ollama_calls
 from tests.test_mailer import FakeSMTP, approved, db, mailbox
@@ -44,6 +44,81 @@ def test_two_sends_at_once_deliver_one_email(mailbox, db, monkeypatch):
         t.join()
     assert len(server.sent) == 1
     assert sum(isinstance(r, str) for r in results) == 1
+
+
+def test_an_edit_while_a_send_is_in_flight_is_refused_and_the_send_is_recorded(mailbox, db):
+    approved(db)
+    store.start_send("Acme", 0, "<id-1@seller.example>", db)
+
+    with pytest.raises(ValueError, match="being sent right now"):
+        store.edit_email("Acme", 0, "New subject", "New body", db)
+    with pytest.raises(ValueError, match="being sent right now"):
+        store.save_email("Acme", store.Email(step=0, subject="Again", body="Again", drafted_at="t"), db)
+    with pytest.raises(ValueError, match="not a draft"):
+        store.approve_email("Acme", 0, db)
+
+    store.mark_sent("Acme", 0, db, message_id="<id-1@seller.example>")
+    email = store.load_emails("Acme", db)[0]
+    assert email.status == "sent" and email.message_id == "<id-1@seller.example>"
+    with pytest.raises(ValueError, match="can't be edited"):
+        store.edit_email("Acme", 0, "New subject", "New body", db)
+
+
+def test_a_send_that_died_long_ago_can_be_edited_so_the_rep_can_recover(mailbox, db, monkeypatch):
+    approved(db)
+    store.start_send("Acme", 0, "<id-1@seller.example>", db)
+    monkeypatch.setattr(store, "SEND_WINDOW_SECONDS", -1)
+    store.edit_email("Acme", 0, "New subject", "New body", db)
+    email = store.load_emails("Acme", db)[0]
+    assert email.status == "draft" and email.message_id == "" and email.send_started_at == ""
+
+
+def test_a_writer_waits_for_the_lock_instead_of_reading_with_none(db, monkeypatch):
+    store.save_email("Acme", store.Email(step=0, subject="s", body="b", drafted_at="t"), db)
+    monkeypatch.setattr(store, "BUSY_MS", 100)
+    with store.writing(db):
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            store.approve_email("Acme", 0, db)
+    store.approve_email("Acme", 0, db)
+
+
+def test_indexing_a_document_does_not_lock_the_store_while_it_embeds(tmp_path, monkeypatch):
+    db = tmp_path / "leads.db"
+    store.save(company("Acme"), lead_score(80, "qualify", "main"), url="", text_source="typed", path=db)
+    store.save_email("Acme", store.Email(step=0, subject="s", body="b", drafted_at="t"), db)
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "case.md").write_text("# Case\n\nWe cut payroll errors for a retailer.", encoding="utf-8")
+    monkeypatch.setattr(store, "BUSY_MS", 200)
+    seen = []
+
+    def slow_embed(texts, kind="document"):
+        store.approve_email("Acme", 0, db)
+        seen.append(store.load_emails("Acme", db)[0].status)
+        return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(kb, "embed", slow_embed)
+    kb.index(folder, db, report=lambda m: None)
+    assert seen == ["approved"]
+    assert kb.listing(db)[0].passages == 1
+
+
+def test_a_failed_embedding_keeps_the_passages_already_indexed(tmp_path, monkeypatch):
+    db = tmp_path / "leads.db"
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "case.md").write_text("We cut payroll errors.", encoding="utf-8")
+    monkeypatch.setattr(kb, "embed", lambda texts, kind="document": [[1.0, 0.0] for _ in texts])
+    kb.index(folder, db, report=lambda m: None)
+    (folder / "case.md").write_text("We cut payroll errors by half.", encoding="utf-8")
+
+    def down(texts, kind="document"):
+        raise llm.OllamaUnreachable("down")
+
+    monkeypatch.setattr(kb, "embed", down)
+    with pytest.raises(llm.OllamaUnreachable):
+        kb.index(folder, db, report=lambda m: None)
+    assert kb.listing(db)[0].passages == 1
 
 
 def test_a_sent_email_is_never_sent_again(mailbox, db):

@@ -353,7 +353,17 @@ def test_login_locks_after_five_wrong_tries(client, monkeypatch):
     assert client.get("/", follow_redirects=False).status_code == 303
 
 
-def test_a_failed_action_shows_no_internal_detail(client, monkeypatch):
+def wait_for_job(job_id):
+    import threading
+    for _ in range(100):
+        status = web_app.jobs.JOBS[job_id]
+        if status.done:
+            return status
+        threading.Event().wait(0.05)
+    raise AssertionError("the job did not finish")
+
+
+def test_a_failed_draft_shows_no_internal_detail(client, monkeypatch):
     seed()
 
     def broken(*args, **kwargs):
@@ -361,7 +371,31 @@ def test_a_failed_action_shows_no_internal_detail(client, monkeypatch):
 
     monkeypatch.setattr(web_app, "draft_step", broken)
     r = client.post("/outreach/act", data={"lead": "Acme", "do": "draft", "step": 0}, follow_redirects=True)
-    assert "details are in the app" in r.text and "C:/internal" not in r.text
+    assert "Drafting started" in r.text
+    job = wait_for_job(web_app.jobs.running().id if web_app.jobs.running() else list(web_app.jobs.JOBS)[-1])
+    text = " ".join(job.lines) + job.failed
+    assert "details are in the app" in text and "C:/internal" not in text
+
+
+def test_a_draft_runs_as_a_job_so_the_request_returns_at_once(client, monkeypatch):
+    import threading
+    seed()
+    gate = threading.Event()
+    email = store.Email(step=0, subject="s", body="b", drafted_at="t")
+
+    def slow(*args, **kwargs):
+        gate.wait(5)
+        return email
+
+    monkeypatch.setattr(web_app, "draft_step", slow)
+    r = client.post("/outreach/act", data={"lead": "Acme", "do": "draft", "step": 0}, follow_redirects=True)
+    assert "Drafting started" in r.text
+    again = client.post("/outreach/act", data={"lead": "Acme", "do": "draft", "step": 0}, follow_redirects=True)
+    assert "Wait for this to finish" in again.text
+    gate.set()
+    job = list(web_app.jobs.JOBS.values())[-1]
+    wait_for_job(job.id)
+    assert any(line.startswith("Drafted.") for line in job.lines)
 
 
 def test_rules_save_add_and_remove(client, tmp_path, monkeypatch):
@@ -664,3 +698,52 @@ def test_outreach_lists_press_news_and_what_we_hold(client):
     html = client.get("/outreach?lead=Acme").text
     assert "Funding news reported by others (1)" in html and "Entrackr" in html
     assert "What we hold about Priya Rao" in html and "Name and title from" in html
+
+
+def test_a_file_sent_in_a_number_field_is_refused_not_a_server_error(client, tmp_path, monkeypatch):
+    path = icp_file(tmp_path, monkeypatch)
+    before = path.read_text(encoding="utf-8")
+    form = scoring_form(path)
+    first = web_app.SETTING_FIELDS[0][0]
+    del form[first]
+    r = client.post("/icp/scoring", data=form, files={first: ("x.txt", b"12")}, follow_redirects=True)
+    assert r.status_code == 200 and "Not saved" in r.text
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_rules_with_columns_of_different_length_are_refused_not_cut_short(client, tmp_path, monkeypatch):
+    path = icp_file(tmp_path, monkeypatch)
+    before = path.read_text(encoding="utf-8")
+    rules = {"rule_fact": ["customers", "sales_motion"], "rule_value": ["consumers"],
+             "rule_label": ["consumer product", "self-serve"], "rule_action": ["disqualify", "review"]}
+    assert "incomplete" in client.post("/icp/rules", data=rules, follow_redirects=True).text
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_the_industry_table_with_a_file_in_it_is_refused(client, tmp_path, monkeypatch):
+    path = icp_file(tmp_path, monkeypatch)
+    r = client.post("/icp/match", data={"industry_default": "1", "ind_offering": ["own_software"], "ind_score": ["5"]},
+                    files={"ind_customers": ("x.txt", b"businesses")}, follow_redirects=True)
+    assert r.status_code == 200 and "Not saved" in r.text
+
+
+def test_old_failed_logins_are_forgotten_once_the_list_grows(client, monkeypatch):
+    monkeypatch.setattr(web_app, "PASSWORD", "open sesame")
+    monkeypatch.setattr(web_app, "MAX_TRACKED_ADDRESSES", 3)
+    for i in range(5):
+        web_app.failed_logins[f"10.0.0.{i}"] = [-10_000_000.0]
+    client.post("/login", data={"password": "nope"})
+    assert len(web_app.failed_logins) == 1
+
+
+def test_finished_jobs_are_not_kept_forever(monkeypatch):
+    from web import jobs
+    monkeypatch.setattr(jobs, "JOBS", {})
+    monkeypatch.setattr(jobs, "MAX_KEPT_JOBS", 3)
+    for i in range(6):
+        job = jobs.start(f"Job {i}", lambda report: None)
+        for _ in range(100):
+            if job.done:
+                break
+            threading.Event().wait(0.02)
+    assert len(jobs.JOBS) <= 3 and f"Job 5" in {j.title for j in jobs.JOBS.values()}
