@@ -12,7 +12,11 @@ DOMAIN {
 }
 
 app.DOMAIN {
-	reverse_proxy 127.0.0.1:8000
+	reverse_proxy 127.0.0.1:8000 {
+		transport http {
+			response_header_timeout 150s
+		}
+	}
 	encode gzip
 	header {
 		Strict-Transport-Security "max-age=31536000"

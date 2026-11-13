@@ -2,6 +2,8 @@
 
 import sqlite3
 
+import pytest
+
 from agent import store
 from agent.score_lead import Company, LeadScore, Location
 
@@ -75,3 +77,23 @@ def test_all_emails_and_contacts_load_in_one_go_grouped_by_company(tmp_path):
     assert [e.subject for e in emails["Beta"]] == ["b0"]
     assert list(store.load_all_contacts(db)) == ["Beta"]
     assert store.load_all_emails(tmp_path / "empty.db") == {} and store.load_all_contacts(tmp_path / "empty.db") == {}
+
+
+def test_a_second_company_with_the_same_name_cannot_overwrite_the_first(tmp_path):
+    db = tmp_path / "leads.db"
+    store.save(COMPANY, score(85, "qualify"), url="https://acme.test", text_source="fetched", path=db)
+    store.save_email("Acme", store.Email(step=0, subject="s", body="b", drafted_at="t"), db)
+    store.approve_email("Acme", 0, db)
+    bakery = Company(name="Acme", industry="Bakery", size="12", location="Berlin, Germany", description="Bread.")
+    with pytest.raises(store.NameClash, match="acme.test, not acme-bakery.de"):
+        store.save(bakery, score(10, "disqualify"), url="https://www.acme-bakery.de/about", text_source="fetched", path=db)
+    [lead] = store.load_all(db)
+    assert (lead.company.industry, lead.score.fit, lead.stage) == ("B2B SaaS", 85, "approved")
+
+
+def test_the_same_site_under_another_spelling_or_no_site_is_the_same_company(tmp_path):
+    db = tmp_path / "leads.db"
+    store.save(COMPANY, score(55), url="http://acme.test/", text_source="fetched", path=db)
+    store.save(COMPANY, score(60), url="https://www.ACME.test/about", text_source="fetched", path=db)
+    store.save(COMPANY, score(65), url="", text_source="pasted", path=db)
+    assert [lead.score.fit for lead in store.load_all(db)] == [65]

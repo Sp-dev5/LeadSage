@@ -68,7 +68,23 @@ TEXT_FIELDS = {
     "notes": "What you sell and buying signals",
 }
 
+MAX_TRACKED_ADDRESSES = 1000
+
 failed_logins: dict[str, list[float]] = {}
+
+
+def _forget_old_logins(moment: float) -> None:
+    if len(failed_logins) > MAX_TRACKED_ADDRESSES:
+        for who in [w for w, tries in failed_logins.items() if all(moment - t >= LOCK_SECONDS for t in tries)]:
+            del failed_logins[who]
+
+
+def _strings(form, key: str) -> list[str]:
+    """Every value posted under `key`, which must all be text: a file sent in a text field is an error."""
+    values = form.getlist(key)
+    if not all(isinstance(v, str) for v in values):
+        raise ValueError(f"{key} must be text")
+    return values
 
 
 def csrf_token(request: Request) -> str:
@@ -182,6 +198,7 @@ def login(request: Request, password: str = Form("")):
         store.start_login(login_id, SESSION_SECONDS, views.DB)
         request.session.update({"in": True, "sid": login_id, "pw": _password_mark()})
         return RedirectResponse("/", status_code=303)
+    _forget_old_logins(moment)
     failed_logins[who] = [*tries, moment]
     return page(request, "login.html", wrong=True)
 
@@ -429,9 +446,22 @@ def outreach_act(request: Request, lead: str = Form(...), do: str = Form(...), s
         return back(request, "/outreach", "That lead is no longer in the store.", "error")
     try:
         if do == "draft":
-            email = draft_step(current, step, icp, cfg, views.DB)
-            return back(request, _lead_url(lead, step),
-                        f"Drafted. {len(email.citations)} lines kept, {len(email.rejected)} cut by the quote check.")
+            def work(report):
+                report(f"Drafting email {step + 1} for {lead}")
+                try:
+                    email = draft_step(current, step, icp, cfg, views.DB)
+                except ValueError as e:
+                    report(f"Not drafted: {e}")
+                except Exception:
+                    log.exception("drafting email %s for %s failed", step + 1, lead)
+                    report("That did not work. The details are in the app's log.")
+                else:
+                    report(f"Drafted. {len(email.citations)} lines kept, {len(email.rejected)} cut by the quote check.")
+
+            if busy := jobs.running():
+                return back(request, _lead_url(lead, step), f"Wait for this to finish first: {busy.title}.", "error")
+            jobs.start(f"Drafting email {step + 1} for {lead}", work)
+            return back(request, _lead_url(lead, step), "Drafting started. The page shows when it is done.")
         if do == "edit":
             store.edit_email(lead, step, subject, body, views.DB)
             return back(request, _lead_url(lead, step), "Your edits are saved. Approve when ready.")
@@ -727,7 +757,7 @@ async def icp_scoring(request: Request):
             settings[key] = kind(form[key])
         settings["qualify_needs_evidence"] = str(form["qualify_needs_evidence"])
         settings["weights"] = {name: float(form[f"weight:{name}"]) for name in raw["settings"]["weights"]}
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         return back(request, "/icp", "Not saved. Every number needs a value, and the cut-offs are whole numbers.",
                     "error")
     return _save_icp(request, raw | {"settings": settings}, "Saved. Rescore the leads to apply it.")
@@ -737,9 +767,14 @@ async def icp_scoring(request: Request):
 async def icp_rules(request: Request):
     form = await request.form()
     raw = json.loads(ICP_PATH.read_text(encoding="utf-8"))
-    rows = zip(form.getlist("rule_fact"), form.getlist("rule_value"), form.getlist("rule_label"),
-               form.getlist("rule_action"))
-    rules = [{"fact": f, "value": v, "label": label.strip(), "action": a} for f, v, label, a in rows]
+    try:
+        columns = [_strings(form, k) for k in ("rule_fact", "rule_value", "rule_label", "rule_action")]
+    except ValueError:
+        return back(request, "/icp", "Not saved. Every rule needs text in each column.", "error")
+    if len({len(c) for c in columns}) != 1:
+        return back(request, "/icp", "Not saved. The rules table came through incomplete: reload the page and try again.",
+                    "error")
+    rules = [{"fact": f, "value": v, "label": label.strip(), "action": a} for f, v, label, a in zip(*columns)]
     if any(not r["label"] for r in rules):
         return back(request, "/icp", "Not saved. Every rule needs a reason in the Why column.", "error")
     return _save_icp(request, raw | {"fact_rules": rules}, "Saved. Rescore the leads to apply it.")
@@ -750,13 +785,17 @@ async def icp_match(request: Request):
     form = await request.form()
     raw = json.loads(ICP_PATH.read_text(encoding="utf-8"))
     try:
+        columns = [_strings(form, k) for k in ("ind_offering", "ind_customers", "ind_score")]
+        if len({len(c) for c in columns}) != 1:
+            raise ValueError("unequal columns")
         rows = [{k: v for k, v in (("offering", o), ("customers", c)) if v} | {"score": int(s)}
-                for o, c, s in zip(form.getlist("ind_offering"), form.getlist("ind_customers"),
-                                   form.getlist("ind_score"))]
+                for o, c, s in zip(*columns)]
         default = int(form["industry_default"])
-    except (KeyError, ValueError):
+        gates = _strings(form, "gate")
+        titles = [t.strip() for t in str(form.get("sales_titles", "")).splitlines() if t.strip()]
+        definition = str(form.get("sales_definition", "")).strip()
+    except (KeyError, ValueError, TypeError):
         return back(request, "/icp", "Not saved. Every industry score needs a whole number from 0 to 5.", "error")
-    titles = [t.strip() for t in str(form.get("sales_titles", "")).splitlines() if t.strip()]
-    new = raw | {"industry_map": rows, "industry_default": default, "gates": form.getlist("gate"),
-                 "sales_roles": {"definition": str(form.get("sales_definition", "")).strip(), "titles": titles}}
+    new = raw | {"industry_map": rows, "industry_default": default, "gates": gates,
+                 "sales_roles": {"definition": definition, "titles": titles}}
     return _save_icp(request, new, "Saved. Rescore the leads to apply it.")

@@ -34,7 +34,7 @@ from agent.files import write_text_atomic
 from agent.hooks import NewsItem, NewsSearch, best_item, find_news
 from agent.press import saved_news
 from agent.llm import generate_writing
-from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, long_enough_quote, quote_in
+from agent.score_lead import ICP, TYPOGRAPHY, _parse_headcount, load_icp, long_enough_quote, quote_in, quote_negated
 from agent.store import Citation, Email, StoredLead
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -337,6 +337,8 @@ def check_claims(claims: list[ClaimOut], lead: StoredLead, pages: Path = PAGES,
             rejected.append(f"{claim.sentence!r}: quote {claim.quote!r} is under {min_words} words")
         elif missing := unsupported_specifics(claim.sentence, source, allowed):
             rejected.append(f"{claim.sentence!r}: {', '.join(missing)} not in the company's text")
+        elif quote_in(claim.quote, about) and quote_negated(claim.quote, about):
+            rejected.append(f"{claim.sentence!r}: quote {claim.quote!r} comes right after a negation")
         elif quote_in(claim.quote, about):
             kept.append(Citation(sentence=claim.sentence.strip(), quote=claim.quote.strip(),
                                  source=url, fetched_at=fetched_at))

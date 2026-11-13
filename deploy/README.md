@@ -106,4 +106,4 @@ cd /opt/leadsage/app && sudo -u leadsage git pull && sudo bash deploy/setup.sh l
 - HTTPS everywhere, with HSTS; the session cookie is sent over HTTPS only; the shared password locks an address for 15 minutes after 5 wrong tries (the app sees each visitor's real address through Caddy).
 - The app listens on 127.0.0.1 only; Caddy is the only way in. The service runs as a user with no login, and can write only to `data/`.
 - Ollama on the laptop is reachable only from your Tailscale devices.
-- Not done: backups. Copy `data/leadsage.db` off the server now and then.
+- Not done: backups. The store runs in WAL mode, so a plain file copy can miss recent writes: use `sqlite3 data/leadsage.db ".backup /tmp/leadsage-backup.db"` and copy that off the server now and then.

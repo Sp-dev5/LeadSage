@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from contextlib import closing
+import time
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, field_validator
 
@@ -30,6 +33,8 @@ from agent.trace import Step
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "leadsage.db"
 SITE_DOWN_CHECKS = 2
+BUSY_MS = 15_000
+SEND_WINDOW_SECONDS = 180
 
 STAGES = ["new", "drafted", "approved", "contacted", "replied", "meeting", "lost"]
 STOPPED = {"replied", "meeting", "lost"}
@@ -167,6 +172,7 @@ class Email(BaseModel):
     sent_at: str = ""
     edited: bool = False
     message_id: str = ""
+    send_started_at: str = ""
 
 
 class Reply(BaseModel):
@@ -209,21 +215,77 @@ class SignalEvent(BaseModel):
     fired: bool = False
 
 
-def _connect(path: Path) -> sqlite3.Connection:
-    """Open the store. secure_delete makes SQLite overwrite deleted or replaced rows with zeros;
-    without it the old text stays in the file until the space is reused, so a deleted company
-    could still be read back from data/leadsage.db."""
-    conn = sqlite3.connect(path)
+def open_db(path: Path) -> sqlite3.Connection:
+    """A connection to the store file. WAL lets readers go on while one writer works, so a page
+    never fails because something is being saved; a writer that finds the file busy waits up to
+    BUSY_MS before giving up. secure_delete makes SQLite overwrite deleted or replaced rows with
+    zeros; without it the old text stays in the file until the space is reused, so a deleted
+    company could still be read back from data/leadsage.db."""
+    conn = sqlite3.connect(path, timeout=BUSY_MS / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_MS}")
+    _use_wal(conn)
     conn.execute("PRAGMA secure_delete = ON")
+    return conn
+
+
+def _use_wal(conn: sqlite3.Connection) -> None:
+    """Put the file in WAL mode, which sticks once set. Changing the mode needs the file to
+    itself for a moment and SQLite does not wait for that the way it waits for a write lock, so
+    ask first (no lock fight when it is already WAL) and try again for a while if another
+    connection is busy."""
+    give_up = time.monotonic() + BUSY_MS / 1000
+    while True:
+        try:
+            if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                conn.execute("PRAGMA journal_mode = WAL")
+            return
+        except sqlite3.OperationalError:
+            if time.monotonic() > give_up:
+                raise
+            time.sleep(0.02)
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    conn = open_db(path)
     conn.executescript(SCHEMA)
     return conn
 
 
+@contextmanager
+def writing(path: Path, connect=None) -> Iterator[sqlite3.Connection]:
+    """A connection inside one transaction that holds the write lock from its first line. Python's
+    sqlite3 only starts a transaction at the first write, so a plain read-then-write would read
+    with no lock and another writer could change the row in between. Here the read happens after
+    the lock is taken. Commits when the block ends, rolls back if it raises."""
+    with closing((connect or _connect)(path)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            conn.rollback()
+            raise
+        conn.commit()
+
+
+def _host(url: str) -> str:
+    return (urlparse(web_url(url)).hostname or "").removeprefix("www.")
+
+
+class NameClash(ValueError):
+    """Two different companies with the same name: the name is the key, so saving the second would
+    replace the first one's research and score while keeping its stage and emails."""
+
+
 def save(company: Company, score: LeadScore, url: str, text_source: str, path: Path = DB_PATH) -> None:
     """Save a scored company. One on the do-not-contact list starts out lost, so scoring it
-    again can never reopen it."""
-    with closing(_connect(path)) as conn, conn:
+    again can never reopen it. A company already saved under this name with a different website
+    is refused (NameClash), so a second "Acme" cannot overwrite the first."""
+    with writing(path) as conn:
+        old = conn.execute("SELECT url FROM leads WHERE name = ?", (company.name,)).fetchone()
+        if old and _host(old["url"]) and _host(url) and _host(old["url"]) != _host(url):
+            raise NameClash(f"{company.name} is saved with {_host(old['url'])}, not {_host(url)}: "
+                            "delete that one or rename this one")
         stage = "lost" if _is_suppressed(conn, company.name) else "new"
         conn.execute(
             """INSERT INTO leads (name, url, text_source, company, score, scored_at, stage)
@@ -273,7 +335,7 @@ def set_stage(lead: str, stage: str, path: Path = DB_PATH) -> None:
     """The rep sets the stage. A stopping stage marks every unsent email stopped."""
     if stage not in STAGES:
         raise ValueError(f"unknown stage {stage!r}; use one of {STAGES}")
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         _stage(conn, lead)
         if stage not in STOPPED and _is_suppressed(conn, lead):
             raise ValueError(f"{lead} is on the do-not-contact list: remove it from the list first")
@@ -292,7 +354,7 @@ def suppress(lead: str, reason: str = "", path: Path = DB_PATH) -> None:
     """Put a company on the do-not-contact list. If it is a lead, it becomes lost and its unsent
     emails are stopped. The company may not be a lead yet: the list also keeps it from being drafted
     for later."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("INSERT INTO suppressed (lead, reason, added_at) VALUES (?, ?, ?) "
                      "ON CONFLICT(lead) DO UPDATE SET reason = excluded.reason",
                      (lead, reason.strip(), now()))
@@ -303,7 +365,7 @@ def suppress(lead: str, reason: str = "", path: Path = DB_PATH) -> None:
 
 def unsuppress(lead: str, path: Path = DB_PATH) -> None:
     """Take a company off the list. Its stage stays lost until the rep sets another."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("DELETE FROM suppressed WHERE lead = ?", (lead,))
 
 
@@ -317,7 +379,7 @@ def suppressed(path: Path = DB_PATH) -> dict[str, tuple[str, str]]:
 def delete_lead(lead: str, path: Path = DB_PATH) -> None:
     """Remove everything stored about a company: its score, contacts, news, emails and watched
     signals. The do-not-contact list is kept, so a company that asked to be left alone stays left alone."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("DELETE FROM replies WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM trace WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM signal_events WHERE lead = ?", (lead,))
@@ -333,19 +395,21 @@ def forget_person(lead: str, name: str, path: Path = DB_PATH) -> None:
     """Remove a person who asked: them from the saved search, every email to the company (each
     carries their name), the sender, subject and text of its replies, and the company's trace (its
     prompts carry names). The company's score stays."""
-    search = load_contacts(lead, path)
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
+        search = _contacts(conn, lead)
         conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
         conn.execute("DELETE FROM trace WHERE lead = ?", (lead,))
         for r in conn.execute("SELECT message_id, reply FROM replies WHERE lead = ?", (lead,)).fetchall():
             blank = Reply.model_validate_json(r["reply"]).model_copy(update={"sender": "", "subject": "", "snippet": ""})
             conn.execute("UPDATE replies SET reply = ? WHERE lead = ? AND message_id = ?",
                          (blank.model_dump_json(), lead, r["message_id"]))
-    if search:
-        gone = search.contact is not None and search.contact.name == name
-        save_contacts(lead, search.model_copy(update={
-            "contact": None if gone else search.contact, "chosen_by": "" if gone else search.chosen_by,
-            "people": [p for p in search.people if p.name != name], "rejected": []}), path)
+        if search:
+            gone = search.contact is not None and search.contact.name == name
+            kept = search.model_copy(update={
+                "contact": None if gone else search.contact, "chosen_by": "" if gone else search.chosen_by,
+                "people": [p for p in search.people if p.name != name], "rejected": []})
+            conn.execute("INSERT INTO contacts (lead, search) VALUES (?, ?) "
+                         "ON CONFLICT(lead) DO UPDATE SET search = excluded.search", (lead, kept.model_dump_json()))
 
 
 def forget_stale_contacts(days: int, today: date, path: Path = DB_PATH) -> list[str]:
@@ -354,12 +418,14 @@ def forget_stale_contacts(days: int, today: date, path: Path = DB_PATH) -> list[
     scores stay."""
     cutoff = today - timedelta(days=days)
     stale = []
-    for lead, search in load_all_contacts(path).items():
-        stamps = [s for s in (search.searched_at, search.contact.fetched_at if search.contact else "") if s]
-        if stamps and date.fromisoformat(max(stamps)[:10]) < cutoff and not any(
-                e.status == "sent" for e in load_emails(lead, path)):
-            stale.append(lead)
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
+        rows = conn.execute("SELECT lead, search FROM contacts").fetchall()
+        for r in rows:
+            search = ContactSearch.model_validate_json(r["search"])
+            stamps = [s for s in (search.searched_at, search.contact.fetched_at if search.contact else "") if s]
+            if stamps and date.fromisoformat(max(stamps)[:10]) < cutoff and not any(
+                    e.status == "sent" for e in _emails(conn, r["lead"])):
+                stale.append(r["lead"])
         for lead in stale:
             conn.execute("DELETE FROM contacts WHERE lead = ?", (lead,))
             conn.execute("DELETE FROM emails WHERE lead = ?", (lead,))
@@ -368,10 +434,10 @@ def forget_stale_contacts(days: int, today: date, path: Path = DB_PATH) -> list[
 
 
 def record_site_check(lead: str, checked_at: str, down: bool, error: str = "", path: Path = DB_PATH) -> SiteCheck:
-    before = site_checks(path).get(lead)
-    check = SiteCheck(checked_at=checked_at, down_streak=(before.down_streak if before else 0) + 1 if down else 0,
-                      error=error if down else "")
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
+        r = conn.execute("SELECT down_streak FROM site_checks WHERE lead = ?", (lead,)).fetchone()
+        before = r["down_streak"] if r else 0
+        check = SiteCheck(checked_at=checked_at, down_streak=before + 1 if down else 0, error=error if down else "")
         conn.execute("INSERT INTO site_checks (lead, checked_at, down_streak, error) VALUES (?, ?, ?, ?) "
                      "ON CONFLICT(lead) DO UPDATE SET checked_at = excluded.checked_at, "
                      "down_streak = excluded.down_streak, error = excluded.error",
@@ -387,16 +453,20 @@ def site_checks(path: Path = DB_PATH) -> dict[str, SiteCheck]:
 
 
 def save_contacts(lead: str, search: ContactSearch, path: Path = DB_PATH) -> None:
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("INSERT INTO contacts (lead, search) VALUES (?, ?) "
                      "ON CONFLICT(lead) DO UPDATE SET search = excluded.search",
                      (lead, search.model_dump_json()))
 
 
+def _contacts(conn: sqlite3.Connection, lead: str) -> ContactSearch | None:
+    r = conn.execute("SELECT search FROM contacts WHERE lead = ?", (lead,)).fetchone()
+    return ContactSearch.model_validate_json(r["search"]) if r else None
+
+
 def load_contacts(lead: str, path: Path = DB_PATH) -> ContactSearch | None:
     with closing(_connect(path)) as conn:
-        r = conn.execute("SELECT search FROM contacts WHERE lead = ?", (lead,)).fetchone()
-    return ContactSearch.model_validate_json(r["search"]) if r else None
+        return _contacts(conn, lead)
 
 
 def load_all_contacts(path: Path = DB_PATH) -> dict[str, ContactSearch]:
@@ -407,7 +477,7 @@ def load_all_contacts(path: Path = DB_PATH) -> dict[str, ContactSearch]:
 
 
 def save_news(lead: str, search: NewsSearch, path: Path = DB_PATH) -> None:
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("INSERT INTO news (lead, search) VALUES (?, ?) "
                      "ON CONFLICT(lead) DO UPDATE SET search = excluded.search",
                      (lead, search.model_dump_json()))
@@ -431,7 +501,7 @@ def record_events(lead: str, events: list[SignalEvent], path: Path = DB_PATH) ->
     is inserted with first_seen now and its fired flag as given. Returns the events inserted."""
     stamp = now()
     inserted = []
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         for e in events:
             cur = conn.execute(
                 "UPDATE signal_events SET last_seen = ? WHERE lead = ? AND kind = ? AND key = ?",
@@ -481,7 +551,7 @@ def is_baselined(lead: str, kind: str, path: Path = DB_PATH) -> bool:
 
 def mark_watched(lead: str, kind: str, path: Path = DB_PATH) -> None:
     stamp = now()
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("INSERT INTO watched (lead, kind, first_watched, last_watched) VALUES (?, ?, ?, ?) "
                      "ON CONFLICT(lead, kind) DO UPDATE SET last_watched = excluded.last_watched",
                      (lead, kind, stamp, stamp))
@@ -520,12 +590,14 @@ def load_all_emails(path: Path = DB_PATH) -> dict[str, list[Email]]:
 
 def save_email(lead: str, email: Email, path: Path = DB_PATH) -> None:
     """Save a new draft (or replace an unsent one). A sent email is never replaced."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         if _stage(conn, lead) in STOPPED:
             raise ValueError(f"{lead}: sequence stopped, no new drafts")
         old = _email(conn, lead, email.step)
         if old and old.status == "sent":
             raise ValueError(f"{lead}: email {email.step} was already sent")
+        if old:
+            _refuse_while_sending(lead, old)
         _put_email(conn, lead, email)
         if email.step == 0:
             _advance(conn, lead, "drafted")
@@ -533,18 +605,36 @@ def save_email(lead: str, email: Email, path: Path = DB_PATH) -> None:
 
 def edit_email(lead: str, step: int, subject: str, body: str, path: Path = DB_PATH) -> None:
     """The rep's own wording. An edited email needs approving again."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         old = _email(conn, lead, step)
         if old is None or old.status in ("sent", "stopped"):
             raise ValueError(f"{lead}: email {step + 1} can't be edited")
+        _refuse_while_sending(lead, old)
         _put_email(conn, lead, old.model_copy(update={"subject": subject, "body": body, "edited": True,
-                                                      "status": "draft", "approved_at": "", "message_id": ""}))
+                                                      "status": "draft", "approved_at": "", "message_id": "",
+                                                      "send_started_at": ""}))
+
+
+def _sending_now(email: Email) -> bool:
+    """True while an email that start_send reserved is still inside the window in which the app
+    could be talking to the mail server. After it, a Message-ID left behind means the app stopped
+    mid-send, which the rep settles by checking their Sent folder."""
+    if email.status != "approved" or not email.message_id or not email.send_started_at:
+        return False
+    started = datetime.fromisoformat(email.send_started_at)
+    return datetime.now(timezone.utc) - started < timedelta(seconds=SEND_WINDOW_SECONDS)
+
+
+def _refuse_while_sending(lead: str, email: Email) -> None:
+    if _sending_now(email):
+        raise ValueError(f"{lead}: email {email.step + 1} is being sent right now. Wait for it to finish, then "
+                         "change it if it did not go out.")
 
 
 def approve_email(lead: str, step: int, path: Path = DB_PATH) -> None:
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         old = _email(conn, lead, step)
-        if old is None or old.status != "draft":
+        if old is None or old.status != "draft" or old.message_id:
             raise ValueError(f"{lead}: email {step + 1} is not a draft")
         _put_email(conn, lead, old.model_copy(update={"status": "approved", "approved_at": now()}))
         if step == 0:
@@ -576,27 +666,26 @@ def start_send(lead: str, step: int, message_id: str, path: Path = DB_PATH) -> N
     """Note the Message-ID an approved email is about to go out under, before the mail server is
     contacted. If the app stops after the server takes it and before mark_sent, the id stays, and
     the email is not sent again until the rep has checked their Sent folder."""
-    with closing(_connect(path)) as conn, conn:
-        conn.execute("BEGIN IMMEDIATE")
+    with writing(path) as conn:
         old = _sendable(conn, lead, step)
         if old.message_id:
             raise ValueError(MAYBE_SENT.format(lead=lead, n=step + 1))
-        _put_email(conn, lead, old.model_copy(update={"message_id": message_id}))
+        _put_email(conn, lead, old.model_copy(update={"message_id": message_id, "send_started_at": now()}))
 
 
 def cancel_send(lead: str, step: int, message_id: str, path: Path = DB_PATH) -> None:
     """The mail server refused the email, so it did not go out: drop the id so it can be sent again."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         old = _email(conn, lead, step)
         if old is not None and old.status == "approved" and old.message_id == message_id:
-            _put_email(conn, lead, old.model_copy(update={"message_id": ""}))
+            _put_email(conn, lead, old.model_copy(update={"message_id": "", "send_started_at": ""}))
 
 
 def mark_sent(lead: str, step: int, path: Path = DB_PATH, message_id: str = "") -> None:
     """The email went out: sent by the rep from their own mailbox, or by the app (with the
     `message_id` it was sent under). Only an approved email can be sent. A rep marking it sent
     after an interrupted send keeps the id the app sent it under, so follow-ups stay in its thread."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         old = _sendable(conn, lead, step)
         _put_email(conn, lead, old.model_copy(update={"status": "sent", "sent_at": now(),
                                                       "message_id": message_id or old.message_id}))
@@ -614,7 +703,7 @@ def sent_by_app_since(since: str, path: Path = DB_PATH) -> int:
 
 def save_reply(lead: str, reply: Reply, path: Path = DB_PATH) -> bool:
     """Keep a reply; False if it was already kept, so a second look at the inbox changes nothing."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         stamped = reply.model_copy(update={"found_at": reply.found_at or now()})
         cur = conn.execute("INSERT OR IGNORE INTO replies (lead, message_id, reply) VALUES (?, ?, ?)",
                            (lead, reply.message_id, stamped.model_dump_json()))
@@ -635,7 +724,7 @@ def _login_cutoff(max_age_seconds: int) -> str:
 
 def start_login(login_id: str, max_age_seconds: int, path: Path = DB_PATH) -> None:
     """Remember a new web login (only a hash of its id), and forget logins too old to be used."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("DELETE FROM logins WHERE started < ?", (_login_cutoff(max_age_seconds),))
         conn.execute("INSERT OR REPLACE INTO logins (id, started) VALUES (?, ?)", (_login_key(login_id), now()))
 
@@ -650,7 +739,7 @@ def login_alive(login_id: str, max_age_seconds: int, path: Path = DB_PATH) -> bo
 
 
 def end_login(login_id: str, path: Path = DB_PATH) -> None:
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("DELETE FROM logins WHERE id = ?", (_login_key(login_id),))
 
 
@@ -661,7 +750,7 @@ def load_replies(lead: str, path: Path = DB_PATH) -> list[Reply]:
 
 
 def add_trace(s: Step, path: Path = DB_PATH) -> None:
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         conn.execute("INSERT INTO trace (run_id, lead, kind, step, model, input, output, ok, error, started, ms) "
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (s.run_id, s.lead, s.kind, s.step, s.model, s.input, s.output, int(s.ok), s.error, s.started,
@@ -692,7 +781,7 @@ def latest_trace_run(lead: str, kind: str, path: Path = DB_PATH) -> str:
 
 def prune_trace(lead: str, kind: str, keep: int, path: Path = DB_PATH) -> None:
     """Keep the lead's `keep` newest runs of this kind and delete the rest."""
-    with closing(_connect(path)) as conn, conn:
+    with writing(path) as conn:
         for run_id in _trace_runs(conn, lead, kind)[max(keep, 0):]:
             conn.execute("DELETE FROM trace WHERE run_id = ?", (run_id,))
 

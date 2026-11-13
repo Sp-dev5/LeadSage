@@ -1,5 +1,7 @@
 """Fetcher tests. No real network: the HTTP get and the robots check are faked."""
 
+import threading
+import time
 from urllib.parse import urlsplit
 
 import pytest
@@ -135,10 +137,140 @@ def test_robots_rules_are_read(monkeypatch, robots_txt, path, allowed):
     assert fetch._allowed_by_robots(f"https://acme.test{path}") is allowed
 
 
-@pytest.mark.parametrize("status, allowed", [(404, True), (403, False), (503, False)])
+@pytest.mark.parametrize("status, allowed", [(404, True), (410, True), (401, False), (403, False)])
 def test_robots_status_codes(monkeypatch, status, allowed):
     fake_get(monkeypatch, FakeResponse(status_code=status))
     assert fetch._allowed_by_robots("https://acme.test/") is allowed
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_a_robots_file_that_could_not_be_read_is_not_an_answer(monkeypatch, status):
+    fake_get(monkeypatch, FakeResponse(status_code=status))
+    with pytest.raises(fetch._Refused, match=f"could not be read \\(HTTP {status}\\)"):
+        fetch._allowed_by_robots("https://acme.test/")
+
+
+def test_a_robots_file_is_downloaded_once_per_host_not_once_per_page(monkeypatch):
+    robots = FakeResponse(b"", content_type="text/plain")
+    robots.text = "User-agent: *\nDisallow: /private"
+    calls = fake_get(monkeypatch, responses=[robots, FakeResponse(html_page(BODY)), FakeResponse(html_page(BODY)),
+                                              FakeResponse(html_page(BODY))])
+    for path in ("/about", "/team", "/news"):
+        assert fetch.fetch_page(f"https://acme.test{path}").ok
+    assert [c for c in calls if c.endswith("/robots.txt")] == ["https://acme.test/robots.txt"]
+    assert len(calls) == 4
+
+
+def test_each_host_and_scheme_has_its_own_robots_answer(monkeypatch):
+    first, second = FakeResponse(b"", content_type="text/plain"), FakeResponse(b"", content_type="text/plain")
+    first.text, second.text = "User-agent: *\nDisallow: /", "User-agent: *\nDisallow: /private"
+    fake_get(monkeypatch, responses=[first, second])
+    assert fetch._allowed_by_robots("https://acme.test/about") is False
+    assert fetch._allowed_by_robots("https://other.test/about") is True
+    assert fetch._allowed_by_robots("https://acme.test/team") is False
+
+
+def test_a_failed_robots_read_is_asked_again_after_a_short_wait_not_remembered_for_an_hour(monkeypatch):
+    allow = FakeResponse(b"", content_type="text/plain")
+    allow.text = "User-agent: *\nDisallow: /private"
+    calls = fake_get(monkeypatch, responses=[FakeResponse(status_code=429), allow])
+    clock = [1000.0]
+    monkeypatch.setattr(fetch.time, "monotonic", lambda: clock[0])
+    with pytest.raises(fetch._Refused):
+        fetch._allowed_by_robots("https://acme.test/about")
+    with pytest.raises(fetch._Refused):
+        fetch._allowed_by_robots("https://acme.test/about")
+    assert len(calls) == 1
+    clock[0] += fetch.ROBOTS_RETRY + 1
+    assert fetch._allowed_by_robots("https://acme.test/about") is True
+    assert len(calls) == 2
+    clock[0] += fetch.ROBOTS_TTL - 10
+    assert fetch._allowed_by_robots("https://acme.test/about") is True
+    assert len(calls) == 2
+    clock[0] += 20
+    fake_get(monkeypatch, responses=[allow])
+    assert fetch._allowed_by_robots("https://acme.test/about") is True
+
+
+def test_a_network_error_on_robots_is_not_remembered(monkeypatch):
+    allow = FakeResponse(b"", content_type="text/plain")
+    allow.text = ""
+    replies = [requests.ConnectionError("down"), allow]
+
+    def get(url, **kwargs):
+        reply = replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(fetch, "_http_get", get)
+    with pytest.raises(requests.ConnectionError):
+        fetch._allowed_by_robots("https://acme.test/")
+    assert fetch._allowed_by_robots("https://acme.test/") is True
+
+
+def test_threads_asking_about_one_host_share_one_robots_download(monkeypatch):
+    allow = FakeResponse(b"", content_type="text/plain")
+    allow.text = "User-agent: *\nDisallow: /private"
+    downloads = []
+
+    def get(url, **kwargs):
+        downloads.append(url)
+        time.sleep(0.1)
+        return allow
+
+    monkeypatch.setattr(fetch, "_http_get", get)
+    threads = [threading.Thread(target=fetch._allowed_by_robots, args=(f"https://acme.test/p{i}",)) for i in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert downloads == ["https://acme.test/robots.txt"]
+
+
+def test_the_sites_crawl_delay_sets_the_gap_between_its_pages(monkeypatch):
+    robots = FakeResponse(b"", content_type="text/plain")
+    robots.text = "User-agent: *\nCrawl-delay: 3\nDisallow: /private"
+    waits, clock = [], [50.0]
+
+    def sleep(seconds):
+        waits.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(fetch.time, "sleep", sleep)
+    monkeypatch.setattr(fetch.time, "monotonic", lambda: clock[0])
+    fake_get(monkeypatch, responses=[robots] + [FakeResponse(html_page(BODY)) for _ in range(3)])
+    for path in ("/a", "/b", "/c"):
+        assert fetch.fetch_page(f"https://acme.test{path}").ok
+    assert waits == [3.0, 3.0]
+
+
+def test_a_crawl_delay_is_capped_so_a_batch_keeps_moving(monkeypatch):
+    robots = FakeResponse(b"", content_type="text/plain")
+    robots.text = "User-agent: *\nCrawl-delay: 600"
+    fake_get(monkeypatch, robots)
+    fetch._allowed_by_robots("https://acme.test/")
+    assert fetch._host_delay("https://acme.test/") == fetch.MAX_CRAWL_DELAY
+
+
+def test_pages_from_one_host_are_spaced_by_the_default_delay_and_other_hosts_are_not_held_up(monkeypatch):
+    monkeypatch.setattr(fetch, "HOST_DELAY", 0.5)
+    waits = []
+    monkeypatch.setattr(fetch.time, "sleep", waits.append)
+    monkeypatch.setattr(fetch.time, "monotonic", lambda: 10.0)
+    fetch._take_turn("https://acme.test/a")
+    fetch._take_turn("https://acme.test/b")
+    fetch._take_turn("https://other.test/a")
+    assert waits == [0.5]
+
+
+def test_one_429_holds_the_whole_host_not_just_one_request(monkeypatch):
+    waits = []
+    monkeypatch.setattr(fetch.time, "sleep", waits.append)
+    monkeypatch.setattr(fetch.time, "monotonic", lambda: 10.0)
+    fetch._hold_host("https://acme.test/a", 8)
+    fetch._take_turn("https://acme.test/b")
+    assert waits == [8]
 
 
 def robots_by_host(monkeypatch, blocked: set[str]):
@@ -264,7 +396,7 @@ def test_a_rate_limited_page_is_tried_once_more_after_a_wait(monkeypatch, robots
     monkeypatch.setattr(fetch, "_http_get", lambda *a, **k: replies.pop(0))
     monkeypatch.setattr(fetch.time, "sleep", waits.append)
     assert fetch.fetch_page("https://acme.test/about").ok
-    assert waits == [fetch.RATE_LIMIT_WAIT]
+    assert len(waits) == 1 and fetch.RATE_LIMIT_WAIT - 1 < waits[0] <= fetch.RATE_LIMIT_WAIT
 
 
 def test_a_page_still_rate_limited_after_the_wait_is_reported(monkeypatch, robots_allow):
