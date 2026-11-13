@@ -314,7 +314,8 @@ def _groq_raw(system: str, user_prompt: str, schema: type[T]) -> str:
         left = deadline - time.monotonic()
         if left <= 0:
             raise RuntimeError(f"no answer within {GROQ_BUDGET}s")
-        resp = requests.post(GROQ_URL, headers=headers, json=body, timeout=min(GROQ_TIMEOUT, left))
+        limit = min(GROQ_TIMEOUT, left)
+        resp = requests.post(GROQ_URL, headers=headers, json=body, timeout=limit)
         if resp.status_code != 429:
             break
         wait = _retry_after(resp)
